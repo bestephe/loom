@@ -201,7 +201,7 @@ program on the input directory.
 ## Contributions
 
 PRs are always welcome. Please fork, and make necessary modifications 
-you propose, and let us know at any contact points listed below. 
+you propose, and let us know. 
 
 ## Contact 
 
