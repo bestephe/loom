@@ -41,7 +41,7 @@ The crail-terasort program takes following options :
 -h,--help                         Show this help
 ```
 
-# Building Crail-terasort 
+## Building Crail-terasort 
 Apart from the dependencies of the original program, crail-terasort 
 depends upon 
   - crail-client (1.0) : https://github.com/zrlio/crail
@@ -59,7 +59,7 @@ After that, compilation of crail-terasort is simple:
 After a successful compilation you should have `crail-terasort-2.0.jar` 
 in your `./target` folder. This is the crail-terasort app jar. 
 
-## Building libjsort for f22 serializer (optional) 
+### Building libjsort for f22 serializer (optional) 
 
 **Note:** *These steps are optional and only for if you plan to use 
 `f22` serializer. However, please note that the best performance is 
@@ -89,13 +89,13 @@ and set `yarn-site.xml` accordingly to something appropriate:
   </property>
 ```
 
-# Running
+## Running
 
 We assume that you have a working spark installation with `spark-io` 
 extensions. Here we give detail instructions about how to generate, 
 sort, and validate crail-terasort program. 
 
-## Generating data 
+### Generating data 
 
 We recommend to use the original Terasort program from Ewan Higgs 
 to generate data : https://github.com/ehiggs/spark-terasort. Clone it, 
@@ -149,7 +149,7 @@ if you experience issues about missing dependencies, then try using
 `spark-terasort-1.0-jar-with-dependencies.jar` from the `target` folder. 
 
 
-## Sorting data using crail-terasort
+### Sorting data using crail-terasort
 
 After generating data, you can use the following command to run 
 crail-terasort app (adjust according to your config):
@@ -175,7 +175,7 @@ in your `$SPARK_HOME/conf/spark-defaults.conf`.
 
 **Note**: The f22 serializer is *only* compatible with CrailShuffleNativeRadixSorter!
 
-## Validating the output 
+### Validating the output 
 
 Like input, for output validation we recommend to use the original 
 program as (adjust according to your config): 
@@ -198,8 +198,15 @@ partitions are properly sorted
 The checksum should be the same what you get if you run the Terasort 
 program on the input directory. 
 
-# Contact 
+## Contributions
 
-If you have questions feel free to post at:
+PRs are always welcome. Please fork, and make necessary modifications 
+you propose, and let us know at any contact points listed below. 
+
+## Contact 
+
+If you have questions or suggestions, feel free to post at:
 
 https://groups.google.com/forum/#!forum/zrlio-users
+
+or email: zrlio-users@googlegroups.com
