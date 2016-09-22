@@ -135,15 +135,16 @@ config):
 --num-executors 10 --executor-cores 1 --executor-memory 4G \
 --master yarn --class com.github.ehiggs.spark.terasort.TeraGen \
 path/to/your/sprak-terasort/target/spark-terasort-1.0.jar \
-1g /terasort-input-1g 10
+1g /terasort-input-1g
 ```
  
 **Recommendation**: We recommend to use the same number of executors 
 and partitions as you have number of machines. For example in the above 
 command, we use it to generate `1g` of dataset with `10` executors, 
-each with `1` core, with `10` partitions (the last parameter) on 
-`10` machines we have. The output directory name is specified as 
-`/terasort-input-1g`.
+each with `1` core, with `10` partitions. The number of partitions 
+come from `spark.default.parallelism` from the `$SPARK_HOME/conf/spark-defaults.conf`
+file. We have it set as `10` for `10` machines. The output directory 
+name is specified as `/terasort-input-1g`.
 
 if you experience issues about missing dependencies, then try using 
 `spark-terasort-1.0-jar-with-dependencies.jar` from the `target` folder. 
