@@ -27,8 +27,7 @@ import java.nio.ByteBuffer
 
 import com.ibm.crail.terasort.{BufferCache, SerializerBuffer, TeraInputFormat}
 import com.ibm.crail.{CrailBufferedOutputStream, CrailInputStream, CrailMultiStream}
-import org.apache.spark.TaskContext
-
+import org.apache.spark.{ShuffleDependency, TaskContext}
 import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 import org.apache.spark.shuffle.crail.{CrailDeserializationStream, CrailSerializationStream, CrailSerializerInstance, CrailShuffleSerializer}
 
@@ -40,7 +39,7 @@ class F22Serializer() extends Serializer with Serializable with CrailShuffleSeri
   }
   override lazy val supportsRelocationOfSerializedObjects: Boolean = true
 
-  override def newCrailSerializer(): CrailSerializerInstance = {
+  override def newCrailSerializer[K,V](dep: ShuffleDependency[K,_,V]): CrailSerializerInstance = {
     F22ShuffleSerializerInstance.getInstance()
   }
 }
