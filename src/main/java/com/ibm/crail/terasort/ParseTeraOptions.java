@@ -157,6 +157,10 @@ public class ParseTeraOptions implements Serializable {
         return testIndex == 1;
     }
 
+    public boolean isTestLoadCount(){
+        return testIndex == 2;
+    }
+
     public boolean isTestLoadCountStore(){
         return testIndex == 3;
     }

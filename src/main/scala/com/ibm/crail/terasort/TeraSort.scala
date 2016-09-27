@@ -101,7 +101,7 @@ object TeraSort {
           sorted.setSerializer(new KryoSerializer(options))
           exe += " serializer : Kryo "
         } else if (options.isSerializerByte) {
-          sorted.setSerializer(new ByteSerializer())
+          sorted.setSerializer(new ByteSerializer(options.isTestLoadCountStore || options.isTestLoadCount))
           exe += " serializer : byte "
         }else if (options.isSerializerF16) {
           sorted.setSerializer(new F16Serializer())

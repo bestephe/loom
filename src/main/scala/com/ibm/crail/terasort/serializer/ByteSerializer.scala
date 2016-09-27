@@ -30,14 +30,14 @@ import org.apache.spark.serializer.{DeserializationStream, SerializationStream, 
 
 import scala.reflect.ClassTag
 
-class ByteSerializer() extends Serializer with Serializable {
+class ByteSerializer(count: Boolean) extends Serializer with Serializable {
   override final def newInstance(): SerializerInstance = {
-    ByteSerializerInstance.getInstance()
+    ByteSerializerInstance.getInstance(count)
   }
   override lazy val supportsRelocationOfSerializedObjects: Boolean = true
 }
 
-class ByteSerializerInstance() extends SerializerInstance {
+class ByteSerializerInstance(count: Boolean) extends SerializerInstance {
 
   override final def serialize[T: ClassTag](t: T): ByteBuffer = {
     throw new IOException("this call is not yet implemented : serializer[] ")
@@ -57,17 +57,17 @@ class ByteSerializerInstance() extends SerializerInstance {
   }
 
   override final def deserializeStream(s: InputStream): DeserializationStream = {
-    new ByteDeserializerStream(this, s)
+    new ByteDeserializerStream(this, s, count)
   }
 }
 
 object ByteSerializerInstance {
   private var serIns:ByteSerializerInstance = null
 
-  final def getInstance():ByteSerializerInstance= {
+  final def getInstance(count: Boolean):ByteSerializerInstance= {
     this.synchronized {
       if(serIns == null)
-        serIns = new ByteSerializerInstance()
+        serIns = new ByteSerializerInstance(count)
     }
     serIns
   }
@@ -112,7 +112,7 @@ class ByteSerializerStream(explicitByteSerializerInstance: ByteSerializerInstanc
 }
 
 class ByteDeserializerStream(explicitByteSerializerInstance: ByteSerializerInstance,
-                             inStream: InputStream) extends DeserializationStream {
+                             inStream: InputStream, count: Boolean) extends DeserializationStream {
 
   override final def readObject[T: ClassTag](): T = {
       /* How do you read */
@@ -128,16 +128,22 @@ class ByteDeserializerStream(explicitByteSerializerInstance: ByteSerializerInsta
     }
   }
 
-  val key = new Array[Byte](TeraInputFormat.KEY_LEN)
+  var key: Array[Byte] = null
 
   override final def readKey[T: ClassTag](): T = {
+    if ((count && key == null) || !count) {
+      key = new Array[Byte](TeraInputFormat.KEY_LEN)
+    }
     readBytes(key)
     key.asInstanceOf[T]
   }
 
-  val value = new Array[Byte](TeraInputFormat.VALUE_LEN)
+  var value: Array[Byte] = null
 
   override final def readValue[T: ClassTag](): T = {
+    if ((count && value == null) || !count) {
+      value = new Array[Byte](TeraInputFormat.VALUE_LEN)
+    }
     readBytes(value)
     value.asInstanceOf[T]
   }
