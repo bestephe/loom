@@ -159,7 +159,6 @@ class F22DeserializerStream(inStream: CrailInputStream) extends CrailDeserializa
       " crail reading bytes : " + incomingData + " in " + timeUs + " usec or " + bw + " Mbps")
   }
 
-  /* for key we return the address */
   override final def readKey[T: ClassTag](): T = {
 
     if(remaining == 0 ) {

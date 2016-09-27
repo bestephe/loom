@@ -128,14 +128,16 @@ class ByteDeserializerStream(explicitByteSerializerInstance: ByteSerializerInsta
     }
   }
 
+  val key = new Array[Byte](TeraInputFormat.KEY_LEN)
+
   override final def readKey[T: ClassTag](): T = {
-    val key = new Array[Byte](TeraInputFormat.KEY_LEN)
     readBytes(key)
     key.asInstanceOf[T]
   }
 
+  val value = new Array[Byte](TeraInputFormat.VALUE_LEN)
+
   override final def readValue[T: ClassTag](): T = {
-    val value = new Array[Byte](TeraInputFormat.VALUE_LEN)
     readBytes(value)
     value.asInstanceOf[T]
   }
