@@ -50,7 +50,7 @@ public class ParseTeraOptions implements Serializable {
         testNames = new String[]{"loadonly", "loadstore", "loadcount", "loadcountstore", "loadsort", "loadsortstore"};
         testIndex = 5; /* loadsortstore is the default */
 
-        serializer = new String[] {"none", "kryo", "byte", "f16", "f22"};
+        serializer = new String[] {"none", "kryo", "byte", "f22"};
         serializerIndex = 0; /* default is none */
 
         inputDir = null;
@@ -84,9 +84,8 @@ public class ParseTeraOptions implements Serializable {
                 "none: uses the Spark default serializer \n" +
                  "kryo: optimized Kryo for TeraSort \n" +
                  "byte: a simple byte[] serializer \n" +
-                 "f16: an simple byte[] serializer for crail\n" +
                  "f22: an optimized crail-specific byte[] serializer\n" +
-                 "     f22 requires CrailShuffleNativeRadixSorter\n");
+                 "     f22 requires CrailShuffleNativeRadixSorter for sorting\n");
         options.addOption("O", "options", true, "string,string : Sets properties on the Spark context. The first \n" +
                 "string is the key, and the second is the value");
         options.addOption("b", "bufferSize", true, "<int> Buffer size for Kryo (only valid for kryo)");
@@ -129,6 +128,7 @@ public class ParseTeraOptions implements Serializable {
         HelpFormatter formatter = new HelpFormatter();
         formatter.printHelp("Main", options);
     }
+
     public boolean getSyncOutput(){
         return syncOutput;
     }
@@ -136,15 +136,19 @@ public class ParseTeraOptions implements Serializable {
     public int getBufferSize(){
         return bufferSize;
     }
+
     public String getInputDir(){
         return inputDir;
     }
+
     public String getOutputDir(){
         return outputDir;
     }
+
     public long getParitionSize(){
         return paritionSize;
     }
+
     public boolean isPartitionSet(){
         return isPartitionSet;
     }
@@ -174,15 +178,15 @@ public class ParseTeraOptions implements Serializable {
     public boolean isSerializerKryo(){
         return serializerIndex == 1;
     }
+
     public boolean isSerializerByte(){
         return serializerIndex == 2;
     }
-    public boolean isSerializerF16(){
+
+    public boolean isSerializerF22(){
         return serializerIndex == 3;
     }
-    public boolean isSerializerF22(){
-        return serializerIndex == 4;
-    }
+
     public void setSparkOptions(SparkConf conf){
         for (String key : sparkParams.keySet()){
             System.err.println(" Setting up key: "+ key + " value: " + sparkParams.get(key));

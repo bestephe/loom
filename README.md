@@ -1,12 +1,13 @@
 # Crail-terasort 
 
 Crail-terasort is a modified version of the original Terasort program 
-from https://github.com/ehiggs/spark-terasort. This program generates, 
-sorts, and validates 100 bytes (10b + 90b) key-value records as described 
-by http://sortbenchmark.org/.
+from https://github.com/ehiggs/spark-terasort. The original program 
+generates, sorts, and validates 100 bytes (10b + 90b) key-value records 
+as described by http://sortbenchmark.org/.
 
 This version is optimized to work with the crail file system 
-(https://github.com/zrlio/crail). 
+(https://github.com/zrlio/crail), and does only sorting (and other 
+controller experimentes, see -n option below).  
 
 The crail-terasort program takes following options :
 ```bash
@@ -32,9 +33,9 @@ The crail-terasort program takes following options :
                                   none : uses the Spark default serializer 
                                   kryo : optimized Kryo for TeraSort 
                                   byte : a simple byte[] serializer 
-                                  f16  : an simple byte[] serializer for crail
                                   f22  : an optimized crail-specific byte[] serializer
                                        f22 requires CrailShuffleNativeRadixSorter
+                                       (see below for details)
 -b,--bufferSize <int>             Buffer size for Kryo (only valid for kryo)
 -O --options <string,string>      Sets properties on the Spark context. The first 
                                   string is the key, and the second is the value
@@ -74,9 +75,14 @@ as the shuffle sorter. This sorter has dependencies on a native library
 cmake .
 make
 ```
-These steps should give you '`libjsort.so` in your directory. Then you 
-should copy the file in your _java_library_directory_ as defined in 
-the `$HADOOP_HOME/etc/hadoop/yarn-env.sh`. As an example, we have : 
+These steps should give you '`libjsort.so` in your directory. In case 
+your system does not satisfy boost dependency, you can explicitly 
+copy `include/boost/sort` directory from https://github.com/boostorg/sort
+to your `libjsort` src directory as `boost/sort`.
+
+
+Then you should copy the file in your _java_library_directory_ as defined 
+in the `$HADOOP_HOME/etc/hadoop/yarn-env.sh`. As an example, we have : 
 ```bash
 export JAVA_LIBRARY_PATH=/path/to/libjsort/:$JAVA_LIBRARY_PATH
 ```
@@ -164,7 +170,7 @@ path/to/your/crail-terasort/target/crail-terasort-2.0.jar \
 The default serializer is none, which means that whatever you use 
 (`spark.serializer`) in `$SPARK_HOME/conf/spark-defaults.conf` will be 
 used. Once you have the basic setup working, you can try using 
-`kryo`, `byte`, or `f16`. 
+`kryo` or `byte`. 
 
 Using `f22` serializer requires you to set crail-terasort specific 
 sorter as well. You must set 

@@ -106,14 +106,12 @@ class F22SerializerStream(outStream: CrailBufferedOutputStream) extends CrailSer
   }
 
   override final def writeKey[T: ClassTag](key: T): SerializationStream = writeObject(key)
-  /** Writes the object representing the value of a key-value pair. */
+
   override final def writeValue[T: ClassTag](value: T): SerializationStream = writeObject(value)
+
   override final def close(): Unit = {
     if (outStream != null) {
-      try {
-        outStream.close()
-      } finally {
-      }
+      outStream.close()
     }
   }
 
@@ -127,7 +125,7 @@ class F22SerializerStream(outStream: CrailBufferedOutputStream) extends CrailSer
 
 class F22DeserializerStream(inStream: CrailInputStream) extends CrailDeserializationStream {
   val incomingData = inStream.available()
-  /* FIXME: we dont need a unified buffer */
+  /* FIXME: we don't need a unified buffer */
   val bufX :SerializerBuffer = BufferCache.getInstance().getUnifedBuffer(incomingData)
 
   var remaining = numElements()
@@ -160,7 +158,6 @@ class F22DeserializerStream(inStream: CrailInputStream) extends CrailDeserializa
   }
 
   override final def readKey[T: ClassTag](): T = {
-
     if(remaining == 0 ) {
       /* mark the end of the stream : this is caught by spark to mark EOF - duh ! */
       throw new EOFException()
@@ -183,11 +180,10 @@ class F22DeserializerStream(inStream: CrailInputStream) extends CrailDeserializa
 
   override final def close(): Unit = {
     if (inStream != null) {
-      try {
-        inStream.close()
-        BufferCache.getInstance().putBuffer(bufX)
-      } finally {
-      }
+      inStream.close()
+    }
+    if(bufX != null){
+      BufferCache.getInstance().putBuffer(bufX)
     }
   }
 

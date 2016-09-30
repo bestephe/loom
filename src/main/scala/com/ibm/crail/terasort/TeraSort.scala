@@ -23,7 +23,7 @@
 package com.ibm.crail.terasort
 
 import com.google.common.primitives.UnsignedBytes
-import com.ibm.crail.terasort.serializer.{F22Serializer, ByteSerializer, KryoSerializer, F16Serializer}
+import com.ibm.crail.terasort.serializer.{F22Serializer, ByteSerializer, KryoSerializer}
 import org.apache.spark.rdd._
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
@@ -101,11 +101,8 @@ object TeraSort {
           sorted.setSerializer(new KryoSerializer(options))
           exe += " serializer : Kryo "
         } else if (options.isSerializerByte) {
-          sorted.setSerializer(new ByteSerializer(options.isTestLoadCountStore || options.isTestLoadCount))
+          sorted.setSerializer(new ByteSerializer())
           exe += " serializer : byte "
-        }else if (options.isSerializerF16) {
-          sorted.setSerializer(new F16Serializer())
-          exe += " serializer : F16 "
         }else if (options.isSerializerF22) {
           sorted.setSerializer(new F22Serializer())
           //TODO: printout warning to make sure
