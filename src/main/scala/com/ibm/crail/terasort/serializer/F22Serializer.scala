@@ -123,7 +123,7 @@ class F22SerializerStream(outStream: CrailBufferedOutputStream) extends CrailSer
   }
 }
 
-class F22DeserializerStream(inStream: CrailInputStream) extends CrailDeserializationStream {
+class F22DeserializerStream(inStream: CrailMultiStream) extends CrailDeserializationStream {
   val incomingData = inStream.available()
   /* FIXME: we don't need a unified buffer */
   val bufX :SerializerBuffer = BufferCache.getInstance().getUnifedBuffer(incomingData)
