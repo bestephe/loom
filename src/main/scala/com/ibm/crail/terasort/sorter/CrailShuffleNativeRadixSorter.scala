@@ -53,6 +53,9 @@ private class ByteBufferIterator(inputStream: CrailDeserializationStream) extend
     processed += 1
     buffer.get(key)
     buffer.get(value)
+    if (!hasNext) {
+      inputStream.close()
+    }
     kv
   }
 }
