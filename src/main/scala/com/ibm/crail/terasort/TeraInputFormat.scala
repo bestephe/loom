@@ -22,22 +22,15 @@
 
 package com.ibm.crail.terasort
 
-import scala.collection.JavaConversions._
-
 import java.io.EOFException
 import java.util.List
 
+import org.apache.hadoop.fs.{FSDataInputStream, FileStatus, FileSystem, Path}
+import org.apache.hadoop.mapreduce.{InputSplit, JobContext, RecordReader, TaskAttemptContext}
+import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat, FileSplit}
 import org.apache.spark.TaskContext
-import org.apache.hadoop.fs.FSDataInputStream
-import org.apache.hadoop.fs.FileSystem
-import org.apache.hadoop.fs.FileStatus
-import org.apache.hadoop.fs.Path
-import org.apache.hadoop.mapreduce.InputSplit
-import org.apache.hadoop.mapreduce.JobContext
-import org.apache.hadoop.mapreduce.RecordReader
-import org.apache.hadoop.mapreduce.TaskAttemptContext
-import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
-import org.apache.hadoop.mapreduce.lib.input.FileSplit
+
+import scala.collection.JavaConversions._
 
 object TeraInputFormat {
   val KEY_LEN = 10

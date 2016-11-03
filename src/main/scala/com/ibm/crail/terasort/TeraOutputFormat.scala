@@ -22,17 +22,11 @@
 
 package com.ibm.crail.terasort
 
-import org.apache.hadoop.fs.FSDataOutputStream
-import org.apache.hadoop.fs.FileSystem
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FSDataOutputStream, FileSystem, Path}
 import org.apache.hadoop.mapred.InvalidJobConfException
-import org.apache.hadoop.mapreduce.JobContext
-import org.apache.hadoop.mapreduce.OutputCommitter
-import org.apache.hadoop.mapreduce.RecordWriter
-import org.apache.hadoop.mapreduce.TaskAttemptContext
+import org.apache.hadoop.mapreduce.{JobContext, OutputCommitter, RecordWriter, TaskAttemptContext}
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
-import org.apache.hadoop.mapreduce.lib.output.FileOutputCommitter
-import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
+import org.apache.hadoop.mapreduce.lib.output.{FileOutputCommitter, FileOutputFormat}
 import org.apache.hadoop.mapreduce.security.TokenCache
 
 object TeraOutputFormat {
