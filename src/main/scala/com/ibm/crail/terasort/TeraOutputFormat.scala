@@ -54,12 +54,13 @@ class TeraOutputFormat extends FileOutputFormat[Array[Byte], Array[Byte]] {
   class TeraRecordWriter(val out : FSDataOutputStream, val job: JobContext, bufSize:Int)
     extends RecordWriter[Array[Byte], Array[Byte]] {
 
-    val finalSync = getFinalSync(job)
-    val start = System.nanoTime()
-    val cacheBuffer = BufferCache.getInstance().getByteArrayBuffer(bufSize)
-    val byteBuffer = cacheBuffer.getByteArray
-    var copied = 0
+    private val finalSync = getFinalSync(job)
+    private val start = System.nanoTime()
+    private val cacheBuffer = BufferCache.getInstance().getByteArrayBuffer(bufSize)
+    private val byteBuffer = cacheBuffer.getByteArray
+    private var copied = 0
     private val verbose = TaskContext.get().getLocalProperty(TeraSort.verboseKey).toBoolean
+    private var totalOutputBytes = 0
     if(verbose) {
       System.err.println(TeraSort.verbosePrefixHDFSOutput + " TID: " + TaskContext.get.taskAttemptId() +
         " sync flag is : " + finalSync + " and output buffer size : " + bufSize)
@@ -67,6 +68,7 @@ class TeraOutputFormat extends FileOutputFormat[Array[Byte], Array[Byte]] {
 
     final def require(bytes: Int): Unit = {
       if(copied + bytes > bufSize) {
+        totalOutputBytes+=copied
         /* we flush here */
         out.write(byteBuffer, 0, copied)
         copied = 0
@@ -85,6 +87,7 @@ class TeraOutputFormat extends FileOutputFormat[Array[Byte], Array[Byte]] {
 
     def close(context : TaskAttemptContext) = {
       /* unconditional flush here */
+      totalOutputBytes+=copied
       out.write(byteBuffer, 0, copied)
       copied = 0
       /* put buffer back */
@@ -98,7 +101,7 @@ class TeraOutputFormat extends FileOutputFormat[Array[Byte], Array[Byte]] {
       if(verbose) {
         val end = System.nanoTime()
         System.err.println(TeraSort.verbosePrefixHDFSOutput + " TID: " + TaskContext.get.taskAttemptId() +
-          " finished writing " + bufSize + " bytes, " + 
+          " finished writing " + totalOutputBytes + " bytes, " +
           BufferCache.getInstance.getCacheStatus + " jobtime: " + (end - start) / 1000 + " usec")
       }
     }

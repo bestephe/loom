@@ -66,14 +66,6 @@ public class BufferCache {
         return buf;
     }
 
-    public final long getTotalAccess(){
-        return totalAccess;
-    }
-
-    public final long getMissAccess(){
-        return missAccess;
-    }
-
     public synchronized String getCacheStatus(){
         return " byteBufferCache totalAccess: " + totalAccess +
                 " misses : " + missAccess +
