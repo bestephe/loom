@@ -56,6 +56,12 @@ object TeraSort {
     val options = new ParseTeraOptions
     options.parse(args)
 
+    if (options.getF22BufferSize % TeraInputFormat.RECORD_LEN != 0) {
+      System.err.println("F22 buffer size (" + options.getF22BufferSize +
+        " ) needs to be a multiple of TeraSort record size " + TeraInputFormat.RECORD_LEN)
+      System.exit(-1)
+    }
+
     println(" ##############################")
     println(options.getBanner)
     options.show_help()

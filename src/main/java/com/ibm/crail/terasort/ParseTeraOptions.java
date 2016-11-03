@@ -294,11 +294,6 @@ public class ParseTeraOptions {
             }
             if (cmd.hasOption("B")) {
                 f22BufferSize = sizeStrToBytesInt((cmd.getOptionValue("B")));
-                if(f22BufferSize%TeraInputFormat.RECORD_LEN() != 0){
-                    System.err.println("F22 buffer size (" + f22BufferSize+
-                            " ) needs to be a multiple of TeraSort record size " + TeraInputFormat.RECORD_LEN());
-                    System.exit(-1);
-                }
             }
             if (cmd.hasOption("w")) {
                 warmUpKeys = sizeStrToBytesLong((cmd.getOptionValue("w")));
