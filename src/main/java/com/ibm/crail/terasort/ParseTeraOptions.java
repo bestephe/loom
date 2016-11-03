@@ -219,7 +219,7 @@ public class ParseTeraOptions {
         }
     }
 
-    public long sizeStrToBytes(String str) {
+    private long sizeStrToBytesLong(String str) {
         String lower = str.toLowerCase();
         long val;
         if (lower.endsWith("k")) {
@@ -233,6 +233,22 @@ public class ParseTeraOptions {
         } else {
             // no suffix, so it's just a number in bytes
             val = Long.parseLong(lower);
+        }
+        return val;
+    }
+
+    private int sizeStrToBytesInt(String str) {
+        String lower = str.toLowerCase();
+        int val;
+        if (lower.endsWith("k")) {
+            val = Integer.parseInt(lower.substring(0, lower.length() - 1)) * 1000;
+        } else if (lower.endsWith("m")) {
+            val = Integer.parseInt(lower.substring(0, lower.length() - 1)) * 1000 * 1000;
+        } else if (lower.endsWith("g")) {
+            val = Integer.parseInt(lower.substring(0, lower.length() - 1)) * 1000 * 1000 * 1000;
+        } else {
+            // no suffix, so it's just a number in bytes
+            val = Integer.parseInt(lower);
         }
         return val;
     }
@@ -265,10 +281,10 @@ public class ParseTeraOptions {
                         cmd.getOptionValue("s").trim());
             }
             if (cmd.hasOption("b")) {
-                kryoBufferSize = Integer.parseInt((cmd.getOptionValue("b")));
+                kryoBufferSize = sizeStrToBytesInt((cmd.getOptionValue("b")));
             }
             if (cmd.hasOption("B")) {
-                f22BufferSize = Integer.parseInt((cmd.getOptionValue("B")));
+                f22BufferSize = sizeStrToBytesInt((cmd.getOptionValue("B")));
                 if(f22BufferSize%TeraInputFormat.RECORD_LEN() != 0){
                     System.err.println("F22 buffer size (" + f22BufferSize+
                             " ) needs to be a multiple of TeraSort record size " + TeraInputFormat.RECORD_LEN());
@@ -276,10 +292,10 @@ public class ParseTeraOptions {
                 }
             }
             if (cmd.hasOption("w")) {
-                warmUpKeys = Long.parseLong((cmd.getOptionValue("w")));
+                warmUpKeys = sizeStrToBytesLong((cmd.getOptionValue("w")));
             }
             if (cmd.hasOption("p")) {
-                paritionSize = sizeStrToBytes(cmd.getOptionValue("p"));
+                paritionSize = sizeStrToBytesLong(cmd.getOptionValue("p"));
                 isPartitionSet = true;
             }
             if (cmd.hasOption("S")) {
