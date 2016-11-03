@@ -63,14 +63,7 @@ class TeraInputFormat extends FileInputFormat[Array[Byte], Array[Byte]] {
     private var incomingBytes:Int = 0
     private var copiedSoFar:Int = 0
     private var hitEnd:Boolean = false
-
-    private def showStats(): Unit = {
-      val ctx = TaskContext.get
-      val stageId = ctx.stageId
-      val partId = ctx.partitionId
-      //val hostname = ctx.taskMetrics.
-      println(s"Stage: $stageId, Partition: $partId")
-    }
+    private val verbose = TaskContext.get().getLocalProperty(TeraSort.verboseKey).toBoolean
 
     //this function must be called just once !!
     private def fillUpBigBuffer(): Unit = {
@@ -88,11 +81,13 @@ class TeraInputFormat extends FileInputFormat[Array[Byte], Array[Byte]] {
       }
       /* reset used */
       copiedSoFar = 0
-      val timeUs = (System.nanoTime() - start)/1000
-      System.err.println(TeraSort.verbosePrefixHDFSInput + " TID: " + TaskContext.get.taskAttemptId() +
-        " HDFS read bytes: " + incomingBytes +
-        " time : " + timeUs  + " usec , or " +
-        (incomingBytes.asInstanceOf[Long] * 8)/timeUs + " Mbps")
+      if(verbose) {
+        val timeUs = (System.nanoTime() - start) / 1000
+        System.err.println(TeraSort.verbosePrefixHDFSInput + " TID: " + TaskContext.get.taskAttemptId() +
+          " HDFS read bytes: " + incomingBytes +
+          " time : " + timeUs + " usec , or " +
+          (incomingBytes.asInstanceOf[Long] * 8) / timeUs + " Mbps")
+      }
     }
 
     override final def nextKeyValue() : Boolean = {
@@ -143,7 +138,10 @@ class TeraInputFormat extends FileInputFormat[Array[Byte], Array[Byte]] {
       byteArray = null
       BufferCache.getInstance().putBuffer(serBuffer)
       in.close()
-      System.err.println(TeraSort.verbosePrefixHDFSInput + " TID: " + TaskContext.get.taskAttemptId() + " finished ")
+      if(verbose){
+        System.err.println(TeraSort.verbosePrefixHDFSInput + " TID: " + TaskContext.get.taskAttemptId() +
+          " finished, processed " + incomingBytes + " bytes, " + BufferCache.getInstance.getCacheStatus)
+      }
     }
     override final def getCurrentKey : Array[Byte] = key
     override final def getCurrentValue : Array[Byte] = value

@@ -28,6 +28,7 @@ import org.apache.hadoop.mapreduce.{JobContext, OutputCommitter, RecordWriter, T
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.hadoop.mapreduce.lib.output.{FileOutputCommitter, FileOutputFormat}
 import org.apache.hadoop.mapreduce.security.TokenCache
+import org.apache.spark.TaskContext
 
 object TeraOutputFormat {
   val FINAL_SYNC_ATTRIBUTE = "mapreduce.terasort.final.sync"
@@ -55,10 +56,14 @@ class TeraOutputFormat extends FileOutputFormat[Array[Byte], Array[Byte]] {
 
     val finalSync = getFinalSync(job)
     val start = System.nanoTime()
-    System.err.println( " sync flag is : " + finalSync + " buffer size : " + bufSize)
     val cacheBuffer = BufferCache.getInstance().getByteArrayBuffer(bufSize)
     val byteBuffer = cacheBuffer.getByteArray
     var copied = 0
+    private val verbose = TaskContext.get().getLocalProperty(TeraSort.verboseKey).toBoolean
+    if(verbose) {
+      System.err.println(TeraSort.verbosePrefixHDFSOutput + " TID: " + TaskContext.get.taskAttemptId() +
+        " sync flag is : " + finalSync + " and output buffer size : " + bufSize)
+    }
 
     final def require(bytes: Int): Unit = {
       if(copied + bytes > bufSize) {
@@ -90,11 +95,12 @@ class TeraOutputFormat extends FileOutputFormat[Array[Byte], Array[Byte]] {
       }
       /* close the stream */
       out.close()
-      val end = System.nanoTime()
-      System.err.println("CACHE totalAccess: " + BufferCache.getInstance().getTotalAccess +
-        " misses : " + BufferCache.getInstance().getMissAccess +
-        " Hit Rate: " + (BufferCache.getInstance().getTotalAccess - BufferCache.getInstance().getMissAccess) * 100 / BufferCache.getInstance().getTotalAccess + " % " +
-      " job time: " + (end - start)/1000 + " usec")
+      if(verbose) {
+        val end = System.nanoTime()
+        System.err.println(TeraSort.verbosePrefixHDFSOutput + " TID: " + TaskContext.get.taskAttemptId() +
+          " finished writing " + bufSize + " bytes, " + 
+          BufferCache.getInstance.getCacheStatus + " jobtime: " + (end - start) / 1000 + " usec")
+      }
     }
   }
 

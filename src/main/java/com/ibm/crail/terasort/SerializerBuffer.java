@@ -26,52 +26,28 @@ import java.nio.ByteBuffer;
 
 public class SerializerBuffer {
     byte[] byteArray = null;
-    ByteBuffer byteBuffer = null;
-    int allocCapacity = -1;
     int usage = 0;
 
-    public SerializerBuffer(int size, boolean onlyByteArray){
-        allocCapacity = size;
-        byteArray = new byte[allocCapacity];
-        if(!onlyByteArray)
-            byteBuffer = ByteBuffer.allocateDirect(allocCapacity);
+    public SerializerBuffer(int size){
+        byteArray = new byte[size];
         usage = 0;
     }
 
-    public final ByteBuffer getByteBuffer(){
-        return byteBuffer;
-    }
     public final byte[] getByteArray(){
         return byteArray;
     }
 
     public final void put(){
-        if(byteBuffer != null)
-            byteBuffer.clear();
+        assert (usage == 1);
         usage--;
     }
 
-    /* prepare buffer for this particular size */
-    public final void get(int size){
-        if(size > allocCapacity)
-            throw new IllegalArgumentException(" not big enough alloc: " + allocCapacity + " askedFor: " + size);
-        if(byteBuffer != null)
-            byteBuffer.clear();
+    public final void get(){
+        assert (usage == 0);
         usage++;
     }
 
-    public final boolean readyForUse(int size, boolean onlyByteArray){
-        boolean sizeCons = (usage == 0 && size <= allocCapacity);
-        if(!sizeCons)
-            return false;
-        /* if we only want byte[] */
-        if(onlyByteArray)
-            return true;
-
-        /* we want both and one is not allocated */
-        if(byteBuffer == null)
-            byteBuffer = ByteBuffer.allocateDirect(allocCapacity);
-
-        return true;
+    public final boolean readyForUse(int size){
+        return (usage == 0 && size <= byteArray.length);
     }
 }

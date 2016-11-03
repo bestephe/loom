@@ -33,47 +33,50 @@ public class BufferCache {
     List<SerializerBuffer> serBufferCache = null;
 
     private BufferCache(){
-        serBufferCache = new LinkedList();
+        serBufferCache = new LinkedList<>();
         totalAccess = missAccess = 0;
     }
+
     public synchronized static BufferCache getInstance(){
         if(cache == null)
             cache = new BufferCache();
         return cache;
     }
 
-    public synchronized final SerializerBuffer getUnifedBuffer(int size) {
-        return _getUnifedBuffer(size, false);
-    }
     public synchronized final void putBuffer(SerializerBuffer buf){
         buf.put();
     }
-    public synchronized final SerializerBuffer getByteArrayBuffer(int size) {
-        return _getUnifedBuffer(size, true);
-    }
 
-    private final SerializerBuffer _getUnifedBuffer(int size, boolean onlyByteArray){
+    public synchronized final SerializerBuffer getByteArrayBuffer(int size) {
         int sz = serBufferCache.size();
         SerializerBuffer buf;
         totalAccess++;
         for (int i = 0; i < sz; i++) {
             buf = serBufferCache.get(i);
-            if(buf.readyForUse(size, onlyByteArray)) {
-                buf.get(size);
+            if(buf.readyForUse(size)) {
+                buf.get();
                 return buf;
             }
         }
         missAccess++;
         /* we are at this point where we dont have any buffer */
-        buf = new SerializerBuffer(size, onlyByteArray);
-        buf.get(size);
+        buf = new SerializerBuffer(size);
+        buf.get();
         serBufferCache.add(buf);
         return buf;
     }
+
     public final long getTotalAccess(){
         return totalAccess;
     }
+
     public final long getMissAccess(){
         return missAccess;
+    }
+
+    public synchronized String getCacheStatus(){
+        return " byteBufferCache totalAccess: " + totalAccess +
+                " misses : " + missAccess +
+                " hitrate: " + (totalAccess - missAccess) * 100 / totalAccess + " % " ;
     }
 }
