@@ -22,9 +22,7 @@
 
 package com.ibm.crail.terasort
 
-import com.google.common.primitives.Longs
-import com.google.common.primitives.Ints
-
+import com.google.common.primitives.{Ints, Longs}
 import org.apache.spark.Partitioner
 
 /**

@@ -22,11 +22,11 @@
 
 package com.ibm.crail.terasort.serializer
 
-import java.io._
-import java.io.IOException
+import java.io.{IOException, _}
 import java.nio.ByteBuffer
+
 import com.ibm.crail.terasort.TeraInputFormat
-import org.apache.spark.serializer.{DeserializationStream, SerializationStream, SerializerInstance, Serializer}
+import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 
 import scala.reflect.ClassTag
 
