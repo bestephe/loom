@@ -25,7 +25,7 @@ package com.ibm.crail.terasort.serializer
 import java.io._
 import java.nio.ByteBuffer
 
-import com.ibm.crail.terasort.TeraInputFormat
+import com.ibm.crail.terasort.{TeraSort, TeraInputFormat}
 import com.ibm.crail.{CrailBufferedOutputStream, CrailMultiStream}
 import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 import org.apache.spark.shuffle.crail.{CrailDeserializationStream, CrailSerializationStream, CrailSerializerInstance, CrailShuffleSerializer}
@@ -131,6 +131,7 @@ class F22DeserializerStream(inStream: CrailMultiStream) extends CrailDeserializa
   }
 
   override def read(buf: ByteBuffer): Int = {
+    val verbose = TaskContext.get().getLocalProperty(TeraSort.verboseKey).toBoolean
     val start = System.nanoTime()
     /* we attempt to read min(in file, buf.remaining) */
     val asked = buf.remaining()
@@ -138,20 +139,24 @@ class F22DeserializerStream(inStream: CrailMultiStream) extends CrailDeserializa
     while ( soFar < asked) {
       val ret = inStream.read(buf)
       if(ret == -1) {
-        val timeUs = (System.nanoTime() - start)/1000
-        val bw = soFar.asInstanceOf[Long] * 8/(timeUs + 1) //just to avoid divide by zero error
-        System.err.println(" TS TID: " + TaskContext.get().taskAttemptId() +
-          " crail reading bytes : " + soFar + " in " + timeUs + " usec or " + bw + " Mbps")
+        if(verbose) {
+          val timeUs = (System.nanoTime() - start) / 1000
+          val bw = soFar.asInstanceOf[Long] * 8 / (timeUs + 1) //just to avoid divide by zero error
+          System.err.println(TeraSort.verbosePrefixF22 + " TID: " + TaskContext.get().taskAttemptId() +
+            " crail reading bytes : " + soFar + " in " + timeUs + " usec or " + bw + " Mbps")
+        }
         /* we have reached the end of the file */
         return soFar
       }
       soFar+=ret
     }
     require(soFar == asked, " wrong read logic, asked: " + asked + " soFar " + soFar)
-    val timeUs = (System.nanoTime() - start)/1000
-    val bw = soFar.asInstanceOf[Long] * 8/(timeUs + 1) //just to avoid divide by zero error
-    System.err.println(" TS TID: " + TaskContext.get().taskAttemptId() +
-      " crail reading bytes : " + soFar + " in " + timeUs + " usec or " + bw + " Mbps")
+    if(verbose) {
+      val timeUs = (System.nanoTime() - start) / 1000
+      val bw = soFar.asInstanceOf[Long] * 8 / (timeUs + 1) //just to avoid divide by zero error
+      System.err.println(TeraSort.verbosePrefixF22 + " TID: " + TaskContext.get().taskAttemptId() +
+        " crail reading bytes : " + soFar + " in " + timeUs + " usec or " + bw + " Mbps")
+    }
     soFar
   }
 

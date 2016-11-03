@@ -83,7 +83,9 @@ private class OrderedByteBufferCache(size: Int) {
   }
 
   def getStatistics:String = {
-    "TID: " + TaskContext.get().taskAttemptId() + " OrderedCache: totalAccesses " + get.get() + " misses " + miss.get() + " puts " + put.get() + " hitrate " + ((get.get() - miss.get) * 100 / get.get()) + " %"
+    TeraSort.verbosePrefixCache + " TID: " + TaskContext.get().taskAttemptId() + " OrderedCache: totalAccesses " +
+      get.get() + " misses " + miss.get() + " puts " + put.get() +
+      " hitrate " + ((get.get() - miss.get) * 100 / get.get()) + " %"
   }
 }
 
@@ -104,6 +106,8 @@ private object OrderedByteBufferCache {
 class CrailShuffleNativeRadixSorter extends CrailShuffleSorter {
   override def sort[K, C](context: TaskContext, keyOrd: Ordering[K], ser: Serializer,
                           inputStream: CrailDeserializationStream): Iterator[Product2[K, C]] = {
+
+    val verbose = TaskContext.get().getLocalProperty(TeraSort.verboseKey).toBoolean
     /* we collect data in a list of OrderedByteBuffer */
     val bufferList = ListBuffer[OrderedByteBuffer]()
     var totalBytesRead = 0
@@ -129,14 +133,18 @@ class CrailShuffleNativeRadixSorter extends CrailShuffleSorter {
       totalBytesRead+=bytesRead
       /* now if we have read less than expected, that would be the end of the file */
     }
-    System.err.println("assembled " + totalBytesRead + " bytes in " + bufferList.length + " buffers")
+    if(verbose) {
+      System.err.println(TeraSort.verbosePrefixSorter + " TID: " + TaskContext.get().taskAttemptId() +
+        " assembled " + totalBytesRead + " bytes in " + bufferList.length + " buffers")
+    }
+
     require(totalBytesRead % TeraInputFormat.RECORD_LEN == 0 ,
       " totalBytesRead " + totalBytesRead + " is not a multiple of the record length " + TeraInputFormat.RECORD_LEN)
-    new ByteBufferIterator(bufferList, totalBytesRead).asInstanceOf[Iterator[Product2[K, C]]]
+    new ByteBufferIterator(bufferList, totalBytesRead, verbose).asInstanceOf[Iterator[Product2[K, C]]]
   }
 }
 
-private class ByteBufferIterator(bufferList: ListBuffer[OrderedByteBuffer], totalBytesRead: Int)
+private class ByteBufferIterator(bufferList: ListBuffer[OrderedByteBuffer], totalBytesRead: Int, verbose: Boolean)
   extends Iterator[Product2[Array[Byte], Array[Byte]]] {
 
   private val key = new Array[Byte](TeraInputFormat.KEY_LEN)
@@ -154,7 +162,9 @@ private class ByteBufferIterator(bufferList: ListBuffer[OrderedByteBuffer], tota
       /* hit the end */
       bufferList.foreach(p => ins.putBuffer(p))
       bufferReturned = true
-      System.err.println(ins.getStatistics)
+      if(verbose) {
+        System.err.println(ins.getStatistics)
+      }
     }
     more
   }

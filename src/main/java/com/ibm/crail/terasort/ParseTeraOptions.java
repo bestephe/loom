@@ -1,24 +1,24 @@
-    /*
- * Crail-terasort: An example terasort program for Sprak and crail
- *
- * Author: Animesh Trivedi <atr@zurich.ibm.com>
- *         Jonas Pfefferle <jpf@zurich.ibm.com>
- *
- * Copyright (C) 2016, IBM Corporation
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+/*
+* Crail-terasort: An example terasort program for Sprak and crail
+*
+* Author: Animesh Trivedi <atr@zurich.ibm.com>
+*         Jonas Pfefferle <jpf@zurich.ibm.com>
+*
+* Copyright (C) 2016, IBM Corporation
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*
+*/
 
 package com.ibm.crail.terasort;
 
@@ -43,6 +43,7 @@ public class ParseTeraOptions {
     private Hashtable<String,String> sparkParams;
     private long warmUpKeys;
     private String banner;
+    private boolean verbose;
 
     ParseTeraOptions(){
         banner = " _____              _____            _   \n" +
@@ -70,20 +71,21 @@ public class ParseTeraOptions {
         paritionSize = -1;
         isPartitionSet = false;
         syncOutput = false;
+        verbose = false;
 
         options.addOption("h", "help", false, "show help.");
         options.addOption("n", "testname", true, "<string> Name of the test valid tests are :\n" +
-                        "1. loadOnly: load and counts the input dataset\n" +
-                        "2. loadStore: load the input dataset and stores it\n" +
-                        "3. loadCount: load, shuffle, and then count the \n" +
-                        "   resulting dataset\n" +
-                        "4. loadCountStore: load, shuffle, count, and then \n" +
-                        "   store the resulting dataset\n" +
-                        "5. loadSort: load, shuffle, and then sort on key \n" +
-                        "   the resulting dataset\n" +
-                        "6. loadSortStore: load, shuffle, sort on key, then \n" +
-                        "   store the resulting dataset\n"+
-                        "the default is : loadSortStore");
+                "1. loadOnly: load and counts the input dataset\n" +
+                "2. loadStore: load the input dataset and stores it\n" +
+                "3. loadCount: load, shuffle, and then count the \n" +
+                "   resulting dataset\n" +
+                "4. loadCountStore: load, shuffle, count, and then \n" +
+                "   store the resulting dataset\n" +
+                "5. loadSort: load, shuffle, and then sort on key \n" +
+                "   the resulting dataset\n" +
+                "6. loadSortStore: load, shuffle, sort on key, then \n" +
+                "   store the resulting dataset\n"+
+                "the default is : loadSortStore");
         options.addOption("i", "inputDir", true, "<string> Name of the input directory");
         options.addOption("o", "outputDir", true, "<string> Name of the output directory");
         options.addOption("S", "sync", true, "<int> Takes 0 or 1 to pass to the sync call to the output \n" +
@@ -92,28 +94,31 @@ public class ParseTeraOptions {
                 "(default: input partition size, HDFS 2.6 has 128MB)");
         options.addOption("s", "useSerializer", true, "<string> You can use following serializers: \n" +
                 "none: uses the Spark default serializer \n" +
-                 "kryo: optimized Kryo for TeraSort \n" +
-                 "byte: a simple byte[] serializer \n" +
-                 "f22: an optimized crail-specific byte[] serializer\n" +
-                 "     f22 requires CrailShuffleNativeRadixSorter for sorting\n");
+                "kryo: optimized Kryo for TeraSort \n" +
+                "byte: a simple byte[] serializer \n" +
+                "f22: an optimized crail-specific byte[] serializer\n" +
+                "     f22 requires CrailShuffleNativeRadixSorter for sorting\n");
         options.addOption("O", "options", true, "string,string : Sets properties on the Spark context. The first \n" +
                 "string is the key, and the second is the value");
-        options.addOption("b", "kryoBufferSize", true, "<int> Buffer size for Kryo");
-        options.addOption("B", "f22BufferSize", true, "<int> Buffer size for F22");
+        options.addOption("b", "kryoBufferSize", true, "<int> Buffer size for Kryo (default: " + kryoBufferSize + ")");
+        options.addOption("B", "f22BufferSize", true, "<int> Buffer size for F22 (default: " + f22BufferSize + ")");
         options.addOption("w", "warmUpKeys", true, "<long> Number of keys for warmup, default: (" + warmUpKeys +
                 "), zero means no warmup");
+        options.addOption("v", "verbose", false, "Print verbose information and performance numbers (default "+
+                verbose + ")");
     }
 
     public String showOptions() {
         String str="\n";
-        str+= "testName          : " + testNames[testIndex] + " \n";
-        str+= "inputDir          : " + inputDir + "\n";
-        str+= "outputDir         : " + outputDir + "\n";
-        str+= "bufferSize        : " + "kryo: " + kryoBufferSize + " f22: " + f22BufferSize + "\n";
-        str+= "serializer        : " + serializer[serializerIndex] + "\n";
-        str+= "partitionSize     : " + ((isPartitionSet)?(paritionSize):("sizeNotSet, using the default from HDFS")) + "\n";
-        str+= "sync output       : " + syncOutput + "\n";
-        str+= "no of warmup keys : " + warmUpKeys + "\n";
+        str+= "TestName          : " + testNames[testIndex] + " \n";
+        str+= "InputDir          : " + inputDir + "\n";
+        str+= "OutputDir         : " + outputDir + "\n";
+        str+= "BufferSize        : " + "kryo: " + kryoBufferSize + " f22: " + f22BufferSize + "\n";
+        str+= "Serializer        : " + serializer[serializerIndex] + "\n";
+        str+= "PartitionSize     : " + ((isPartitionSet)?(paritionSize):("sizeNotSet, using the default from HDFS")) + "\n";
+        str+= "Sync output       : " + syncOutput + "\n";
+        str+= "No of warmup keys : " + warmUpKeys + "\n";
+        str+= "Verbose           : " + verbose + "\n";
         str+= "spark options : ";
         if(sparkParams.size() == 0)
             str+=" none " + " \n";
@@ -131,9 +136,9 @@ public class ParseTeraOptions {
     private int getMatchingIndex(String[] options, String name) {
         int i;
         for(i = 0; i < options.length; i++)
-        if (name.equalsIgnoreCase(options[i])){
-            return i;
-        }
+            if (name.equalsIgnoreCase(options[i])){
+                return i;
+            }
         throw  new IllegalArgumentException(name + " not found in " + options);
     }
 
@@ -210,6 +215,10 @@ public class ParseTeraOptions {
 
     public long getWarmUpKeys(){
         return warmUpKeys;
+    }
+
+    public Boolean getVerbose(){
+        return verbose;
     }
 
     public void setSparkOptions(SparkContext context){
@@ -312,6 +321,9 @@ public class ParseTeraOptions {
                 }
                 /* otherwise we got stuff */
                 sparkParams.put(vals[0].trim(), vals[1].trim());
+            }
+            if (cmd.hasOption("v")) {
+                verbose = true;
             }
         } catch (ParseException e) {
             System.err.println("Failed to parse command line properties" + e);

@@ -89,7 +89,7 @@ class TeraInputFormat extends FileInputFormat[Array[Byte], Array[Byte]] {
       /* reset used */
       copiedSoFar = 0
       val timeUs = (System.nanoTime() - start)/1000
-      System.err.println("TS: TID: " + TaskContext.get.taskAttemptId() +
+      System.err.println(TeraSort.verbosePrefixHDFSInput + " TID: " + TaskContext.get.taskAttemptId() +
         " HDFS read bytes: " + incomingBytes +
         " time : " + timeUs  + " usec , or " +
         (incomingBytes.asInstanceOf[Long] * 8)/timeUs + " Mbps")
@@ -143,11 +143,10 @@ class TeraInputFormat extends FileInputFormat[Array[Byte], Array[Byte]] {
       byteArray = null
       BufferCache.getInstance().putBuffer(serBuffer)
       in.close()
-      System.err.println("TS: TID: " + TaskContext.get.taskAttemptId() + " finished ")
+      System.err.println(TeraSort.verbosePrefixHDFSInput + " TID: " + TaskContext.get.taskAttemptId() + " finished ")
     }
     override final def getCurrentKey : Array[Byte] = key
     override final def getCurrentValue : Array[Byte] = value
     override final def getProgress : Float = copiedSoFar / incomingBytes
   }
-
 }

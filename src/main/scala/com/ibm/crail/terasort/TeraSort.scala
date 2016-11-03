@@ -34,6 +34,14 @@ object TeraSort {
 
   val f22BufSizeKey = "spark.terasort.f22buffersize"
   val kryoBufSizeKey = "spark.terasort.kryobuffersize"
+  val verboseKey = "spark.terasort.verbose"
+
+  val verbosePrefixF22 = "F22 | "
+  val verbosePrefixSorter = "Sorter | "
+  val verbosePrefixIterator = "SorterIterator | "
+  val verbosePrefixCache = "Cache | "
+  val verbosePrefixHDFSInput = "HDFSInput | "
+  val verbosePrefixHDFSOutput = "HDFSOutput | "
 
   val keyOrder = new Ordering[Array[Byte]] {
     override def compare (a:Array[Byte], b:Array[Byte]) = UnsignedBytes.lexicographicalComparator.compare(a,b)
@@ -70,6 +78,7 @@ object TeraSort {
     /* set all the properties that we read downstream in executors */
     sc.setLocalProperty(f22BufSizeKey, options.getF22BufferSize.toString)
     sc.setLocalProperty(kryoBufSizeKey, options.getKryoBufferSize.toString)
+    sc.setLocalProperty(verboseKey, options.getVerbose.toString)
 
     if(options.getWarmUpKeys > 0) {
       doWarmup(sc, options)
