@@ -1,4 +1,4 @@
-/*
+    /*
  * Crail-terasort: An example terasort program for Sprak and crail
  *
  * Author: Animesh Trivedi <atr@zurich.ibm.com>
@@ -23,13 +23,11 @@
 package com.ibm.crail.terasort;
 
 import org.apache.commons.cli.*;
-import org.apache.spark.SparkConf;
+import org.apache.spark.SparkContext;
 
-
-import java.io.Serializable;
 import java.util.Hashtable;
 
-public class ParseTeraOptions implements Serializable {
+public class ParseTeraOptions {
     private Options options;
     private String testNames[];
     private int testIndex;
@@ -37,15 +35,25 @@ public class ParseTeraOptions implements Serializable {
     private int serializerIndex;
     private String inputDir;
     private String outputDir;
-    private int bufferSize;
+    private int kryoBufferSize;
+    private int f22BufferSize;
     private long paritionSize;
     private boolean isPartitionSet;
     private boolean syncOutput;
     private Hashtable<String,String> sparkParams;
+    private long warmUpKeys;
+    private String banner;
 
     ParseTeraOptions(){
+        banner = " _____              _____            _   \n" +
+                "|_   _|            /  ___|          | |  \n" +
+                "  | | ___ _ __ __ _\\ `--.  ___  _ __| |_ \n" +
+                "  | |/ _ \\ '__/ _` |`--. \\/ _ \\| '__| __|\n" +
+                "  | |  __/ | | (_| /\\__/ / (_) | |  | |_ \n" +
+                "  \\_/\\___|_|  \\__,_\\____/ \\___/|_|   \\__|\n";
+
         options = new Options();
-        sparkParams = new Hashtable<String,String>();
+        sparkParams = new Hashtable<>();
 
         testNames = new String[]{"loadonly", "loadstore", "loadcount", "loadcountstore", "loadsort", "loadsortstore"};
         testIndex = 5; /* loadsortstore is the default */
@@ -55,7 +63,9 @@ public class ParseTeraOptions implements Serializable {
 
         inputDir = null;
         outputDir= null;
-        bufferSize = 4096; //1048576;
+        f22BufferSize = 104857600;
+        kryoBufferSize = 1048576;
+        warmUpKeys = 0; /* zero means no warm up */
 
         paritionSize = -1;
         isPartitionSet = false;
@@ -88,19 +98,22 @@ public class ParseTeraOptions implements Serializable {
                  "     f22 requires CrailShuffleNativeRadixSorter for sorting\n");
         options.addOption("O", "options", true, "string,string : Sets properties on the Spark context. The first \n" +
                 "string is the key, and the second is the value");
-        options.addOption("b", "bufferSize", true, "<int> Buffer size for Kryo (only valid for kryo)");
-        //options.addOption("K", "useKryoOptimizations", true, "<int> use kryoOptimizations (NYI)");
+        options.addOption("b", "kryoBufferSize", true, "<int> Buffer size for Kryo");
+        options.addOption("B", "f22BufferSize", true, "<int> Buffer size for F22");
+        options.addOption("w", "warmUpKeys", true, "<long> Number of keys for warmup, default: (" + warmUpKeys +
+                "), zero means no warmup");
     }
 
     public String showOptions() {
         String str="\n";
-        str+= "testName      : " + testNames[testIndex] + " \n";
-        str+= "inputDir      : " + inputDir + "\n";
-        str+= "outputDir     : " + outputDir + "\n";
-        str+= "bufferSize    : " + bufferSize + "\n";
-        str+= "serializer    : " + serializer[serializerIndex] + "\n";
-        str+= "partitionSize : " + ((isPartitionSet)?(paritionSize):("sizeNotSet, using the default from HDFS")) + "\n";
-        str+= "sync output   : " + syncOutput + "\n";
+        str+= "testName          : " + testNames[testIndex] + " \n";
+        str+= "inputDir          : " + inputDir + "\n";
+        str+= "outputDir         : " + outputDir + "\n";
+        str+= "bufferSize        : " + "kryo: " + kryoBufferSize + " f22: " + f22BufferSize + "\n";
+        str+= "serializer        : " + serializer[serializerIndex] + "\n";
+        str+= "partitionSize     : " + ((isPartitionSet)?(paritionSize):("sizeNotSet, using the default from HDFS")) + "\n";
+        str+= "sync output       : " + syncOutput + "\n";
+        str+= "no of warmup keys : " + warmUpKeys + "\n";
         str+= "spark options : ";
         if(sparkParams.size() == 0)
             str+=" none " + " \n";
@@ -133,8 +146,12 @@ public class ParseTeraOptions implements Serializable {
         return syncOutput;
     }
 
-    public int getBufferSize(){
-        return bufferSize;
+    public int getKryoBufferSize(){
+        return kryoBufferSize;
+    }
+
+    public int getF22BufferSize(){
+        return f22BufferSize;
     }
 
     public String getInputDir(){
@@ -187,10 +204,18 @@ public class ParseTeraOptions implements Serializable {
         return serializerIndex == 3;
     }
 
-    public void setSparkOptions(SparkConf conf){
+    public String getBanner(){
+        return banner;
+    }
+
+    public long getWarmUpKeys(){
+        return warmUpKeys;
+    }
+
+    public void setSparkOptions(SparkContext context){
         for (String key : sparkParams.keySet()){
             System.err.println(" Setting up key: "+ key + " value: " + sparkParams.get(key));
-            conf.set(key, sparkParams.get(key));
+            context.setLocalProperty(key, sparkParams.get(key));
         }
     }
 
@@ -240,7 +265,18 @@ public class ParseTeraOptions implements Serializable {
                         cmd.getOptionValue("s").trim());
             }
             if (cmd.hasOption("b")) {
-                bufferSize = Integer.parseInt((cmd.getOptionValue("b")));
+                kryoBufferSize = Integer.parseInt((cmd.getOptionValue("b")));
+            }
+            if (cmd.hasOption("B")) {
+                f22BufferSize = Integer.parseInt((cmd.getOptionValue("B")));
+                if(f22BufferSize%TeraInputFormat.RECORD_LEN() != 0){
+                    System.err.println("F22 buffer size (" + f22BufferSize+
+                            " ) needs to be a multiple of TeraSort record size " + TeraInputFormat.RECORD_LEN());
+                    System.exit(-1);
+                }
+            }
+            if (cmd.hasOption("w")) {
+                warmUpKeys = Long.parseLong((cmd.getOptionValue("w")));
             }
             if (cmd.hasOption("p")) {
                 paritionSize = sizeStrToBytes(cmd.getOptionValue("p"));
