@@ -25,11 +25,11 @@ package com.ibm.crail.terasort.serializer
 import java.io._
 import java.nio.ByteBuffer
 
-import com.ibm.crail.terasort.{BufferCache, SerializerBuffer, TeraInputFormat}
-import com.ibm.crail.{CrailBufferedOutputStream, CrailInputStream, CrailMultiStream}
-import org.apache.spark.{ShuffleDependency, TaskContext}
+import com.ibm.crail.terasort.TeraInputFormat
+import com.ibm.crail.{CrailBufferedOutputStream, CrailMultiStream}
 import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 import org.apache.spark.shuffle.crail.{CrailDeserializationStream, CrailSerializationStream, CrailSerializerInstance, CrailShuffleSerializer}
+import org.apache.spark.{ShuffleDependency, TaskContext}
 
 import scala.reflect.ClassTag
 
@@ -124,57 +124,55 @@ class F22SerializerStream(outStream: CrailBufferedOutputStream) extends CrailSer
 }
 
 class F22DeserializerStream(inStream: CrailMultiStream) extends CrailDeserializationStream {
-  val incomingData = inStream.available()
-  /* FIXME: we don't need a unified buffer */
-  val bufX :SerializerBuffer = BufferCache.getInstance().getUnifedBuffer(incomingData)
-
-  var remaining = numElements()
-
-  fillUpBuffer()
 
   override final def readObject[T: ClassTag](): T = {
     throw new IOException("this call is not yet supported : readObject " +
       " \n perhaps you forgot to set spark.crail.shuffle.sorter setting in your spark conf to match F22")
   }
 
-  final def fillUpBuffer(): Unit = {
+  override def read(buf: ByteBuffer): Int = {
     val start = System.nanoTime()
-    var so_far = 0
-    val bb = bufX.getByteBuffer
-
-    bb.limit(incomingData)
-    bb.position(0)
-    val ret = inStream.read(bb)
-    if (ret < 0) {
-      /* mark the end of the stream : this is spark's way off saying EOF */
-      throw new EOFException()
+    /* we attempt to read min(in file, buf.remaining) */
+    val asked = buf.remaining()
+    var soFar = 0
+    while ( soFar < asked) {
+      val ret = inStream.read(buf)
+      if(ret == -1) {
+        val timeUs = (System.nanoTime() - start)/1000
+        val bw = soFar.asInstanceOf[Long] * 8/(timeUs + 1) //just to avoid divide by zero error
+        System.err.println(" TS TID: " + TaskContext.get().taskAttemptId() +
+          " crail reading bytes : " + soFar + " in " + timeUs + " usec or " + bw + " Mbps")
+        /* we have reached the end of the file */
+        return soFar
+      }
+      soFar+=ret
     }
-    /* we clean the ByteBuffer */
-    bb.clear()
+    require(soFar == asked, " wrong read logic, asked: " + asked + " soFar " + soFar)
     val timeUs = (System.nanoTime() - start)/1000
-    val bw = incomingData.asInstanceOf[Long] * 8/(timeUs + 1) //just to avoid divide by zero error
+    val bw = soFar.asInstanceOf[Long] * 8/(timeUs + 1) //just to avoid divide by zero error
     System.err.println(" TS TID: " + TaskContext.get().taskAttemptId() +
-      " crail reading bytes : " + incomingData + " in " + timeUs + " usec or " + bw + " Mbps")
+      " crail reading bytes : " + soFar + " in " + timeUs + " usec or " + bw + " Mbps")
+    soFar
   }
 
   override final def readKey[T: ClassTag](): T = {
-    if(remaining == 0 ) {
+
+    val key = new Array[Byte](TeraInputFormat.KEY_LEN)
+    val ret = inStream.read(key)
+    if(ret == -1) {
       /* mark the end of the stream : this is caught by spark to mark EOF - duh ! */
       throw new EOFException()
     }
-    val key = new Array[Byte](TeraInputFormat.KEY_LEN)
-    bufX.getByteBuffer.get(key)
-    remaining-=1
     key.asInstanceOf[T]
   }
 
   override final def readValue[T: ClassTag](): T = {
-    if(remaining == 0 ) {
+    val value = new Array[Byte](TeraInputFormat.VALUE_LEN)
+    val ret = inStream.read(value)
+    if(ret == -1) {
       /* mark the end of the stream : this is caught by spark to mark EOF - duh ! */
       throw new EOFException()
     }
-    val value = new Array[Byte](TeraInputFormat.VALUE_LEN)
-    bufX.getByteBuffer.get(value)
     value.asInstanceOf[T]
   }
 
@@ -182,18 +180,10 @@ class F22DeserializerStream(inStream: CrailMultiStream) extends CrailDeserializa
     if (inStream != null) {
       inStream.close()
     }
-    if(bufX != null){
-      BufferCache.getInstance().putBuffer(bufX)
-    }
   }
 
-  override def getFlatBuffer(): ByteBuffer = {
-    bufX.getByteBuffer
+  override def available(): Int = {
+    //FIMXE: this is not ready, don't use this interface
+    inStream.available()
   }
-
-  override def valueSize(): Int = TeraInputFormat.VALUE_LEN
-
-  override def keySize(): Int = TeraInputFormat.KEY_LEN
-
-  override def numElements(): Int = incomingData /  TeraInputFormat.RECORD_LEN
 }

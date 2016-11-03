@@ -22,13 +22,18 @@
 
 package com.ibm.crail.terasort
 
+import java.util.Random
+
 import com.google.common.primitives.UnsignedBytes
-import com.ibm.crail.terasort.serializer.{F22Serializer, ByteSerializer, KryoSerializer}
-import org.apache.spark.rdd._
-import org.apache.spark.{SparkConf, SparkContext}
+import com.ibm.crail.terasort.serializer.{ByteSerializer, F22Serializer, KryoSerializer}
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
+import org.apache.spark.rdd._
+import org.apache.spark.{SparkConf, SparkContext, Partitioner}
 
 object TeraSort {
+
+  val f22BufSizeKey = "spark.terasort.f22buffersize"
+  val kryoBufSizeKey = "spark.terasort.kryobuffersize"
 
   val keyOrder = new Ordering[Array[Byte]] {
     override def compare (a:Array[Byte], b:Array[Byte]) = UnsignedBytes.lexicographicalComparator.compare(a,b)
@@ -39,11 +44,12 @@ object TeraSort {
   }
 
   def doSortWithOpts (args: Array[String], scin: Option[SparkContext]) {
+
     val options = new ParseTeraOptions
     options.parse(args)
 
     println(" ##############################")
-    println(" This is the test code that take parameters.")
+    println(options.getBanner)
     options.show_help()
     options.showOptions()
     println(" ##############################")
@@ -60,7 +66,14 @@ object TeraSort {
         new SparkContext(conf)
     }
     /* now we set the params */
-    options.setSparkOptions(sc.getConf)
+    options.setSparkOptions(sc)
+    /* set all the properties that we read downstream in executors */
+    sc.setLocalProperty(f22BufSizeKey, options.getF22BufferSize.toString)
+    sc.setLocalProperty(kryoBufSizeKey, options.getKryoBufferSize.toString)
+
+    if(options.getWarmUpKeys > 0) {
+      doWarmup(sc, options)
+    }
 
     try {
       if(options.isPartitionSet) {
@@ -85,7 +98,7 @@ object TeraSort {
         dataset.saveAsNewAPIHadoopFile[TeraOutputFormat](outputFile)
       } else {
         var exe = ""
-        val partit = new TeraSortPartitionerInt(dataset.partitions.size)
+        val partit = new TeraSortPartitionerInt(dataset.partitions.length)
         /* check if we need sorting order or not */
         val sorted = new ShuffledRDD[Array[Byte], Array[Byte], Array[Byte]](dataset, partit)
         val setSorting = options.isTestLoadSort || options.isTestLoadSortStore
@@ -98,7 +111,7 @@ object TeraSort {
         }
         /* which serializer to use */
         if (options.isSerializerKryo) {
-          sorted.setSerializer(new KryoSerializer(options))
+          sorted.setSerializer(new KryoSerializer())
           exe += " serializer : Kryo "
         } else if (options.isSerializerByte) {
           sorted.setSerializer(new ByteSerializer())
@@ -130,7 +143,7 @@ object TeraSort {
       val end = java.lang.System.currentTimeMillis()
       println(setting)
       println("-------------------------------------------")
-      println("Execution time: %.3fsec".format((end-beg)/1000.0) + " partition size was: " + dataset.partitions.size)
+      println("Execution time: %.3fsec".format((end-beg)/1000.0) + " partition size was: " + dataset.partitions.length)
       println("-------------------------------------------")
     }
     finally {
@@ -138,5 +151,69 @@ object TeraSort {
         sc.stop()
       }
     }
+  }
+
+  def doWarmup (scin: SparkContext, options: ParseTeraOptions): Unit = {
+
+    /* a simple Partitioner. We can also use TeraSortPartitionerInt instead of it */
+    case class ShufflePartitioner(numPartitions: Int) extends Partitioner {
+      require(numPartitions >= 0, s"Number of partitions ($numPartitions) cannot be negative.")
+
+      def nonNegativeMod(x: Int, mod: Int): Int = {
+        val rawMod = x % mod
+        rawMod + (if (rawMod < 0) mod else 0)
+      }
+
+      /* we expect key to be a byte array - a byte gives us 256 partitions */
+      def getPartition(key: Any): Int = key match {
+        case null => 0
+        case _ => nonNegativeMod(key.asInstanceOf[Array[Byte]](0), numPartitions)
+      }
+
+      override def equals(other: Any): Boolean = other match {
+        case h: ShufflePartitioner =>
+          h.numPartitions == numPartitions
+        case _ =>
+          false
+      }
+
+      override def hashCode: Int = numPartitions
+    }
+
+    val outputFile = "/terasort-output-warmup"
+    val cores = if(scin.getConf.contains("spark.executor.cores")) scin.getConf.get("spark.executor.cores").toInt else 1
+    val exes = if(scin.getConf.contains("spark.executor.instances")) scin.getConf.get("spark.executor.instances").toInt else 2
+
+    val totalWorkers = cores * exes
+    val totalKeys = options.getWarmUpKeys
+
+    println("warmup*, executors " + exes + ", cores " + cores + ", totalKeys " + totalKeys)
+    /* we want atleast one key per worker */
+    val perWorker = if(totalKeys < totalWorkers) 1 else (totalKeys/totalWorkers).asInstanceOf[Int]
+
+    val inx = scin.parallelize(0 until totalWorkers, totalWorkers).flatMap { p =>
+      val ranGen = new Random
+      val arr1 = new Array[(Array[Byte], Array[Byte])](perWorker)
+      for (i <- 0 until perWorker) {
+        val key = new Array[Byte](TeraInputFormat.KEY_LEN)
+        ranGen.nextBytes(key)
+        val value = new Array[Byte](TeraInputFormat.VALUE_LEN)
+        arr1(i) = (key, value)
+      }
+      arr1
+    }
+
+    val shuffle = new ShuffledRDD[Array[Byte], Array[Byte], Array[Byte]](inx, new ShufflePartitioner(totalWorkers))
+    shuffle.setKeyOrdering(keyOrder)
+
+    if (options.isSerializerKryo) {
+      shuffle.setSerializer(new KryoSerializer())
+    } else if (options.isSerializerByte) {
+      shuffle.setSerializer(new ByteSerializer())
+    }else if (options.isSerializerF22) {
+      shuffle.setSerializer(new F22Serializer())
+    }
+    val out = new PairRDDFunctions(shuffle)
+    out.saveAsNewAPIHadoopFile[TeraOutputFormat](outputFile)
   }
 }
