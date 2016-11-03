@@ -28,15 +28,16 @@ import javax.annotation.Nullable
 
 import com.esotericsoftware.kryo.io.{Input => KryoInput, Output => KryoOuput}
 import com.esotericsoftware.kryo.{Kryo, KryoException}
-import com.ibm.crail.terasort.ParseTeraOptions
+import com.ibm.crail.terasort.{TeraSort, ParseTeraOptions}
+import org.apache.spark.TaskContext
 import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 
 import scala.reflect.ClassTag
 
-class KryoSerializer(val parseTeraOptions: ParseTeraOptions) extends Serializer with Serializable {
+class KryoSerializer() extends Serializer with Serializable {
   /* FIXME: can you have to cache thread instances here? */
   override final def newInstance(): SerializerInstance = {
-    new KryoSerializerInstance(parseTeraOptions)
+    new KryoSerializerInstance()
   }
 
   // This was the culprit that stops us from running serialized sort
@@ -48,7 +49,7 @@ class KryoSerializer(val parseTeraOptions: ParseTeraOptions) extends Serializer 
 }
 
 
-class KryoSerializerInstance(val parseTeraOptions: ParseTeraOptions) extends SerializerInstance {
+class KryoSerializerInstance() extends SerializerInstance {
   /* before the borrow call */
   @Nullable private[this] var cachedKryo: Kryo = borrowKryo()
 
@@ -152,7 +153,7 @@ class KryoSerializerInstance(val parseTeraOptions: ParseTeraOptions) extends Ser
 class KryoSerializerStream(teraSerializerInstance: KryoSerializerInstance, outStream: OutputStream) extends SerializationStream {
 
   private[this] var output:KryoOuput = new KryoOuput(outStream,
-    teraSerializerInstance.parseTeraOptions.getBufferSize)
+    TaskContext.get().getLocalProperty(TeraSort.kryoBufSizeKey).toInt)
   private[this] var kryo: Kryo = teraSerializerInstance.borrowKryo()
 
   override final def writeObject[T: ClassTag](t: T): SerializationStream = {
@@ -194,7 +195,7 @@ class KryoSerializerStream(teraSerializerInstance: KryoSerializerInstance, outSt
 class KryoDeserializerStream(teraSerializerInstance: KryoSerializerInstance, inStream: InputStream) extends DeserializationStream {
 
   private[this] var input: KryoInput = new KryoInput(inStream,
-    teraSerializerInstance.parseTeraOptions.getBufferSize)
+    TaskContext.get().getLocalProperty(TeraSort.kryoBufSizeKey).toInt)
   private[this] var kryo: Kryo = teraSerializerInstance.borrowKryo()
 
   override final def readObject[T: ClassTag](): T = {
