@@ -283,10 +283,23 @@ config NET_RX_BUSY_POLL
 	default y
 
 config BQL
-	bool
+	bool "Byte Queue Limits"
 	depends on SYSFS
 	select DQL
 	default y
+	---help---
+	  Byte queue limits are a mechanism to limit the size of the transmit
+	  hardware queue on a NIC by a number of bytes.  The goal of these byte
+	  queue limits is to reduce latency caused by exessive queueing in
+	  hardware without sacrificing throughput.
+
+config LOOM
+	bool "enable networking support for Loom"
+	depends on SYSFS
+	default y
+	---help---
+	  Loom enables application and admin control over packet scheduling.
+	  This option is needed to support the Loom Qdisc.
 
 config BPF_JIT
 	bool "enable BPF Just In Time compiler"

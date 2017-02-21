@@ -296,6 +296,15 @@ config NET_SCH_HHF
 	  To compile this driver as a module, choose M here: the module
 	  will be called sch_hhf.
 
+config NET_SCH_LOOM
+	tristate "Loom packet scheduling"
+	depends on LOOM
+	help
+	  Say Y here if you want to use the Loom packet scheduling algorithm.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called sch_loom.
+
 config NET_SCH_PIE
 	tristate "Proportional Integral controller Enhanced (PIE) scheduler"
 	help
