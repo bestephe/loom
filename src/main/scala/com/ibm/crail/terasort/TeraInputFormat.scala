@@ -82,7 +82,7 @@ class TeraInputFormat extends FileInputFormat[Array[Byte], Array[Byte]] {
       /* reset used */
       copiedSoFar = 0
       if(verbose) {
-        val timeUs = (System.nanoTime() - start) / 1000
+        val timeUs = ((System.nanoTime() - start) / 1000) + 1
         System.err.println(TeraSort.verbosePrefixHDFSInput + " TID: " + TaskContext.get.taskAttemptId() +
           " HDFS read bytes: " + incomingBytes +
           " time : " + timeUs + " usec , or " +
@@ -114,10 +114,13 @@ class TeraInputFormat extends FileInputFormat[Array[Byte], Array[Byte]] {
       val start = offset + fileSplit.getStart
       in.seek(start)
       //check how much is available in the file, with a full multiple this should be good
-      length = Math.min(fileSplit.getLength, in.available()) - offset
+      val totalAvailable = fs.getContentSummary(p).getLength - start
+      length = Math.min(fileSplit.getLength, totalAvailable) - offset
       val rem = (start + length)%TeraInputFormat.RECORD_LEN
       val endOffset = if(rem == 0) start + length else (start + length + (TeraInputFormat.RECORD_LEN - rem))
       incomingBytes = (endOffset - start).toInt
+
+      System.err.println("initialize: offset = " + offset + ", length = " + length + ", available = " + in.available())
 
       require((incomingBytes % TeraInputFormat.RECORD_LEN) == 0 ,
         " incomingBytes did not alight : " + incomingBytes + " mod : " + (incomingBytes % TeraInputFormat.RECORD_LEN))
