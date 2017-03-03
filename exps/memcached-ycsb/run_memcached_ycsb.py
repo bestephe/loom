@@ -4,6 +4,7 @@ import argparse
 import glob
 import os
 import platform
+import re
 import subprocess
 import yaml
 from time import sleep
@@ -11,6 +12,8 @@ from time import sleep
 YCSB_DIR = '/scratch/bes/git/YCSB/'
 WORKLOAD = 'workload_read_asym'
 PROPERTIES = 'memcached_read_asym.properties'
+
+FLOAT_DESC_STR = '[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?'
 
 def memcached_ycsb_load():
     load_cmd_tmpl = 'cd %(ycsb_dir)s; ./bin/ycsb load memcached -s ' \
@@ -21,9 +24,7 @@ def memcached_ycsb_load():
         'properties': os.path.abspath(PROPERTIES),
     }
     load_cmd = load_cmd_tmpl % load_cmd_args
-    output = subprocess.check_call(load_cmd, shell=True)
-    print 'Load output:'
-    print output
+    subprocess.check_call(load_cmd, shell=True)
 
 def memcached_ycsb_run():
     run_cmd_tmpl = 'cd %(ycsb_dir)s; ./bin/ycsb run memcached -s ' \
@@ -34,14 +35,31 @@ def memcached_ycsb_run():
         'properties': os.path.abspath(PROPERTIES),
     }
     run_cmd = run_cmd_tmpl % run_cmd_args
-    output = subprocess.check_call(run_cmd, shell=True)
+    proc = subprocess.Popen(run_cmd, shell=True,
+        stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+    out = proc.stdout.read()
     print 'Run output:'
-    print output
+    print out
+
+    # Get the throughput
+    ops_persec = -1
+    for l in out.split('\n'):
+        match = re.match(r".*OVERALL.*Throughput.*, (%s).*" \
+            % FLOAT_DESC_STR, l)
+        if match:
+            ops_persec = float(match.groups()[0])
+
+    # Convert throughput to bps
+    bytes_per_op = (128 * 1024)
+    gbps = ops_persec * bytes_per_op * 8 / 1e9
+    return gbps
 
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description='Run YCSB for memcached for '
         'the rate-limiting and fairness experiment')
+    parser.add_argument('--expname', help='A string to use to identify the '
+        'output file from this experiment.')
     args = parser.parse_args()
 
     # Connect to the remote host, configure it, and start the memcached servers
@@ -52,7 +70,14 @@ def main():
     memcached_ycsb_load()
 
     # YCSB: Run the benchmark
-    memcached_ycsb_run()
+    gbps = memcached_ycsb_run()
+
+    # Output the results
+    print 'gbps:', gbps
+    if args.expname:
+        res_fname = 'results/memcachd_rate.%s.yaml' % args.expname
+        with open(res_fname, 'w') as resf:
+            yaml.dump({'gbps': gbps}, resf)
 
 if __name__ == '__main__':
     main()
