@@ -42,7 +42,7 @@ sed -i 's/<value>5<\/value>/<value>50<\/value>/g' yarn-site.xml
 cd ..
 
 #sed -i 's/home\/ubuntu\/logs\/hadoop/workspace\/logs\/hadoop/g' run.sh
-#sed -i 's/java-1.7.0/java-1.8.0/g' run.sh
+sed -i 's/java-1.7.0/java-1.8.0/g' run.sh
 #sed -i 's/home\/ubuntu/workspace/g' run.sh
 
 cd software
