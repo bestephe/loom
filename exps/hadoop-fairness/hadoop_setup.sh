@@ -8,7 +8,7 @@ MASTER_IP=$1
 
 sudo apt-get update --fix-missing
 sudo apt-get -y install vim
-sudo apt-get -y install openjdk-7-jdk
+sudo apt-get -y install openjdk-8-jdk
 sudo apt-get -y install pdsh
 
 mkdir -p /home/ubuntu/software
@@ -28,13 +28,13 @@ sed -i s/MASTER_IP/$MASTER_IP/g hive-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g mapred-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g yarn-site.xml
 
-sed -i 's/home\/ubuntu\/storage\/hdfs\/hdfs_dn_dirs/mnt\/storage\/hdfs\/hdfs_dn_dirs/g' hdfs-site.xml
-sed -i 's/home\/ubuntu\/storage\/hdfs\/hdfs_nn_dir/mnt\/storage\/hdfs\/hdfs_nn_dir/g' hdfs-site.xml
+sed -i 's/home\/ubuntu\/storage\/hdfs\/hdfs_dn_dirs/mnt\/ubuntu\/storage\/hdfs\/hdfs_dn_dirs/g' hdfs-site.xml
+sed -i 's/home\/ubuntu\/storage\/hdfs\/hdfs_nn_dir/mnt\/ubuntu\/storage\/hdfs\/hdfs_nn_dir/g' hdfs-site.xml
 
-sed -i 's/home\/ubuntu\/storage\/data\/local\/nm/mnt\/storage\/data\/local\/nm/g' yarn-site.xml
+sed -i 's/home\/ubuntu\/storage\/data\/local\/nm/mnt\/ubuntu\/storage\/data\/local\/nm/g' yarn-site.xml
 #sed -i 's/home\/ubuntu\/logs\/apps/workspace\/logs\/apps/g' yarn-site.xml
 
-sed -i 's/home\/ubuntu\/storage\/data\/local\/tmp/mnt\/storage\/data\/local\/tmp/g' core-site.xml
+sed -i 's/home\/ubuntu\/storage\/data\/local\/tmp/mnt\/ubuntu\/storage\/data\/local\/tmp/g' core-site.xml
 
 sed -i 's/<value>23552<\/value>/<value>102400<\/value>/g' yarn-site.xml
 sed -i 's/<value>5<\/value>/<value>50<\/value>/g' yarn-site.xml
@@ -54,10 +54,10 @@ sudo mkfs -t ext3 /dev/sda4
 sudo mount /dev/sda4 /mnt
 sudo chown -R ubuntu:ubuntu /mnt
 
-mkdir -p /mnt/storage/data/local/nm
-mkdir -p /mnt/storage/data/local/tmp
-mkdir -p /mnt/storage/hdfs/hdfs_dn_dirs
-mkdir -p /mnt/storage/hdfs/hdfs_nn_dir
+mkdir -p /mnt/ubuntu/storage/data/local/nm
+mkdir -p /mnt/ubuntu/storage/data/local/tmp
+mkdir -p /mnt/ubuntu/storage/hdfs/hdfs_dn_dirs
+mkdir -p /mnt/ubuntu/storage/hdfs/hdfs_nn_dir
 
 echo "Edit /etc/hosts"
 echo "Make the instances file"

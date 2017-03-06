@@ -8,11 +8,15 @@ sudo adduser ubuntu
 
 # Give the new user root access
 sudo adduser ubuntu root
+sudo adduser ubuntu opennf-PG0
+
 
 # Setup ssh keys
 sudo -u ubuntu -i
+ssh-keygen
 for node in node-0 node-1
 do
-    ssh-copy-id $node
+    #ssh-copy-id $node
+    scp -r .ssh $node:
 done
 
