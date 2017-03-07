@@ -1,22 +1,16 @@
 #!/bin/bash
 
-echo "This script does not yet work as a script.  Exiting."
-exit 1
-
-# Create a user for hadoop
-sudo adduser ubuntu
-
-# Give the new user root access
-sudo adduser ubuntu root
-sudo adduser ubuntu opennf-PG0
-
-
-# Setup ssh keys
-sudo -u ubuntu -i
-ssh-keygen
-for node in node-0 node-1
+for user in ubuntu ubuntu2
 do
-    #ssh-copy-id $node
-    scp -r .ssh $node:
-done
+    # Create a user for hadoop
+    sudo adduser $user
 
+    # Give the new user root access
+    sudo adduser $user root
+    sudo adduser $user opennf-PG0
+
+    # Setup ssh keys
+    #XXX: This requires the user to be setup on all machines first, so this
+    # won't work.
+    #sudo -H -u $user passwordless_ssh.sh
+done

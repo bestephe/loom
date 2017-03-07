@@ -12,6 +12,7 @@ sudo apt-get -y install openjdk-8-jdk
 sudo apt-get -y install pdsh
 
 mkdir -p /home/ubuntu/software
+mkdir -p /home/ubuntu/storage
 mkdir -p /home/ubuntu/workload
 mkdir -p /home/ubuntu/logs/apps
 mkdir -p /home/ubuntu/logs/hadoop
@@ -28,14 +29,6 @@ sed -i s/MASTER_IP/$MASTER_IP/g hive-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g mapred-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g yarn-site.xml
 
-sed -i 's/home\/ubuntu\/storage\/hdfs\/hdfs_dn_dirs/mnt\/ubuntu\/storage\/hdfs\/hdfs_dn_dirs/g' hdfs-site.xml
-sed -i 's/home\/ubuntu\/storage\/hdfs\/hdfs_nn_dir/mnt\/ubuntu\/storage\/hdfs\/hdfs_nn_dir/g' hdfs-site.xml
-
-sed -i 's/home\/ubuntu\/storage\/data\/local\/nm/mnt\/ubuntu\/storage\/data\/local\/nm/g' yarn-site.xml
-#sed -i 's/home\/ubuntu\/logs\/apps/workspace\/logs\/apps/g' yarn-site.xml
-
-sed -i 's/home\/ubuntu\/storage\/data\/local\/tmp/mnt\/ubuntu\/storage\/data\/local\/tmp/g' core-site.xml
-
 sed -i 's/<value>23552<\/value>/<value>102400<\/value>/g' yarn-site.xml
 sed -i 's/<value>5<\/value>/<value>50<\/value>/g' yarn-site.xml
 
@@ -51,13 +44,13 @@ tar -xvzf hadoop-2.6.0.tar.gz
 cd ..
 
 sudo mkfs -t ext3 /dev/sda4
-sudo mount /dev/sda4 /mnt
-sudo chown -R ubuntu:ubuntu /mnt
+sudo mount /dev/sda4 storage/
+sudo chown -R ubuntu:ubuntu storage/
 
-mkdir -p /mnt/ubuntu/storage/data/local/nm
-mkdir -p /mnt/ubuntu/storage/data/local/tmp
-mkdir -p /mnt/ubuntu/storage/hdfs/hdfs_dn_dirs
-mkdir -p /mnt/ubuntu/storage/hdfs/hdfs_nn_dir
+mkdir -p storage/data/local/nm
+mkdir -p storage/data/local/tmp
+mkdir -p storage/hdfs/hdfs_dn_dirs
+mkdir -p storage/hdfs/hdfs_nn_dir
 
 echo "Edit /etc/hosts"
 echo "Make the instances file"
