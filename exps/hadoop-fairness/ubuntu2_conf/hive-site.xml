@@ -1,0 +1,66 @@
+<configuration>
+
+ 
+  <property>
+    <name>hive.session.history.enabled</name>
+    <value>true</value>
+    <description>Whether to log Hive query, query plan, runtime statistics etc.</description>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:mysql://MASTER_IP:3306/metastore?createDatabaseIfNotExist=true</value>
+    <description>the URL of the MySQL database</description>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>com.mysql.jdbc.Driver</value>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>hive</value>
+  </property>
+
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>hive</value>
+  </property>
+
+  <property>
+    <name>hive.tez.container.size</name>
+    <value>4800</value>
+  </property>
+
+  <property>
+    <name>hive.tez.java.opts</name>
+    <value>-Xmx4400m</value>
+  </property>
+
+  <property>
+    <key>hive.session.history.enabled</key>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>/apps/hive</value>
+  </property>
+
+  <property>
+    <name>datanucleus.autoCreateSchema</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>datanucleus.fixedDatastore</name>
+    <value>true </value>
+  </property>
+
+  <property>
+    <name>datanucleus.autoCreateTables</name>
+    <value>true</value>
+  </property>
+
+</configuration>

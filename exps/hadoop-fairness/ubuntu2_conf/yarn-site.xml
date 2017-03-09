@@ -1,0 +1,199 @@
+<?xml version="1.0"?>
+
+<!-- Site specific YARN configuration properties -->
+
+<configuration>
+
+	<property>
+    	<name>yarn.nodemanager.disk-health-checker.max-disk-utilization-per-disk-percentage</name>
+        <value>98</value>
+	</property>
+
+	<property>
+        <name>yarn.nodemanager.disk-health-checker.enable</name>
+        <value>false</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.enabled</name>
+		<value>true</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.http-cross-origin.enabled</name>
+		<value>true</value>
+	</property>
+
+	<property>
+		<name>yarn.resourcemanager.system-metrics-publisher.enabled</name>
+		<value>true</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.generic-application-history.enabled</name>
+		<value>true</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.hostname</name>
+		<value>MASTER_IP</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.address</name>
+		<value>MASTER_IP:11200</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.webapp.address</name>
+		<value>MASTER_IP:9188</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.webapp.https.address</name>
+		<value>MASTER_IP:9190</value>
+	</property>
+
+	<property>
+		<name>yarn.timeline-service.handler-thread-count</name>
+		<value>10</value>
+	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.aux-services</name>
+	    <value>mapreduce_shuffle</value>
+	  </property>
+
+	<property>
+	    <name>yarn.nodemanager.aux-services.mapreduce.shuffle.class</name>
+	    <value>org.apache.hadoop.mapred.ShuffleHandler</value>
+     </property>
+
+  	<property>
+    	<name>yarn.resourcemanager.resource-tracker.address</name>
+	    <value>MASTER_IP:9031</value>
+	</property>
+
+  	<property>
+    	<name>yarn.resourcemanager.scheduler.address</name>
+	    <value>MASTER_IP:9030</value>
+	</property>
+
+  	<property>
+    	<name>yarn.resourcemanager.address</name>
+	    <value>MASTER_IP:9032</value>
+        </property>
+
+        <property>
+            <description>The address of the RM admin interface.</description>
+            <name>yarn.resourcemanager.admin.address</name>
+            <value>${yarn.resourcemanager.hostname}:9033</value>
+        </property>
+
+  	<property>
+    	<name>yarn.resourcemanager.hostname</name>
+	    <value>MASTER_IP</value>
+	</property>
+
+	<property>
+  	    <name>yarn.resourcemanager.webapp.address</name>
+    	<value>MASTER_IP:9088</value>
+    </property>
+
+  	<property>
+    	<name>yarn.resourcemanager.scheduler.class</name>
+     	<value>org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.local-dirs</name>
+	    <value>/home/ubuntu2/storage/data/local/nm</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.remote-app-log-dir</name>
+	    <value>/app-logs</value>
+  	</property>
+
+	<property>
+	    <name>yarn.nodemanager.remote-app-log-dir-suffix</name>
+	    <value>/nm-rm-dir</value>
+        </property>
+
+  	<property>
+    	    <name>yarn.log-aggregation-enable</name>
+    	    <value>true</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.resource.memory-mb</name>
+	    <value>102400</value>
+    	<description>the amount of memory on the NodeManager in MiB</description>
+	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.resource.cpu-vcores</name>
+	    <value>28</value>
+        <description>Number of vcores that can be allocated
+        for containers. This is used by the RM scheduler when allocating
+        resources for containers. This is not used to limit the number of
+        physical cores used by YARN containers.</description>
+	</property>
+
+	<property>
+       	<name>yarn.nodemanager.nodemanagers.heartbeat-interval-ms</name>
+        <value>3000</value>
+	</property>
+
+  	<!-- disable physical/virtual memory checks in NM -->
+  	<property>
+    	<name>yarn.nodemanager.pmem-check-enabled</name>
+    	<value>true</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.vmem-check-enabled</name>
+    	<value>false</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.scheduler.minimum-allocation-vcores</name>
+    	<value>1</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.scheduler.minimum-allocation-mb</name>
+    	<value>1024</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.scheduler.maximum-allocation-mb</name>
+    	<value>7000</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.scheduler.should-check-slow-nodes</name>
+    	<value>false</value>
+	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.log-dirs</name>
+    	<value>/home/ubuntu2/logs/apps</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.address</name>
+    	<value>0.0.0.0:0</value>
+  	</property>
+
+  	<property>
+    	<name>yarn.nodemanager.delete.debug-delay-sec</name>
+    	<value>36000</value>
+  	</property>
+  
+  	<property>
+      	<name>yarn.resourcemanager.am.max-attempts</name>
+      	<value>10</value>
+  	</property>
+
+</configuration>

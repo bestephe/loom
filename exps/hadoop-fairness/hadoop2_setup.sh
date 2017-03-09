@@ -17,10 +17,13 @@ mkdir -p /home/ubuntu2/workload
 mkdir -p /home/ubuntu2/logs/apps
 mkdir -p /home/ubuntu2/logs/hadoop
 
+GIT_DIR=$(pwd)
+
 cd /home/ubuntu2
 wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/conf.tar.gz"
 wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/run.sh"
 tar -xvzf conf.tar.gz 
+cp $GIT_DIR/ubuntu2_conf/* conf/
 
 sed -i s/ubuntu/ubuntu2/g run.sh
 
@@ -36,15 +39,6 @@ sed -i s/ubuntu/ubuntu2/g hdfs-site.xml
 sed -i s/ubuntu/ubuntu2/g hive-site.xml
 sed -i s/ubuntu/ubuntu2/g mapred-site.xml
 sed -i s/ubuntu/ubuntu2/g yarn-site.xml
-
-sed -i 's/<value>23552<\/value>/<value>102400<\/value>/g' yarn-site.xml
-sed -i 's/<value>5<\/value>/<value>50<\/value>/g' yarn-site.xml
-
-# Change the ports
-sed -i s/50070/50071/g hdfs-site.xml
-sed -i s/8088/8089/g yarn-site.xml
-sed -i s/19888/19889/g mapred-site.xml
-sed -i s/8188/8189/g yarn-site.xml
 
 cd ..
 
@@ -63,10 +57,11 @@ sudo mkfs -t ext3 /dev/sdb1
 sudo mount /dev/sdb1 storage/
 sudo chown -R ubuntu2:ubuntu2 storage/
 
-mkdir -p storage/data/local/nm
-mkdir -p storage/data/local/tmp
-mkdir -p storage/hdfs/hdfs_dn_dirs
-mkdir -p storage/hdfs/hdfs_nn_dir
+sudo mkdir -p storage/data/local/nm
+sudo mkdir -p storage/data/local/tmp
+sudo mkdir -p storage/hdfs/hdfs_dn_dirs
+sudo mkdir -p storage/hdfs/hdfs_nn_dir
+sudo chown -R ubuntu2:ubuntu2 storage/
 
 echo "Edit /etc/hosts"
 echo "Make the instances file"
