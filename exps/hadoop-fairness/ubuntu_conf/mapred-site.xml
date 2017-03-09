@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+
+  <property>
+    <name>mapreduce.jobhistory.address</name>
+    <value>MASTER_IP:10020</value>
+  </property>
+
+  <property>
+    <name>mapreduce.jobhistory.webapp.address</name>
+    <value>MASTER_IP:19888</value>
+  </property>
+
+  <property>
+    <name>yarn.app.mapreduce.am.job.client.port-range</name>
+    <value>50000-50999</value>
+    <description>Range of ports that the MapReduce AM can use when binding.
+      Leave blank if you want all possible ports.  
+      For example 50000-50050,50100-50200</description>
+  </property>
+
+  <property>
+    <name>mapreduce.framework.name</name>
+    <value>yarn</value>
+  </property>
+
+  <property>
+    <name>mapreduce.map.speculative</name>
+    <value>false</value>
+  </property>
+
+  <property>
+  	<name>mapreduce.reduce.shuffle.parallelcopies</name>
+    <value>5</value>
+  </property>
+
+  <property>
+    <name>mapreduce.reduce.speculative</name>
+    <value>false</value>
+  </property>
+
+  <property>
+    <name>mapreduce.map.java.opts</name>
+    <value>-Xmx4600m</value>
+  </property>
+
+  <property>
+    <name>mapreduce.map.memory.mb</name>
+    <value>4800</value> 
+  </property>
+
+  <property>
+    <name>mapreduce.task.io.sort.mb</name>
+    <value>1200</value> 
+  </property>
+
+  <property>
+    <name>mapreduce.reduce.java.opts</name>
+    <value>-Xmx4600m</value>
+  </property>
+
+  <property>
+    <name>mapreduce.reduce.memory.mb</name>
+    <value>4800</value>
+  </property>
+
+  <property>
+    <name>mapreduce.job.maxtaskfailures.per.tracker</name>
+    <value>10</value>
+  </property>
+
+  <property>
+    <name>mapreduce.map.maxattempts</name>
+    <value>4</value>
+  </property>
+
+  <property>
+     <name>mapreduce.reduce.maxattempts</name>
+     <value>4</value>
+  </property>
+
+  <property>
+     <name>mapreduce.job.reduce.slowstart.completedmaps</name>
+     <value>1</value>
+  </property>
+
+</configuration>

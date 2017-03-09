@@ -1,0 +1,189 @@
+<configuration>
+
+    <property>
+      <name>tez.runtime.io.sort.mb</name>
+      <value>1024</value>
+    </property>
+    
+    <property>
+      <name>tez.am.acls.enabled</name>
+      <value>false</value>
+    </property>
+ 
+    <property>
+      <name>tez.am.java.opts</name>
+      <value>-server -Xmx1535m -Djava.net.preferIPv4Stack=true -XX:+UseNUMA -XX:+UseParallelGC</value>
+    </property>
+
+    <property>
+      <name>tez.am.env</name>
+      <value>LD_LIBRARY_PATH=${HADOOP_COMMON_HOME}/share/hadoop/common/lib/native/:${HADOOP_COMMON_HOME}/share/hadoop/common/lib/native/`$JAVA_HOME/bin/java -d32 -version &amp;&gt; /dev/null;if [ $? -eq 0 ]; then echo Linux-i386-32; else echo Linux-amd64-64;fi`</value>
+    </property>
+    
+    <property>
+      <name>tez.am.shuffle-vertex-manager.min-src-fraction</name>
+      <value>0.2</value>
+    </property>
+
+    <property>
+      <name>tez.am.shuffle-vertex-manager.max-src-fraction</name>
+      <value>0.4</value>
+    </property>
+
+    <property>
+      <name>tez.shuffle-vertex-manager.min-src-fraction</name>
+      <value>1</value>
+      <!--<value>0.1</value>-->
+    </property>
+
+    <property>
+      <name>tez.shuffle-vertex-manager.max-src-fraction</name>
+      <value>1</value>
+      <!--<value>0.1</value>-->
+    </property>
+
+    <property>
+      <name>tez.am.am-rm.heartbeat.interval-ms.max</name>
+      <value>250</value>
+    </property>
+   
+    <property>
+      <name>tez.runtime.transfer.data-via-events.enabled</name>
+      <value>true</value>
+    </property>
+    <property>
+      <name>tez.runtime.transfer.data-via-events.max-size</name>
+      <value>512</value>
+    </property>
+    
+    <property>
+      <name>tez.task.get-task.sleep.interval-ms.max</name>
+      <value>200</value>
+    </property>
+    
+    <property>
+      <name>tez.staging-dir</name>
+      <value>${fs.default.name}/tmp/tez-staging</value>
+    </property>
+    
+    <property>
+      <name>tez.am.grouping.min-size</name>
+      <value>16777216</value>
+    </property>
+
+    <!--    
+    <property>
+      <name>tez.runtime.intermediate-input.compress.codec</name>
+      <value>org.apache.hadoop.io.compress.SnappyCodec</value>
+    </property>
+    -->
+
+    <property>
+      <name>tez.am.container.reuse.enabled</name>
+      <value>false</value>
+    </property>
+
+    <property>
+      <name>tez.runtime.shuffle.parallel.copies</name>
+      <value>5</value>
+    </property>
+
+
+
+   <!-- 
+    <property>
+      <name>tez.yarn.ats.enabled</name>
+      <value>true</value>
+    </property>
+
+    <property>
+      <name>tez.allow.disabled.timeline-domains</name>
+      <value>false</value>
+    </property>
+-->
+    
+    <property>
+      <name>tez.am.log.level</name>
+      <value>INFO</value>
+    </property>
+    
+    <property>
+      <name>tez.session.am.dag.submit.timeout.secs</name>
+      <value>300</value>
+    </property>
+    
+    <property>
+      <name>tez.am.grouping.split-waves</name>
+      <value>1.4</value>
+    </property>
+    
+    <property>
+      <name>tez.session.client.timeout.secs</name>
+      <value>180</value>
+    </property>
+
+    <!-- 
+    <property>
+      <name>tez.runtime.intermediate-output.compress.codec</name>
+      <value>org.apache.hadoop.io.compress.SnappyCodec</value>
+    </property>
+    -->
+
+    
+    <property>
+      <name>tez.runtime.intermediate-output.should-compress</name>
+      <value>false</value>
+    </property>
+    
+    
+    <property>
+      <name>tez.lib.uris</name>
+      <value>${fs.default.name}/apps/tez-0.7.1-SNAPSHOT/tez-0.7.1-SNAPSHOT.tar.gz</value>
+    </property>
+    
+    <property>
+      <name>tez.am.container.reuse.non-local-fallback.enabled</name>
+      <value>false</value>
+    </property>
+    
+    <property>
+      <name>tez.am.container.reuse.rack-fallback.enabled</name>
+      <value>false</value>
+    </property>
+    
+    <property>
+      <name>tez.am.grouping.max-size</name>
+      <value>1073741824</value>
+    </property>
+    
+    <property>
+      <name>tez.am.container.reuse.locality.delay-allocation-millis</name>
+      <value>250</value>
+    </property>
+    
+    <property>
+      <name>tez.runtime.intermediate-input.is-compressed</name>
+      <value>false</value>
+    </property>
+    
+    <property>
+      <name>tez.am.resource.memory.mb</name>
+      <value>2048</value>
+    </property>
+    
+    <property>
+      <name>tez.am.container.session.delay-allocation-millis</name>
+      <value>30000</value>
+    </property>
+
+   <property>
+      <name>tez.simple.history.logging.dir</name>
+      <value>${fs.default.name}/tmp/tez-history</value>
+   </property>
+
+<property>
+  <description>Publish configuration information to Timeline server.</description>
+  <name>tez.runtime.convert.user-payload.to.history-text</name>
+  <value>true</value>
+</property>
+  </configuration>

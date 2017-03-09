@@ -41,17 +41,17 @@
 
 	<property>
 		<name>yarn.timeline-service.address</name>
-		<value>MASTER_IP:11200</value>
+		<value>MASTER_IP:10200</value>
 	</property>
 
 	<property>
 		<name>yarn.timeline-service.webapp.address</name>
-		<value>MASTER_IP:9188</value>
+		<value>MASTER_IP:8188</value>
 	</property>
 
 	<property>
 		<name>yarn.timeline-service.webapp.https.address</name>
-		<value>MASTER_IP:9190</value>
+		<value>MASTER_IP:8190</value>
 	</property>
 
 	<property>
@@ -71,24 +71,18 @@
 
   	<property>
     	<name>yarn.resourcemanager.resource-tracker.address</name>
-	    <value>MASTER_IP:9031</value>
+	    <value>MASTER_IP:8031</value>
 	</property>
 
   	<property>
     	<name>yarn.resourcemanager.scheduler.address</name>
-	    <value>MASTER_IP:9030</value>
+	    <value>MASTER_IP:8030</value>
 	</property>
 
   	<property>
     	<name>yarn.resourcemanager.address</name>
-	    <value>MASTER_IP:9032</value>
-        </property>
-
-        <property>
-            <description>The address of the RM admin interface.</description>
-            <name>yarn.resourcemanager.admin.address</name>
-            <value>${yarn.resourcemanager.hostname}:9033</value>
-        </property>
+	    <value>MASTER_IP:8032</value>
+	  </property>
 
   	<property>
     	<name>yarn.resourcemanager.hostname</name>
@@ -97,7 +91,7 @@
 
 	<property>
   	    <name>yarn.resourcemanager.webapp.address</name>
-    	<value>MASTER_IP:9088</value>
+    	<value>MASTER_IP:8088</value>
     </property>
 
   	<property>
@@ -107,7 +101,7 @@
 
   	<property>
     	<name>yarn.nodemanager.local-dirs</name>
-	    <value>/home/ubuntu2/storage/data/local/nm</value>
+	    <value>/home/ubuntu/storage/data/local/nm</value>
   	</property>
 
   	<property>
@@ -178,7 +172,7 @@
 
   	<property>
     	<name>yarn.nodemanager.log-dirs</name>
-    	<value>/home/ubuntu2/logs/apps</value>
+    	<value>/home/ubuntu/logs/apps</value>
   	</property>
 
   	<property>

@@ -18,7 +18,6 @@ mkdir -p /home/ubuntu2/logs/apps
 mkdir -p /home/ubuntu2/logs/hadoop
 
 GIT_DIR=$(pwd)
-
 cd /home/ubuntu2
 wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/conf.tar.gz"
 wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/run.sh"
@@ -52,8 +51,8 @@ tar -xvzf hadoop-2.6.0.tar.gz
 cd ..
 
 sudo parted /dev/sdb mklabel msdos
-sudo parted -a opt /dev/sdb mkpart primary ext3 0% 100%
-sudo mkfs -t ext3 /dev/sdb1
+sudo parted -a opt /dev/sdb mkpart primary ext4 0% 100%
+sudo mkfs -t ext4 /dev/sdb1
 sudo mount /dev/sdb1 storage/
 sudo chown -R ubuntu2:ubuntu2 storage/
 
