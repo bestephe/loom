@@ -76,7 +76,7 @@
 
 <property>
   <name>dfs.datanode.address</name>
-  <value>MASTER_IP:51010</value>
+  <value>0.0.0.0:51010</value>
   <description>
     The datanode server address and port for data transfer.
   </description>
@@ -84,7 +84,7 @@
 
 <property>
   <name>dfs.datanode.http.address</name>
-  <value>MASTER_IP:51075</value>
+  <value>0.0.0.0:51075</value>
   <description>
     The datanode http server address and port.
   </description>
@@ -92,7 +92,7 @@
 
 <property>
   <name>dfs.datanode.ipc.address</name>
-  <value>MASTER_IP:51020</value>
+  <value>0.0.0.0:51020</value>
   <description>
     The datanode ipc server address and port.
   </description>
@@ -108,7 +108,7 @@
 
 <property>
   <name>dfs.datanode.https.address</name>
-  <value>MASTER_IP:51475</value>
+  <value>0.0.0.0:51475</value>
   <description>The datanode secure http server address and port.</description>
 </property>
 

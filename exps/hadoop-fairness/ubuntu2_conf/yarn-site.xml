@@ -70,18 +70,23 @@
      </property>
 
   	<property>
+    	<name>yarn.resourcemanager.hostname</name>
+	    <value>MASTER_IP</value>
+	</property>
+
+  	<property>
     	<name>yarn.resourcemanager.resource-tracker.address</name>
-	    <value>MASTER_IP:9031</value>
+	    <value>${yarn.resourcemanager.hostname}:9031</value>
 	</property>
 
   	<property>
     	<name>yarn.resourcemanager.scheduler.address</name>
-	    <value>MASTER_IP:9030</value>
+	    <value>${yarn.resourcemanager.hostname}:9030</value>
 	</property>
 
   	<property>
     	<name>yarn.resourcemanager.address</name>
-	    <value>MASTER_IP:9032</value>
+	    <value>${yarn.resourcemanager.hostname}:9032</value>
         </property>
 
         <property>
@@ -90,15 +95,28 @@
             <value>${yarn.resourcemanager.hostname}:9033</value>
         </property>
 
-  	<property>
-    	<name>yarn.resourcemanager.hostname</name>
-	    <value>MASTER_IP</value>
-	</property>
+        <property>
+          <description>Address where the localizer IPC is.</description>
+          <name>yarn.nodemanager.localizer.address</name>
+          <value>${yarn.nodemanager.hostname}:9040</value>
+        </property>
+
+        <property>
+          <description>NM Webapp address.</description>
+          <name>yarn.nodemanager.webapp.address</name>
+          <value>${yarn.nodemanager.hostname}:9042</value>
+        </property>
 
 	<property>
   	    <name>yarn.resourcemanager.webapp.address</name>
-    	<value>MASTER_IP:9088</value>
-    </property>
+    	<value>${yarn.resourcemanager.hostname}:9088</value>
+        </property>
+
+        <property>
+          <description>The https adddress of the RM web application.</description>
+          <name>yarn.resourcemanager.webapp.https.address</name>
+          <value>${yarn.resourcemanager.hostname}:9090</value>
+        </property>
 
   	<property>
     	<name>yarn.resourcemanager.scheduler.class</name>

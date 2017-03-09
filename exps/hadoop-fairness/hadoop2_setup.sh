@@ -33,11 +33,12 @@ sed -i s/MASTER_IP/$MASTER_IP/g hive-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g mapred-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g yarn-site.xml
 
-sed -i s/ubuntu/ubuntu2/g core-site.xml 
-sed -i s/ubuntu/ubuntu2/g hdfs-site.xml 
-sed -i s/ubuntu/ubuntu2/g hive-site.xml
-sed -i s/ubuntu/ubuntu2/g mapred-site.xml
-sed -i s/ubuntu/ubuntu2/g yarn-site.xml
+# Not necessary now that we are copying confs from ubuntu2_conf
+#sed -i s/ubuntu/ubuntu2/g core-site.xml 
+#sed -i s/ubuntu/ubuntu2/g hdfs-site.xml 
+#sed -i s/ubuntu/ubuntu2/g hive-site.xml
+#sed -i s/ubuntu/ubuntu2/g mapred-site.xml
+#sed -i s/ubuntu/ubuntu2/g yarn-site.xml
 
 cd ..
 
