@@ -28,9 +28,9 @@ ifneq ($(KERNELRELEASE),)
 # Makefile for the Intel(R) 10GbE PCI Express Linux Network Driver
 #
 
-obj-$(CONFIG_IXGBE) += ixgbe.o
+obj-$(CONFIG_IXGBE) += ixgbeloom.o
 
-define ixgbe-y
+define ixgbeloom-y
 	ixgbe_main.o
 	ixgbe_api.o
 	ixgbe_common.o
@@ -49,24 +49,24 @@ define ixgbe-y
 	ixgbe_x540.o
 	ixgbe_x550.o
 endef
-ixgbe-y := $(strip ${ixgbe-y})
+ixgbeloom-y := $(strip ${ixgbeloom-y})
 
-ixgbe-${CONFIG_DCB} += ixgbe_dcb_nl.o
+ixgbeloom-${CONFIG_DCB} += ixgbe_dcb_nl.o
 
-ixgbe-${CONFIG_DEBUG_FS} += ixgbe_debugfs.o
+ixgbeloom-${CONFIG_DEBUG_FS} += ixgbe_debugfs.o
 
-ixgbe-${CONFIG_FCOE:m=y} += ixgbe_fcoe.o
+ixgbeloom-${CONFIG_FCOE:m=y} += ixgbe_fcoe.o
 
-ixgbe-$(CONFIG_PTP_1588_CLOCK:m=y) += ixgbe_ptp.o
+ixgbeloom-$(CONFIG_PTP_1588_CLOCK:m=y) += ixgbe_ptp.o
 
-ixgbe-${CONFIG_SYSFS} += ixgbe_sysfs.o
+ixgbeloom-${CONFIG_SYSFS} += ixgbe_sysfs.o
 
-ixgbe-y += kcompat.o
+ixgbeloom-y += kcompat.o
 
 else	# ifneq($(KERNELRELEASE),)
 # normal makefile
 
-DRIVER := ixgbe
+DRIVER := ixgbeloom
 
 ifeq (,$(wildcard common.mk))
   $(error Cannot find common.mk build rules)

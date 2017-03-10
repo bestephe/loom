@@ -76,9 +76,9 @@
 #define DRV_SUMMARY	"Intel(R) 10GbE PCI Express Linux Network Driver"
 const char ixgbe_driver_version[] = DRV_VERSION;
 #ifdef HAVE_NON_CONST_PCI_DRIVER_NAME
-char ixgbe_driver_name[] = "ixgbe";
+char ixgbe_driver_name[] = "ixgbeloom";
 #else
-const char ixgbe_driver_name[] = "ixgbe";
+const char ixgbe_driver_name[] = "ixgbeloom";
 #endif
 static const char ixgbe_driver_string[] = DRV_SUMMARY;
 static const char ixgbe_copyright[] = "Copyright(c) 1999 - 2017 Intel Corporation.";

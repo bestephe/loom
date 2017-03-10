@@ -10,6 +10,7 @@ sudo apt-get update --fix-missing
 sudo apt-get -y install vim
 sudo apt-get -y install openjdk-8-jdk
 sudo apt-get -y install pdsh
+sudo apt-get -y install python-yaml
 
 mkdir -p /home/ubuntu/software
 mkdir -p /home/ubuntu/storage
