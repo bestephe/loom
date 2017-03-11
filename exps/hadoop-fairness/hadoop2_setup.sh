@@ -19,12 +19,11 @@ mkdir -p /home/ubuntu2/logs/hadoop
 
 GIT_DIR=$(pwd)
 cd /home/ubuntu2
-wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/conf.tar.gz"
-wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/run.sh"
-tar -xvzf conf.tar.gz 
-cp $GIT_DIR/ubuntu2_conf/* conf/
+cp $GIT_DIR/ubuntu2_run.sh run.sh
+cp -r $GIT_DIR/ubuntu2_conf conf/
 
-sed -i s/ubuntu/ubuntu2/g run.sh
+#XXX: Not needed now that we use ubuntu2_run.sh
+#sed -i s/ubuntu/ubuntu2/g run.sh
 
 cd conf
 sed -i s/MASTER_IP/$MASTER_IP/g core-site.xml 
@@ -32,13 +31,6 @@ sed -i s/MASTER_IP/$MASTER_IP/g hdfs-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g hive-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g mapred-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g yarn-site.xml
-
-# Not necessary now that we are copying confs from ubuntu2_conf
-#sed -i s/ubuntu/ubuntu2/g core-site.xml 
-#sed -i s/ubuntu/ubuntu2/g hdfs-site.xml 
-#sed -i s/ubuntu/ubuntu2/g hive-site.xml
-#sed -i s/ubuntu/ubuntu2/g mapred-site.xml
-#sed -i s/ubuntu/ubuntu2/g yarn-site.xml
 
 cd ..
 

@@ -104,6 +104,7 @@ def hadoop_config_xps(config):
 
 def hadoop_config_qdisc(config):
     #XXX: DEBUG:
+    print 'WARNING: Skipping Qdisc config!'
     return
 
     qcnt = len(get_txqs(config))
@@ -146,7 +147,7 @@ def hadoop_config_qdisc(config):
             subprocess.check_call(tc_cmd, shell=True)
 
         # Create a traffic filter to send the rest of the traffic to class :1
-        tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
+        tc_str = 'sudo tc filter add dev %s protocol all parent %d00: ' + \
             'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:1'
         tc_cmd = tc_str % (config.iface, i, i)
         subprocess.check_call(tc_cmd, shell=True)

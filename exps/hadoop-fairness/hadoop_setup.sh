@@ -20,10 +20,8 @@ mkdir -p /home/ubuntu/logs/hadoop
 
 GIT_DIR=$(pwd)
 cd /home/ubuntu
-wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/conf.tar.gz"
-wget "http://pages.cs.wisc.edu/~akella/CS838/F15/assignment1/run.sh"
-tar -xvzf conf.tar.gz 
-cp $GIT_DIR/ubuntu_conf/* conf/
+cp $GIT_DIR/ubuntu_run.sh run.sh
+cp -r $GIT_DIR/ubuntu_conf conf/
 
 cd conf
 sed -i s/MASTER_IP/$MASTER_IP/g core-site.xml 
