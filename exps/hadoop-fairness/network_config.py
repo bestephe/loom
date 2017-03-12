@@ -104,8 +104,8 @@ def hadoop_config_xps(config):
 
 def hadoop_config_qdisc(config):
     #XXX: DEBUG:
-    print 'WARNING: Skipping Qdisc config!'
-    return
+    #print 'WARNING: Skipping Qdisc config!'
+    #return
 
     qcnt = len(get_txqs(config))
     for i in xrange(1, qcnt + 1):
