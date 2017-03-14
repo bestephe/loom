@@ -33,24 +33,23 @@ object TeraSort {
 
   def main(args: Array[String]) {
 
-    if (args.length < 2) {
+    if (args.length < 1) {
       println("Usage:")
       println("DRIVER_MEMORY=[mem] spark-submit " +
         "com.github.ehiggs.spark.terasort.TeraSort " +
         "spark-terasort-1.0-SNAPSHOT-with-dependencies.jar " +
-        "[input-file] [output-file]")
+        "[input-file]")
       println(" ")
       println("Example:")
       println("DRIVER_MEMORY=50g spark-submit " +
         "com.github.ehiggs.spark.terasort.TeraSort " +
         "spark-terasort-1.0-SNAPSHOT-with-dependencies.jar " +
-        "/home/myuser/terasort_in /home/myuser/terasort_out")
+        "/home/myuser/terasort_in")
       System.exit(0)
     }
 
     // Process command line arguments
     val inputFile = args(0)
-    val outputFile = args(1)
 
     val conf = new SparkConf()
       .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
@@ -59,6 +58,5 @@ object TeraSort {
 
     val dataset = sc.newAPIHadoopFile[Array[Byte], Array[Byte], TeraInputFormat](inputFile)
     val sorted = dataset.partitionBy(new TeraSortPartitioner(dataset.partitions.size)).sortByKey()
-    sorted.saveAsNewAPIHadoopFile[TeraOutputFormat](outputFile)
   }
 }
