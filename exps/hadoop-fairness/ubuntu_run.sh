@@ -9,11 +9,12 @@ HDFS_VERSION=${HDFS_VERSION:-${VER}}
 YARN_VERSION=${YARN_VERSION:-${VER}}
 HIVE_VERSION=${HIVE_VERSION:-1.2.1}
 TEZ_VERSION=${TEZ_VERSION:-0.7.1-SNAPSHOT-minimal}
+SPARK_HADOOP_VERSION=2.0.2
 
 ENV="JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64 \
   YARN_CONF_DIR=/home/ubuntu/conf \
   YARN_LOG_DIR=/home/ubuntu/logs/hadoop \
-  YARN_HOME=/home/hadoop/software/hadoop-${YARN_VERSION} \
+  YARN_HOME=/home/ubuntu/software/hadoop-${YARN_VERSION} \
   HADOOP_LOG_DIR=/home/ubuntu/logs/hadoop \
   HADOOP_CONF_DIR=/home/ubuntu/conf \
   HADOOP_USER_CLASSPATH_FIRST=1 \
@@ -25,7 +26,17 @@ ENV="JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64 \
   HADOOP_SBIN=/home/ubuntu/software/hadoop-${COMMON_VERSION}/bin \
   HIVE_HOME=/home/ubuntu/software/hive-1.2.1 \
   TEZ_CONF_DIR=/home/ubuntu/software/conf \
-  TEZ_JARS=/home/ubuntu/software/tez-${TEZ_VERSION}"
+  TEZ_JARS=/home/ubuntu/software/tez-${TEZ_VERSION} \
+  SPARK_HOME=/home/ubuntu/software/spark-${SPARK_HADOOP_VERSION}-bin-hadoop2.6 \
+  SPARK_CONF_DIR=/home/ubuntu/conf \
+  SPARK_LOCAL_DIRS=/home/ubuntu/storage/data/spark/rdds_shuffle \
+  SPARK_LOG_DIR=/home/ubuntu/logs/spark \
+  SPARK_WORKER_DIR=/home/ubuntu/storage/data/spark/worker \
+  SPARK_MASTER_HOST=10.10.1.102 \
+  SPARK_MASTER_PORT=7077"
+
+  #XXX: SPARK_MASTER_HOST and SPARK_MASTER_PORT need to be defined in
+  # spark-env.sh and here.
 
 case "$1" in
   (-q|--quiet)
@@ -47,13 +58,19 @@ esac
 export HADOOP_CLASSPATH=$HADOOP_HOME:$HADOOP_CONF_DIR:$HIVE_HOME:$TEZ_JARS/*:$TEZ_JARS/lib/*:
 export HADOOP_HEAPSIZE=10240
 
-export PATH=/home/ubuntu/software/hadoop-${COMMON_VERSION}/bin:/home/ubuntu/software/hadoop-${COMMON_VERSION}/sbin:$HIVE_HOME/bin:$PATH
+#XXX: probably not necessary because "If using build/mvn with no MAVEN_OPTS
+# set, the script will automatically add the above options to the MAVEN_OPTS
+# environment variable."
+#export MAVEN_OPTS="-Xmx2g -XX:ReservedCodeCacheSize=512m -XX:MaxPermSize=512M"
+
+export PATH=/home/ubuntu/software/hadoop-${COMMON_VERSION}/bin:/home/ubuntu/software/hadoop-${COMMON_VERSION}/sbin:$HIVE_HOME/bin:$SPARK_HOME/bin:$SPARK_HOME/sbin:$PATH
 export LD_LIBRARY_PATH=${HADOOP_COMMON_HOME}/share/hadoop/common/lib/native/:${LD_LIBRARY_PATH}
 export JAVA_LIBRARY_PATH=${LD_LIBRARY_PATH}
 
 mount_fs(){
 	printf "\n==== Mounting storage ! ====\n"
 	sudo mount /dev/sda4 storage/
+	pdsh -R exec -f $THREADS -w ^instances ssh -o ConnectTimeout=$TIMEOUT %h '( . /home/ubuntu/run.sh -q ; sudo mount /dev/sda4 storage/;)'
 	sleep 2
 }
 
@@ -92,6 +109,19 @@ stop_history_mr(){
 	mr-jobhistory-daemon.sh	stop historyserver
 }
 
+start_spark(){
+	printf "\n==== START SPARK daemons ! ====\n"
+	$SPARK_HOME/sbin/start-master.sh
+	pdsh -R exec -f $THREADS -w ^instances ssh -o ConnectTimeout=$TIMEOUT %h '( . /home/ubuntu/run.sh -q ; $SPARK_HOME/sbin/start-slave.sh spark://$SPARK_MASTER_HOST:$SPARK_MASTER_PORT;)'
+}
+
+stop_spark(){
+	printf "\n==== STOP SPARK daemons ! ====\n"
+	$SPARK_HOME/sbin/stop-all.sh #XXX: Doesn't work
+	pdsh -R exec -f $THREADS -w ^instances ssh -o ConnectTimeout=$TIMEOUT %h '( . /home/ubuntu/run.sh -q ; $SPARK_HOME/sbin/stop-slave.sh;)'
+	$SPARK_HOME/sbin/stop-master.sh
+}
+
 start_timeline_server(){
 	printf "\n==== START timelineserver ! ====\n"
 	yarn-daemon.sh start timelineserver
@@ -105,22 +135,26 @@ stop_timeline_server(){
 start_all(){
 	mount_fs
 	start_hdfs
-	start_yarn
-	start_timeline_server
-	start_history_mr
+        start_spark
+	#start_yarn
+	#start_timeline_server
+	#start_history_mr
 }
 
 stop_all(){
 	stop_hdfs
+        stop_spark
 	stop_yarn
 	stop_timeline_server
 	stop_history_mr
 }
 
 export -f start_hdfs
+export -f start_spark
 export -f start_yarn
 export -f start_all
 export -f stop_hdfs
+export -f stop_spark
 export -f stop_yarn
 export -f stop_all
 export -f start_history_mr

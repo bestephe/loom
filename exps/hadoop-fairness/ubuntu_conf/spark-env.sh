@@ -57,8 +57,10 @@
 # - SPARK_DAEMON_JAVA_OPTS, to set config properties for all daemons (e.g. "-Dx=y")
 # - SPARK_PUBLIC_DNS, to set the public dns name of the master or workers
 
-#SPARK_MASTER_HOST=10.10.1.2
+SPARK_MASTER_HOST=CHANGE_MASTER_IP
+SPARK_LOCAL_IP=CHANGE_LOCAL_IP
 SPARK_WORKER_CORES=26
+SPARK_WORKER_MEMORY=120g
 
 # Generic options for the daemons used in the standalone deploy mode
 # - SPARK_CONF_DIR      Alternate conf dir. (Default: ${SPARK_HOME}/conf)

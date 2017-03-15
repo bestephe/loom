@@ -6,10 +6,19 @@ fi
 
 MASTER_IP=$1
 
+#XXX: UGLY
+IFACE=eno2
+IP=$(/sbin/ifconfig $IFACE | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
+TAP_IP_PREFIX=$(echo $IP | cut -d. -f1,2,3)
+TAP_IP_SUFFIX=20$(echo $IP | cut -d. -f4)
+TAP_IP=$TAP_IP_PREFIX.$TAP_IP_SUFFIX
+
 sudo apt-get update --fix-missing
 sudo apt-get -y install vim
 sudo apt-get -y install openjdk-8-jdk
 sudo apt-get -y install pdsh
+sudo apt-get -y install python-yaml
+sudo apt-get -y install maven
 
 mkdir -p /home/ubuntu2/software
 mkdir -p /home/ubuntu2/storage
@@ -31,8 +40,12 @@ sed -i s/MASTER_IP/$MASTER_IP/g hdfs-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g hive-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g mapred-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g yarn-site.xml
+sed -i s/CHANGE_MASTER_IP/$MASTER_IP/g spark-defaults.conf
+sed -i s/CHANGE_MASTER_IP/$MASTER_IP/g spark-env.sh
+sed -i s/CHANGE_LOCAL_IP/$IP/g spark-env.sh
 
 cd ..
+mv conf/instances .
 
 #sed -i 's/home\/ubuntu2\/logs\/hadoop/workspace\/logs\/hadoop/g' run.sh
 sed -i 's/java-1.7.0/java-1.8.0/g' run.sh
@@ -49,10 +62,10 @@ sudo mkfs -t ext4 /dev/sdb1
 sudo mount /dev/sdb1 storage/
 sudo chown -R ubuntu2:ubuntu2 storage/
 
-sudo mkdir -p storage/data/local/nm
-sudo mkdir -p storage/data/local/tmp
-sudo mkdir -p storage/hdfs/hdfs_dn_dirs
-sudo mkdir -p storage/hdfs/hdfs_nn_dir
+mkdir -p storage/data/local/nm
+mkdir -p storage/data/local/tmp
+mkdir -p storage/hdfs/hdfs_dn_dirs
+mkdir -p storage/hdfs/hdfs_nn_dir
 sudo chown -R ubuntu2:ubuntu2 storage/
 
 echo "Edit /etc/hosts"
