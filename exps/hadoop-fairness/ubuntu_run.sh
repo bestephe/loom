@@ -32,7 +32,7 @@ ENV="JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64 \
   SPARK_LOCAL_DIRS=/home/ubuntu/storage/data/spark/rdds_shuffle \
   SPARK_LOG_DIR=/home/ubuntu/logs/spark \
   SPARK_WORKER_DIR=/home/ubuntu/storage/data/spark/worker \
-  SPARK_MASTER_HOST=10.10.1.102 \
+  SPARK_MASTER_HOST=10.10.1.2 \
   SPARK_MASTER_PORT=7077"
 
   #XXX: SPARK_MASTER_HOST and SPARK_MASTER_PORT need to be defined in

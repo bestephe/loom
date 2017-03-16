@@ -41,9 +41,7 @@ sed -i s/MASTER_IP/$MASTER_IP/g mapred-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g yarn-site.xml
 sed -i s/CHANGE_MASTER_IP/$MASTER_IP/g spark-defaults.conf
 sed -i s/CHANGE_MASTER_IP/$MASTER_IP/g spark-env.sh
-sed -i s/CHANGE_LOCAL_IP/$TAP_IP/g spark-env.sh
-sed -i s/IPPREFIX/10/g slaves
-sed -i s/IPPREFIX/10/g instances
+sed -i s/CHANGE_LOCAL_IP/$IP/g spark-env.sh
 
 cd ..
 mv conf/instances .

@@ -9,6 +9,8 @@ import sys
 import yaml
 from time import sleep
 
+DRIVER_DIR = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/code/ixgbe-5.0.4/'
+
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
 
@@ -55,7 +57,7 @@ def spark_config_nic_driver(config):
     os.system(rm_cmd) # Ignore everything
 
     # Craft the args for the driver
-    ixgbe = '../../code/ixgbe-5.0.4/src/ixgbeloom.ko'
+    ixgbe = DRIVER_DIR + '/src/ixgbeloom.ko'
     rss_str = '' if config.qmodel == QMODEL_MQ else 'RSS=1,1'
     drv_cmd = 'sudo insmod %s %s' % (ixgbe, rss_str)
 
@@ -95,12 +97,15 @@ def spark_config_xps(config):
     if config.qmodel == QMODEL_MQ:
         # Use the Intel script to configure XPS
         subprocess.call('sudo killall irqbalance', shell=True)
-        xps_script = '../../code/ixgbe-5.0.4/scripts/set_irq_affinity'
-        subprocess.call('sudo %s -x local %s' % (xps_script, config.iface),
+        xps_script = DRIVER_DIR + '/scripts/set_irq_affinity'
+        subprocess.call('sudo %s -x all %s' % (xps_script, config.iface),
             shell=True)
 
         # Also configure RFS
         spark_configure_rfs(config)
+    else:
+        #Note: maybe not necessary.  But it shouldn't hurt to restart irqbalance
+        subprocess.call('sudo service irqbalance restart', shell=True)
 
 def spark_config_qdisc(config):
     #XXX: DEBUG:
@@ -131,7 +136,10 @@ def spark_config_qdisc(config):
 
         # Create traffic filters to send traffic from the second spark
         # instance (ubuntu2) to :2
-        h2_ports = [9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096, 9097, 9098, 9099, 9337]
+        h2_ports = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096,
+            9097, 9098, 9099, 9337, 51070, 51090, 51091, 51010, 51075,
+            51020, 51070, 51475, 51470, 51100, 51105, 9485, 9480, 9481,
+            3049, 5242]
         for p in h2_ports:
             for pdir in ['sport', 'dport']:
                 tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
