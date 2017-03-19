@@ -24,6 +24,8 @@ def parse_files(files):
                 if match:
                     ts = float(match.groups()[0])
                     finish_ts = max(finish_ts, ts)
+                    #print 'new finish_ts:', finish_ts
+            #print
             cts.append(finish_ts)
     print yaml.dump(cts)
     return cts
@@ -38,8 +40,11 @@ def main():
 
     # Parse the files
     completion_times = parse_files(args.files)
+    print 'Num results:', len(completion_times)
+    print 'avg:', (1.0 * sum(completion_times) / len(completion_times))
     print 'median:', get_percentile(completion_times, 50)
     print '75p:', get_percentile(completion_times, 75)
+    print '90p:', get_percentile(completion_times, 90)
 
 
 if __name__ == '__main__':

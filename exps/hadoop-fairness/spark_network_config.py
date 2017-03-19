@@ -10,13 +10,22 @@ import yaml
 from time import sleep
 
 DRIVER_DIR = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/code/ixgbe-5.0.4/'
+TCP_BYTE_LIMIT_DIR = '/proc/sys/net/ipv4/tcp_limit_output_bytes'
+TCP_QUEUE_SYSTEM_DEFAULT = 262144
 
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
 
+H2_PORTS = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096, 9097,
+    9098, 9099, 9337, 51070, 51090, 51091, 51010, 51075, 51020, 51070,
+    51475, 51470, 51100, 51105, 9485, 9480, 9481, 3049, 5242]
+
 SPARK_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
     'iface': 'eno2',
+    'bql_limit_max': (256 * 1024),
+    'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
+    'drr_quanta': 65536,
 }
 
 class ServerConfig(object):
@@ -46,6 +55,60 @@ class SparkConfig(object):
         d = self.__dict__.copy()
         return d
 
+#
+# TCP SmallQs and BQL Functions
+#
+def get_tcp_limit():
+    with open(TCP_BYTE_LIMIT_DIR) as tcpf:
+        limit = tcpf.read()
+    limit.strip()
+    limit = int(limit)
+    return limit
+
+def set_tcp_limit(b):
+    with open(TCP_BYTE_LIMIT_DIR, 'w') as tcpf:
+        tcpf.write('%d\n' % b)
+    assert (get_tcp_limit() == b)
+
+def get_queue_bql_limit_max(config, txqi):
+    sysfs_dir = '/sys/class/net/%s' % config.iface
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
+    with open(limitfname) as limitf:
+        limit = limitf.read()
+    limit.strip()
+    limit = int(limit)
+    return limit
+
+def set_queue_bql_limit_max(config, txqi, limit):
+    sysfs_dir = '/sys/class/net/%s' % config.iface
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
+    with open(limitfname, 'w') as limitf:
+        limitf.write('%d\n' % limit)
+    assert (get_queue_bql_limit_max(config, txqi) == limit)
+
+def get_queue_bql_limit_min(config, txqi):
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
+    with open(limitfname) as limitf:
+        limit = limitf.read()
+    limit.strip()
+    limit = int(limit)
+    return limit
+
+def set_queue_bql_limit_min(config, txqi, limit):
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
+    with open(limitfname, 'w') as limitf:
+        limitf.write('%d\n' % limit)
+    assert (get_queue_bql_limit_min(args, txqi) == limit)
+
+def set_all_bql_limit_max(config):
+    for txqi in range(len(get_txqs(config)):
+        set_queue_bql_limit_max(config, txqi, config.bql_limit_max)
+        set_queue_bql_limit_min(config, txqi, 0)
+
+
+#
+# The rest of the functions
+#
 def spark_config_nic_driver(config):
     # Get the current IP
     get_ip_cmd='/sbin/ifconfig %s | grep \'inet addr:\' | cut -d: -f2 | awk \'{ print $1}\'' % config.iface
@@ -74,8 +137,8 @@ def spark_config_nic_driver(config):
     ip_cmd = 'sudo ifconfig %s %s netmask 255.255.255.0' % (config.iface, ip)
     subprocess.check_call(ip_cmd, shell=True)
 
-def get_txqs(args):
-    txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % args.iface)
+def get_txqs(config):
+    txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % config.iface)
     return txqs
 
 def get_rxqs(config):
@@ -136,11 +199,7 @@ def spark_config_qdisc(config):
 
         # Create traffic filters to send traffic from the second spark
         # instance (ubuntu2) to :2
-        h2_ports = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096,
-            9097, 9098, 9099, 9337, 51070, 51090, 51091, 51010, 51075,
-            51020, 51070, 51475, 51470, 51100, 51105, 9485, 9480, 9481,
-            3049, 5242]
-        for p in h2_ports:
+        for p in H2_PORTS:
             for pdir in ['sport', 'dport']:
                 tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
                     'prio 1 u32 match ip %s %d 0xffff flowid %d00:2'
