@@ -9,7 +9,7 @@ import subprocess
 import yaml
 from time import sleep
 
-YCSB_DIR = '/scratch/bes/git/YCSB/'
+YCSB_DIR = '/home/ubuntu/YCSB/'
 WORKLOAD = 'workload_read_asym'
 PROPERTIES = 'memcached_read_asym.properties'
 

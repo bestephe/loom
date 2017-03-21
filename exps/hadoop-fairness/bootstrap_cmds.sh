@@ -3,7 +3,8 @@
 for user in ubuntu ubuntu2
 do
     # Create a user for hadoop
-    sudo adduser $user
+    sudo adduser $user -gecos "First Last,RoomNumber,WorkPhone,HomePhone" --disabled-password
+    echo "$user:loomtest" | sudo chpasswd
 
     # Give the new user root access
     sudo adduser $user root

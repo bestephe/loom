@@ -56,9 +56,9 @@ wget "https://archive.apache.org/dist/hadoop/common/hadoop-2.6.0/hadoop-2.6.0.ta
 tar -xvzf hadoop-2.6.0.tar.gz
 cd ..
 
-sudo parted /dev/sdb mklabel msdos
-sudo parted -a opt /dev/sdb mkpart primary ext4 0% 100%
-sudo mkfs -t ext4 /dev/sdb1
+sudo parted --script /dev/sdb mklabel msdos
+sudo parted --script -a opt /dev/sdb mkpart primary ext4 0% 100%
+sudo mkfs -t ext4 -F /dev/sdb1
 sudo mount /dev/sdb1 storage/
 sudo chown -R ubuntu2:ubuntu2 storage/
 

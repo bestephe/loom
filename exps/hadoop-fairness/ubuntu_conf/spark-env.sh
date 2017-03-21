@@ -59,8 +59,8 @@
 
 SPARK_MASTER_HOST=CHANGE_MASTER_IP
 SPARK_LOCAL_IP=CHANGE_LOCAL_IP
-SPARK_WORKER_CORES=200
-SPARK_WORKER_MEMORY=120g
+SPARK_WORKER_CORES=20
+SPARK_WORKER_MEMORY=75g
 
 # Generic options for the daemons used in the standalone deploy mode
 # - SPARK_CONF_DIR      Alternate conf dir. (Default: ${SPARK_HOME}/conf)

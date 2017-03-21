@@ -21,6 +21,7 @@ sudo apt-get -y install openjdk-8-jdk
 sudo apt-get -y install pdsh
 sudo apt-get -y install python-yaml
 sudo apt-get -y install maven
+sudo apt-get -y install python-dpkt python-matplotlib python-numpy python-scipy
 
 mkdir -p /home/ubuntu/software
 mkdir -p /home/ubuntu/storage
@@ -55,7 +56,7 @@ wget "https://archive.apache.org/dist/hadoop/common/hadoop-2.6.0/hadoop-2.6.0.ta
 tar -xvzf hadoop-2.6.0.tar.gz
 cd ..
 
-sudo mkfs -t ext4 /dev/sda4
+sudo mkfs -t ext4 -F /dev/sda4
 sudo mount /dev/sda4 storage/
 sudo chown -R ubuntu:ubuntu storage/
 

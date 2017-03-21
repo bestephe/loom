@@ -20,7 +20,7 @@ H2_PORTS = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096, 9097,
     9098, 9099, 9337, 51070, 51090, 51091, 51010, 51075, 51020, 51070,
     51475, 51470, 51100, 51105, 9485, 9480, 9481, 3049, 5242]
 
-SPARK_CONFIG_DEFAULTS = {
+PRI_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
     'job_fair_ratio': 3,
 
@@ -42,10 +42,10 @@ class ServerConfig(object):
     def dump(self):
         return self.__dict__.copy()
 
-class SparkConfig(object):
+class PriConfig(object):
     def __init__(self, *initial_data, **kwargs):
-        for key in SPARK_CONFIG_DEFAULTS:
-            setattr(self, key, SPARK_CONFIG_DEFAULTS[key])
+        for key in PRI_CONFIG_DEFAULTS:
+            setattr(self, key, PRI_CONFIG_DEFAULTS[key])
         for dictionary in initial_data:
             for key in dictionary:
                 if not hasattr(self, key):
@@ -115,7 +115,7 @@ def set_all_bql_limit_max(config):
 #
 # The rest of the functions
 #
-def spark_config_nic_driver(config):
+def pri_config_nic_driver(config):
     # Get the current IP
     get_ip_cmd='/sbin/ifconfig %s | grep \'inet addr:\' | cut -d: -f2 | awk \'{ print $1}\'' % config.iface
     ip = subprocess.check_output(get_ip_cmd, shell=True)
@@ -151,7 +151,7 @@ def get_rxqs(config):
     rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % config.iface)
     return rxqs 
 
-def spark_configure_rfs(config):
+def pri_configure_rfs(config):
     rxqs = get_rxqs(config)
     entries = 65536
     entries_per_rxq = entries / len(rxqs)
@@ -162,7 +162,7 @@ def spark_configure_rfs(config):
         cmd = 'echo %d | sudo tee /%s/rps_flow_cnt > /dev/null' % (entries_per_rxq, rxq)
         subprocess.check_call(cmd, shell=True)
 
-def spark_config_xps(config):
+def pri_config_xps(config):
     if config.qmodel == QMODEL_MQ:
         # Use the Intel script to configure XPS
         subprocess.call('sudo killall irqbalance', shell=True)
@@ -171,71 +171,54 @@ def spark_config_xps(config):
             shell=True)
 
         # Also configure RFS
-        spark_configure_rfs(config)
+        pri_configure_rfs(config)
     else:
         #Note: maybe not necessary.  But it shouldn't hurt to restart irqbalance
         subprocess.call('sudo service irqbalance restart', shell=True)
 
-def spark_config_qdisc(config):
+def pri_config_qdisc(config):
     #XXX: DEBUG:
     #print 'WARNING: Skipping Qdisc config!'
     #return
 
     qcnt = len(get_txqs(config))
     for i in xrange(1, qcnt + 1):
-        # Configure a DRR Qdisc per txq
-        tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
+        # Configure a prio Qdisc per txq with SFQ children
+        tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: prio' % \
             (config.iface, i, i)
-
-        # Create the classes for Job1 (%d00:1) and Job2 (%d00:2)
         subprocess.check_call(tc_cmd, shell=True)
-        tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:1 drr quantum %d' % \
-            (config.iface, i, i, config.drr_quantum)
-        subprocess.check_call(tc_cmd, shell=True)
-        job2_quantum = int(1.0 * config.drr_quantum / config.job_fair_ratio)
-        tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:2 drr quantum %d' % \
-            (config.iface, i, i, job2_quantum)
-        subprocess.check_call(tc_cmd, shell=True)
-
-        # Note: I don't know if I need to add a child to each DRR class, but it
-        # seems like a reasonable idea.  I could just add pfifo_fast, but
-        # adding SFQ also makes some sense.
         tc_cmd = 'sudo tc qdisc add dev %s parent %d00:1 sfq limit 32768 perturb 60' % \
             (config.iface, i)
         subprocess.check_call(tc_cmd, shell=True)
         tc_cmd = 'sudo tc qdisc add dev %s parent %d00:2 sfq limit 32768 perturb 60' % \
             (config.iface, i)
         subprocess.check_call(tc_cmd, shell=True)
+        tc_cmd = 'sudo tc qdisc add dev %s parent %d00:3 sfq limit 32768 perturb 60' % \
+            (config.iface, i)
+        subprocess.check_call(tc_cmd, shell=True)
 
-        # Create traffic filters to send traffic from the second spark
-        # instance (ubuntu2) to :2
-        for p in H2_PORTS:
-            for pdir in ['sport', 'dport']:
-                tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
-                    'prio 1 u32 match ip %s %d 0xffff flowid %d00:2'
-                tc_cmd = tc_str % (config.iface, i, pdir, p, i)
-                subprocess.check_call(tc_cmd, shell=True)
+        # Create a filter for memcached traffic
         for pdir in ['sport', 'dport']:
             tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
-                'prio 1 u32 match ip %s 32768 0xff00 flowid %d00:2' 
-            tc_cmd = tc_str % (config.iface, i, pdir, i)
+                'prio 1 u32 match ip %s %d 0xffff flowid %d00:1'
+            tc_cmd = tc_str % (config.iface, i, pdir, 11212, i)
             subprocess.check_call(tc_cmd, shell=True)
 
-        # Create a traffic filter to send the rest of the traffic to class :1
+        # Create a traffic filter to send the rest of the traffic to priority :2
         tc_str = 'sudo tc filter add dev %s protocol all parent %d00: ' + \
-            'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:1'
+            'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:2'
         tc_cmd = tc_str % (config.iface, i, i)
         subprocess.check_call(tc_cmd, shell=True)
 
-def spark_config_server(config):
+def pri_config_server(config):
     # Configure the number of NIC queues
-    spark_config_nic_driver(config)
+    pri_config_nic_driver(config)
 
     # Configure XPS
-    spark_config_xps(config)
+    pri_config_xps(config)
 
     # Configure Qdisc/TC
-    spark_config_qdisc(config)
+    pri_config_qdisc(config)
 
     # Configure BQL
     set_all_bql_limit_max(config)
@@ -252,12 +235,12 @@ def main():
     if args.config:
         with open(args.config) as configf:
             user_config = yaml.load(configf)
-        config = SparkConfig(user_config)
+        config = PriConfig(user_config)
     else:
-        config = SparkConfig()
+        config = PriConfig()
 
     # Configure the server
-    spark_config_server(config)
+    pri_config_server(config)
 
 if __name__ == '__main__':
     main()

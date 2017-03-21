@@ -25,8 +25,12 @@ matplotlib.rcParams.update({'lines.linewidth': 3})
 master_linestyles = ['-', '--', '-.', ':']
 master_markers = ['o', 'D', 'v', '^', '<', '>', 's', 'p', '*', '+', 'x']
 
-def plot_job_tput(results):
-    lines = results['lines']
+def plot_fairness_cdf(sq_res, mq_res):
+    sq_line = sq_res['lines'][0]
+    sq_line['lname'] = 'SQ'
+    mq_line = mq_res['lines'][0]
+    mq_line['lname'] = 'MQ'
+    lines = [sq_line, mq_line]
 
     # Create the figure
     figure = plt.figure(figsize=(6, 2.5))
@@ -45,17 +49,15 @@ def plot_job_tput(results):
 
     # Plot the lines
     for line in lines:
-        if line['lname'] == 'Total':
-            pass
         plot(line['xs'], line['ys'], label=line['lname'],
             linestyle=linescycle.next())
 
     # Mess with axes
     yax = ax.get_yaxis()
     yax.grid(True)
-    ax.set_xlabel('Time (seconds)')
+    ax.set_xlabel('FM (Gbps)')
     #ax.set_xlim(xmin=0)
-    ax.set_ylabel('Throughput (Gbps)')
+    ax.set_ylabel('CDF')
     figure.subplots_adjust(bottom=bottom)
 
     # Add the legend
@@ -65,25 +67,25 @@ def plot_job_tput(results):
     plt.tight_layout()
 
     # Add the title
-    title(results['title'])
+    #title(results['title'])
 
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description='Plot per-job fairnes')
-    parser.add_argument('--results', help='A YAML file containing the results.',
+    parser.add_argument('--sq', help='A YAML file containing the SQ results.',
+        required=True)
+    parser.add_argument('--mq', help='A YAML file containing the MQ results.',
         required=True)
     args = parser.parse_args()
 
     # Get the results
-    with open(args.results) as f:
-        results = yaml.load(f)
-
-    # Add a title if there is none
-    if 'title' not in results:
-        results['title'] = args.results
+    with open(args.sq) as f:
+        sq_res = yaml.load(f)
+    with open(args.mq) as f:
+        mq_res = yaml.load(f)
 
     # Plot the results
-    plot_job_tput(results)
+    plot_fairness_cdf(sq_res, mq_res)
 
     # Show the figures
     show()
