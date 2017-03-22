@@ -16,20 +16,12 @@ TCP_QUEUE_SYSTEM_DEFAULT = 262144
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
 
-H2_PORTS = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096, 9097,
-    9098, 9099, 9337, 51070, 51090, 51091, 51010, 51075, 51020, 51070,
-    51475, 51470, 51100, 51105, 9485, 9480, 9481, 3049, 5242]
-
 PRI_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
-    'job_fair_ratio': 3,
 
     'iface': 'eno2',
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
-
-    #'drr_quantum': 65536,
-    'drr_quantum': 1500,
 }
 
 class ServerConfig(object):
