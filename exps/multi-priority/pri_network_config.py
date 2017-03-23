@@ -4,6 +4,7 @@ import argparse
 import glob
 import os
 import platform
+import re
 import subprocess
 import sys
 import yaml
@@ -15,6 +16,8 @@ TCP_QUEUE_SYSTEM_DEFAULT = 262144
 
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
+QMODEL_MQPRI = 'mq-pri'
+QMODELS = [QMODEL_SQ, QMODEL_MQ, QMODEL_MQPRI]
 
 PRI_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
@@ -47,6 +50,10 @@ class PriConfig(object):
             if not hasattr(self, key):
                 print 'WARNING! Unexpected attr: %s' % key
             setattr(self, key, kwargs[key])
+
+        # Error checking
+        if self.qmodel not in QMODELS:
+            raise ValueError('Unknown qmodel: \'%s\'' % self.qmodel)
     def dump(self):
         d = self.__dict__.copy()
         return d
@@ -103,6 +110,17 @@ def set_all_bql_limit_max(config):
         set_queue_bql_limit_max(config, txqi, config.bql_limit_max)
         set_queue_bql_limit_min(config, txqi, 0)
 
+def verify_dcb(config):
+    dcb_check_cmd = 'sudo dcbtool gc %s dcb' % config.iface
+    out = subprocess.check_output(dcb_check_cmd, shell=True)
+    out_split = out.split('\n')
+    off_match = re.match(r".*DCB State.*off.*", out_split[-2])
+    on_match = re.match(r".*DCB State.*on.*", out_split[-2])
+    assert(off_match != None or on_match != None)
+    if config.qmodel == QMODEL_MQPRI:
+        assert(on_match)
+    else:
+        assert(off_match)
 
 #
 # The rest of the functions
@@ -119,7 +137,7 @@ def pri_config_nic_driver(config):
 
     # Craft the args for the driver
     ixgbe = DRIVER_DIR + '/src/ixgbeloom.ko'
-    rss_str = '' if config.qmodel == QMODEL_MQ else 'RSS=1,1'
+    rss_str = 'RSS=1,1' if config.qmodel == QMODEL_SQ else ''
     drv_cmd = 'sudo insmod %s %s' % (ixgbe, rss_str)
 
     # Add in the new driver
@@ -134,6 +152,22 @@ def pri_config_nic_driver(config):
     # Assign the IP
     ip_cmd = 'sudo ifconfig %s %s netmask 255.255.255.0' % (config.iface, ip)
     subprocess.check_call(ip_cmd, shell=True)
+
+    # Enable DCB and change the root qdisc if using MQPRI
+    if config.qmodel == QMODEL_MQPRI:
+        sleep(1.5) #XXX: dcbtool fails otherwise
+        dcb_cmd = 'sudo dcbtool sc %s dcb on' % config.iface
+        subprocess.check_call(dcb_cmd, shell=True)
+        tc_cmd = 'sudo tc qdisc replace dev %s root handle 1: mqprio hw 1 num_tc 4 map 0 1 2 3 3 3 3 3 0 1 1 1 3 3 3 3' % config.iface
+        subprocess.check_call(tc_cmd, shell=True)
+    else:
+        sleep(1.5) #XXX: dcbtool fails otherwise
+        dcb_cmd = 'sudo dcbtool sc %s dcb off' % config.iface
+        subprocess.check_call(dcb_cmd, shell=True)
+
+    # Verify that DCB is configured properly
+    sleep(1.5) #XXX: dcbtool fails otherwise
+    verify_dcb(config)
 
 def get_txqs(config):
     txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % config.iface)
@@ -165,19 +199,25 @@ def pri_config_xps(config):
         # Also configure RFS
         pri_configure_rfs(config)
     else:
+        print 'Skipping XPS for qmodel: %s' % config.qmodel
+
         #Note: maybe not necessary.  But it shouldn't hurt to restart irqbalance
         subprocess.call('sudo service irqbalance restart', shell=True)
 
 def pri_config_qdisc(config):
     #XXX: DEBUG:
-    #print 'WARNING: Skipping Qdisc config!'
-    #return
+    print 'WARNING: Skipping Qdisc config!'
+    return
+
+    # MQPRI specific options
+    root_handle = '1' if config.qmodel == QMODEL_MQPRI else ''
+    handle_offset = 5 if config.qmodel == QMODEL_MQPRI else 1
 
     qcnt = len(get_txqs(config))
-    for i in xrange(1, qcnt + 1):
+    for i in xrange(handle_offset, qcnt + handle_offset):
         # Configure a prio Qdisc per txq with SFQ children
-        tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: prio' % \
-            (config.iface, i, i)
+        tc_cmd = 'sudo tc qdisc add dev %s parent %s:%x handle %d00: prio' % \
+            (config.iface, root_handle, i, i)
         subprocess.check_call(tc_cmd, shell=True)
         tc_cmd = 'sudo tc qdisc add dev %s parent %d00:1 sfq limit 32768 perturb 60' % \
             (config.iface, i)

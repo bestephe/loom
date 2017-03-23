@@ -101,7 +101,7 @@ def memcached_ycsb_run(args):
             #print
 
     # Convert throughput to bps
-    bytes_per_op = (128 * 1024)
+    bytes_per_op = (32 * 1024)
     gbps = ops_persec * bytes_per_op * 8 / 1e9
     print 'Gbps:', gbps
 

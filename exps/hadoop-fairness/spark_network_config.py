@@ -22,7 +22,7 @@ H2_PORTS = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096, 9097,
 
 SPARK_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
-    'job_fair_ratio': 3,
+    'job_fair_ratio': 1,
 
     'iface': 'eno2',
     'bql_limit_max': (256 * 1024),

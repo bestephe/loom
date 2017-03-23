@@ -9040,6 +9040,8 @@ int ixgbe_setup_tc(struct net_device *dev, u8 tc)
 	struct ixgbe_adapter *adapter = netdev_priv(dev);
 	struct ixgbe_hw *hw = &adapter->hw;
 
+        e_dev_info("ixgbe_setup_tc: %d\n", tc);
+
 	/* Hardware supports up to 8 traffic classes */
 	if (tc > adapter->dcb_cfg.num_tcs.pg_tcs)
 		return -EINVAL;
@@ -9047,6 +9049,8 @@ int ixgbe_setup_tc(struct net_device *dev, u8 tc)
 	if (tc && hw->mac.type == ixgbe_mac_82598EB &&
 	    tc < IXGBE_DCB_MAX_TRAFFIC_CLASS)
 		return -EINVAL;
+
+        e_dev_info("Number of traffic classes: %d\n", tc);
 
 	/* Hardware has to reinitialize queues and interrupts to
 	 * match packet buffer alignment. Unfortunately, the

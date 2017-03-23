@@ -8,7 +8,7 @@ import scipy.stats
 import sys
 import yaml
 
-JOB_FAIR_RATIO = 3
+#JOB_FAIR_RATIO = 3
 
 def get_percentile(data, percentile):
     return np.asscalar(scipy.stats.scoreatpercentile(data, percentile))
@@ -45,7 +45,7 @@ def compute_fm(args):
             # both jobs are active
             for i in range(len(xs)):
                 if tot_tput[i] > 8.5 and j1_tput[i] > 1 and j2_tput[i] > 1:
-                    fs_j1 = 1.0 * j1_tput[i] / JOB_FAIR_RATIO
+                    fs_j1 = 1.0 * j1_tput[i] / args.jfr
                     fs_j2 = j2_tput[i]
                     fm = abs(fs_j1 - fs_j2)
                     fms.append(fm)
@@ -73,6 +73,8 @@ def main():
     # TODO: I could just take in a list of files instead
     parser.add_argument('tsfiles', help='The files to parse.',
         nargs='+')
+    parser.add_argument('--jfr', help='The job fairness ration (e.g., 1, '
+        '3, ...)', required=True, type=int)
     parser.add_argument('--outf', help='The output file.')
     args = parser.parse_args()
 

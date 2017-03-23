@@ -22,6 +22,8 @@ sudo apt-get -y install pdsh
 sudo apt-get -y install python-yaml
 sudo apt-get -y install maven
 sudo apt-get -y install python-dpkt python-matplotlib python-numpy python-scipy
+sudo apt-get -y install lldpad
+sudo apt-get -y install cgroup-tools
 
 mkdir -p /home/ubuntu/software
 mkdir -p /home/ubuntu/storage
