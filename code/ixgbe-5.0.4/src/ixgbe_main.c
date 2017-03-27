@@ -4754,13 +4754,18 @@ s32 ixgbe_dcb_hw_ets(struct ixgbe_hw *hw, struct ieee_ets *ets, int max_frame)
 	/* naively give each TC a bwg to map onto CEE hardware */
 	__u8 bwg_id[IEEE_8021QAZ_MAX_TCS] = {0, 1, 2, 3, 4, 5, 6, 7};
 
+        /* XXX: DEBUG */
+        hw_err(hw, "ixgbe_dcb_hw_ets:\n");
+
 	/* Map TSA onto CEE prio type */
 	for (i = 0; i < IEEE_8021QAZ_MAX_TCS; i++) {
 		switch (ets->tc_tsa[i]) {
 		case IEEE_8021QAZ_TSA_STRICT:
+                        hw_err(hw, "  prio %d: type STRICT\n", i);
 			prio_type[i] = 2;
 			break;
 		case IEEE_8021QAZ_TSA_ETS:
+                        hw_err(hw, "  prio %d: type ETS\n", i);
 			prio_type[i] = 0;
 			break;
 		default:

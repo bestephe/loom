@@ -30,8 +30,8 @@ def plot_latency(results):
 
     # Create the figure
     figure = plt.figure(figsize=(6, 2.5))
-    bottom = 0.45
-    legend_bbox = (0.5, -0.5)
+    bottom = 0.30
+    legend_bbox = (0.5, -0.55)
 
     # Build the colormap
     color_map = get_cmap('Set1')
@@ -52,15 +52,15 @@ def plot_latency(results):
     yax = ax.get_yaxis()
     yax.grid(True)
     ax.set_xlabel('Time (seconds)')
-    #ax.set_xlim(xmin=0)
     ax.set_ylabel('Latency (us)')
-    figure.subplots_adjust(bottom=bottom)
+    ax.set_xlim(xmax=20)
 
     # Add the legend
     plt.legend(ncol=3, loc='lower center', bbox_to_anchor=legend_bbox,
         columnspacing=1.0, labelspacing=0.0, handletextpad=0.0,
         handlelength=1.5, frameon=False)
     plt.tight_layout()
+    figure.subplots_adjust(bottom=bottom)
 
     # Add the title
     title(results['title'])
@@ -70,6 +70,7 @@ def main():
     parser = argparse.ArgumentParser(description='Plot memcached latency')
     parser.add_argument('--results', help='A YAML file containing the results.',
         required=True)
+    parser.add_argument('--figname', help='The output name of the figure.')
     args = parser.parse_args()
 
     # Get the results
@@ -82,6 +83,10 @@ def main():
 
     # Plot the results
     plot_latency(results)
+
+    # Save the figure if requested
+    if args.figname:
+        savefig(args.figname)
 
     # Show the figures
     show()

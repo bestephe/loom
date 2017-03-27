@@ -153,14 +153,59 @@ def pri_config_nic_driver(config):
     ip_cmd = 'sudo ifconfig %s %s netmask 255.255.255.0' % (config.iface, ip)
     subprocess.check_call(ip_cmd, shell=True)
 
+    # Restart lldpad because it might be killed
+    lldp_cmd = 'sudo service lldpad restart'
+    subprocess.check_call(lldp_cmd, shell=True)
+
     # Enable DCB and change the root qdisc if using MQPRI
     if config.qmodel == QMODEL_MQPRI:
         sleep(1.5) #XXX: dcbtool fails otherwise
+
+        # Disable LLDP TLV transmission and receipt.  Probably not necessary,
+        # but for some reasons my traffic class changes are being reverted
+        # automatically as soon as I send traffic.  Which is a bummer.
+        lldp_cmd = 'sudo lldptool set-lldp -i %s adminStatus=disabled' % config.iface
+        subprocess.check_call(lldp_cmd, shell=True)
+
+        # Try to use the Intel tools to configure DCB priorities
         dcb_cmd = 'sudo dcbtool sc %s dcb on' % config.iface
         subprocess.check_call(dcb_cmd, shell=True)
+        sleep(0.5)
+        # None of this seems to work
+        ##dcb_cmd = 'sudo dcbtool sc %s pfc e:0 w:0 a:0 pfcup:00000000' % config.iface
+        ##subprocess.check_call(dcb_cmd, shell=True)
+        #dcb_cmd = 'sudo dcbtool sc %s pg e:1 w:0 a:0 strict:00111111' % config.iface
+        ##dcb_cmd = 'sudo dcbtool sc %s pg strict:00010000' % config.iface
+        #subprocess.check_call(dcb_cmd, shell=True)
+        ##dcb_cmd = 'sudo dcbtool sc %s pg pgpct:0,0,0,100,0,0,0,0' % config.iface
+        #dcb_cmd = 'sudo dcbtool sc %s pg pgpct:25,75,0,0,0,0,0,0' % config.iface
+        #subprocess.check_call(dcb_cmd, shell=True)
+
+        # Try the DCB Netlink approach to configuring DCB priorities
+        #XXX: BUG: NOTE: None of the above dcbtool commands seem to actually
+        # work for configuring priorities.  Although not intended for use with
+        # Intel NICs, the mlnx_qos command internally relies on DCB Netlink to
+        # configure ETS/Strict priorities, and this interface is also supported
+        # by the Intel NIC.
+        mlnx_cmd = 'sudo mlnx_qos -i %s  -p 0,0,1,1,2,2,3,3 -s strict,strict,strict,strict' % config.iface
+        subprocess.check_call(mlnx_cmd, shell=True)
+
+        # Configure the mqprio Qdisc
         tc_cmd = 'sudo tc qdisc replace dev %s root handle 1: mqprio hw 1 num_tc 4 map 0 1 2 3 3 3 3 3 0 1 1 1 3 3 3 3' % config.iface
         subprocess.check_call(tc_cmd, shell=True)
+
+        # Try the DCB Netlink approach to configuring DCB priorities again.  Just because?
+        #mlnx_cmd = 'sudo mlnx_qos -i %s  -p 0,0,1,1,2,2,3,3 -s strict,strict,strict,strict' % config.iface
+        #subprocess.check_call(mlnx_cmd, shell=True)
+
+        # Config cgroups net_prio for high priority network apps
+        cgroup_cmd = 'sudo mkdir /sys/fs/cgroup/net_prio/high_prio'
+        subprocess.call(cgroup_cmd, shell=True)
+        cgroup_cmd = 'echo "%s 3" | sudo tee /sys/fs/cgroup/net_prio/high_prio/net_prio.ifpriomap' % config.iface
+        subprocess.check_call(cgroup_cmd, shell=True)
     else:
+        # Disable any DCB traffic classes/priorities in case they ahve been
+        # previously enabled
         sleep(1.5) #XXX: dcbtool fails otherwise
         dcb_cmd = 'sudo dcbtool sc %s dcb off' % config.iface
         subprocess.check_call(dcb_cmd, shell=True)
@@ -168,6 +213,11 @@ def pri_config_nic_driver(config):
     # Verify that DCB is configured properly
     sleep(1.5) #XXX: dcbtool fails otherwise
     verify_dcb(config)
+
+    # Kill lldpad because for some reason it seems to reconfigure the NIC
+    # into a DCB-off state automatically
+    lldp_cmd = 'sudo service lldpad stop'
+    subprocess.check_call(lldp_cmd, shell=True)
 
 def get_txqs(config):
     txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % config.iface)
@@ -206,8 +256,8 @@ def pri_config_xps(config):
 
 def pri_config_qdisc(config):
     #XXX: DEBUG:
-    print 'WARNING: Skipping Qdisc config!'
-    return
+    #print 'WARNING: Skipping Qdisc config!'
+    #return
 
     # MQPRI specific options
     root_handle = '1' if config.qmodel == QMODEL_MQPRI else ''
@@ -219,22 +269,28 @@ def pri_config_qdisc(config):
         tc_cmd = 'sudo tc qdisc add dev %s parent %s:%x handle %d00: prio' % \
             (config.iface, root_handle, i, i)
         subprocess.check_call(tc_cmd, shell=True)
-        tc_cmd = 'sudo tc qdisc add dev %s parent %d00:1 sfq limit 32768 perturb 60' % \
+        #tc_cmd = 'sudo tc qdisc add dev %s parent %d00:1 sfq limit 32768 perturb 60' % \
+        tc_cmd = 'sudo tc qdisc add dev %s parent %d00:1 pfifo_fast' % \
             (config.iface, i)
         subprocess.check_call(tc_cmd, shell=True)
-        tc_cmd = 'sudo tc qdisc add dev %s parent %d00:2 sfq limit 32768 perturb 60' % \
+        #tc_cmd = 'sudo tc qdisc add dev %s parent %d00:2 sfq limit 32768 perturb 60' % \
+        tc_cmd = 'sudo tc qdisc add dev %s parent %d00:2 pfifo_fast' % \
             (config.iface, i)
         subprocess.check_call(tc_cmd, shell=True)
-        tc_cmd = 'sudo tc qdisc add dev %s parent %d00:3 sfq limit 32768 perturb 60' % \
+        #tc_cmd = 'sudo tc qdisc add dev %s parent %d00:3 sfq limit 32768 perturb 60' % \
+        tc_cmd = 'sudo tc qdisc add dev %s parent %d00:3 pfifo_fast' % \
             (config.iface, i)
         subprocess.check_call(tc_cmd, shell=True)
 
+        PRI_PORTS = [11212, 11214]
+
         # Create a filter for memcached traffic
-        for pdir in ['sport', 'dport']:
-            tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
-                'prio 1 u32 match ip %s %d 0xffff flowid %d00:1'
-            tc_cmd = tc_str % (config.iface, i, pdir, 11212, i)
-            subprocess.check_call(tc_cmd, shell=True)
+        for p in PRI_PORTS:
+            for pdir in ['sport', 'dport']:
+                tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
+                    'prio 1 u32 match ip %s %d 0xffff flowid %d00:1'
+                tc_cmd = tc_str % (config.iface, i, pdir, p, i)
+                subprocess.check_call(tc_cmd, shell=True)
 
         # Create a traffic filter to send the rest of the traffic to priority :2
         tc_str = 'sudo tc filter add dev %s protocol all parent %d00: ' + \
@@ -250,7 +306,15 @@ def pri_config_server(config):
     pri_config_xps(config)
 
     # Configure Qdisc/TC
-    pri_config_qdisc(config)
+    #XXX: BUG: There appears to be a bug with assigning Qdiscs in the mqprio
+    # Qdisc.  Because the first |tc| classes of the mqprio qdisc are for the
+    # traffic class, tc will not allow a new qdisc to be attached.  However,
+    # from debugging, it seems like attaching to classes |tc| + 1 : |tc| +
+    # |queues| + 1 leads to the wrong queues being used.
+    if config.qmodel == QMODEL_MQPRI:
+        print 'Skipping Qdisc config for qmodel: %s' % config.qmodel
+    else:
+        pri_config_qdisc(config)
 
     # Configure BQL
     set_all_bql_limit_max(config)

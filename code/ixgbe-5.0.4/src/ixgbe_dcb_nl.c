@@ -331,6 +331,8 @@ static u8 ixgbe_dcbnl_set_all(struct net_device *netdev)
 	int ret = DCB_NO_HW_CHG;
 	u8 prio_tc[IXGBE_DCB_MAX_USER_PRIORITY] = { 0 };
 
+        e_dev_info("ixgbe_dcbnl_set_all:\n");
+
 	/* Fail command if not in CEE mode */
 	if (!(adapter->dcbx_cap & DCB_CAP_DCBX_VER_CEE))
 		return ret;
@@ -486,6 +488,8 @@ static int ixgbe_dcbnl_setnumtcs(struct net_device *netdev, int tcid, u8 num)
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	u8 rval = 0;
 
+        e_dev_info("ixgbe_dcbnl_setnumtcs:\n");
+
 	if (adapter->flags & IXGBE_FLAG_DCB_ENABLED) {
 		switch (tcid) {
 		case DCB_NUMTCS_ATTR_PG:
@@ -638,6 +642,9 @@ static int ixgbe_dcbnl_ieee_setets(struct net_device *dev,
 	__u8 max_tc = 0;
 	__u8 map_chg = 0;
 
+        e_dev_info("ixgbe_dcbnl_ieee_setets:\n");
+        e_dev_err("ixgbe_dcbnl_ieee_setets:\n");
+
 	if (!(adapter->dcbx_cap & DCB_CAP_DCBX_VER_IEEE))
 		return -EINVAL;
 
@@ -670,6 +677,8 @@ static int ixgbe_dcbnl_ieee_setets(struct net_device *dev,
 
 	if (max_tc > adapter->dcb_cfg.num_tcs.pg_tcs)
 		return -EINVAL;
+
+        e_dev_info("ixgbe_dcbnl_ieee_setets: max_tc: %d\n", max_tc);
 
 	if (max_tc != netdev_get_num_tc(dev))
 		err = ixgbe_setup_tc(dev, max_tc);
@@ -817,6 +826,8 @@ static u8 ixgbe_dcbnl_setdcbx(struct net_device *dev, u8 mode)
 	struct ixgbe_adapter *adapter = netdev_priv(dev);
 	struct ieee_ets ets = { .ets_cap = 0 };
 	struct ieee_pfc pfc = { .pfc_en = 0 };
+
+        e_dev_info("ixgbe_dcbnl_setdcbx:\n");
 
 	/* no support for LLD_MANAGED modes or CEE+IEEE */
 	if ((mode & DCB_CAP_DCBX_LLD_MANAGED) ||

@@ -44,14 +44,20 @@ def memcached_ycsb_run(args):
     #    'histf': memcached_histf,
     #}
 
-    run_cmd_tmpl = 'cd %(ycsb_dir)s; ./bin/ycsb run memcached -s ' \
+    run_cmd_tmpl = 'cd %(ycsb_dir)s; %(prefix)s ./bin/ycsb run memcached -s ' \
         '-P %(workload)s -P %(properties)s -threads 16 -p status.interval=1'
+    if args.high_prio:
+        prefix = 'sudo cgexec -g net_prio:high_prio '
+    else:
+        prefix = ''
     run_cmd_args = {
         'ycsb_dir': YCSB_DIR, 
         'workload': os.path.abspath(WORKLOAD),
         'properties': os.path.abspath(PROPERTIES),
+        'prefix': prefix,
     }
     run_cmd = run_cmd_tmpl % run_cmd_args
+
     print 'run_cmd:', run_cmd
     proc = subprocess.Popen(run_cmd, shell=True,
         stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
@@ -113,6 +119,9 @@ def main():
         'the rate-limiting and fairness experiment')
     parser.add_argument('--expname', help='A string to use to identify the '
         'output file from this experiment.')
+    #XXX: This could be in the config.  But currently the config isn't used.
+    parser.add_argument('--high-prio', help='Start the memcached process '
+        'at a high network priority. Overrides the config', action='store_true')
     args = parser.parse_args()
 
     # Connect to the remote host, configure it, and start the memcached servers
