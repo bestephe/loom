@@ -25,13 +25,13 @@ matplotlib.rcParams.update({'lines.linewidth': 3})
 master_linestyles = ['-', '--', '-.', ':']
 master_markers = ['o', 'D', 'v', '^', '<', '>', 's', 'p', '*', '+', 'x']
 
-def plot_cdf(results):
+def plot_job_tput(results):
     lines = results['lines']
 
     # Create the figure
     figure = plt.figure(figsize=(6, 2.5))
-    bottom = 0.30
-    legend_bbox = (0.5, -0.55)
+    bottom = 0.45
+    legend_bbox = (0.5, -0.5)
 
     # Build the colormap
     color_map = get_cmap('Set1')
@@ -45,32 +45,31 @@ def plot_cdf(results):
 
     # Plot the lines
     for line in lines:
+        if line['lname'] == 'Total':
+            continue
         plot(line['xs'], line['ys'], label=line['lname'],
             linestyle=linescycle.next())
 
     # Mess with axes
     yax = ax.get_yaxis()
     yax.grid(True)
-    ax.set_xlabel('Avg Latency (us)')
-    ax.set_ylabel('CDF')
-    #ax.set_ylim(ymin=0.8, ymax=1.0)
-    #ax.set_xlim(xmax=2000)
-    ax.set_ylim(ymin=0.75, ymax=1.0)
-    ax.set_xlim(xmax=6000)
+    ax.set_xlabel('Time (seconds)')
+    #ax.set_xlim(xmin=0)
+    ax.set_ylabel('Throughput (Gbps)')
+    figure.subplots_adjust(bottom=bottom)
 
     # Add the legend
-    plt.legend(ncol=4, loc='lower center', bbox_to_anchor=legend_bbox,
+    plt.legend(ncol=3, loc='lower center', bbox_to_anchor=legend_bbox,
         columnspacing=1.0, labelspacing=0.0, handletextpad=0.0,
         handlelength=1.5, frameon=False)
     plt.tight_layout()
-    figure.subplots_adjust(bottom=bottom)
 
     # Add the title
     title(results['title'])
 
 def main():
     # Parse arguments
-    parser = argparse.ArgumentParser(description='Plot memcached latency')
+    parser = argparse.ArgumentParser(description='Plot per-job fairnes')
     parser.add_argument('--results', help='A YAML file containing the results.',
         required=True)
     parser.add_argument('--figname', help='The output name of the figure.')
@@ -85,7 +84,7 @@ def main():
         results['title'] = args.results
 
     # Plot the results
-    plot_cdf(results)
+    plot_job_tput(results)
 
     # Save the figure if requested
     if args.figname:

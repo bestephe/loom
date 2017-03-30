@@ -25,7 +25,7 @@ matplotlib.rcParams.update({'lines.linewidth': 3})
 master_linestyles = ['-', '--', '-.', ':']
 master_markers = ['o', 'D', 'v', '^', '<', '>', 's', 'p', '*', '+', 'x']
 
-def plot_cdf(results):
+def plot_latency(results):
     lines = results['lines']
 
     # Create the figure
@@ -51,15 +51,12 @@ def plot_cdf(results):
     # Mess with axes
     yax = ax.get_yaxis()
     yax.grid(True)
-    ax.set_xlabel('Avg Latency (us)')
-    ax.set_ylabel('CDF')
-    #ax.set_ylim(ymin=0.8, ymax=1.0)
-    #ax.set_xlim(xmax=2000)
-    ax.set_ylim(ymin=0.75, ymax=1.0)
-    ax.set_xlim(xmax=6000)
+    ax.set_xlabel('Time (seconds)')
+    ax.set_ylabel('Latency (us)')
+    ax.set_xlim(xmax=20)
 
     # Add the legend
-    plt.legend(ncol=4, loc='lower center', bbox_to_anchor=legend_bbox,
+    plt.legend(ncol=3, loc='lower center', bbox_to_anchor=legend_bbox,
         columnspacing=1.0, labelspacing=0.0, handletextpad=0.0,
         handlelength=1.5, frameon=False)
     plt.tight_layout()
@@ -85,7 +82,7 @@ def main():
         results['title'] = args.results
 
     # Plot the results
-    plot_cdf(results)
+    plot_latency(results)
 
     # Save the figure if requested
     if args.figname:

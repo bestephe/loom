@@ -25,7 +25,7 @@ matplotlib.rcParams.update({'lines.linewidth': 3})
 master_linestyles = ['-', '--', '-.', ':']
 master_markers = ['o', 'D', 'v', '^', '<', '>', 's', 'p', '*', '+', 'x']
 
-def plot_cdf(results):
+def plot_fairness_cdf(results):
     lines = results['lines']
 
     # Create the figure
@@ -51,12 +51,10 @@ def plot_cdf(results):
     # Mess with axes
     yax = ax.get_yaxis()
     yax.grid(True)
-    ax.set_xlabel('Avg Latency (us)')
+    ax.set_xlabel('FM (Gbps)')
+    #ax.set_xlim(xmin=0)
+    ax.set_ylim(ymax=1.0)
     ax.set_ylabel('CDF')
-    #ax.set_ylim(ymin=0.8, ymax=1.0)
-    #ax.set_xlim(xmax=2000)
-    ax.set_ylim(ymin=0.75, ymax=1.0)
-    ax.set_xlim(xmax=6000)
 
     # Add the legend
     plt.legend(ncol=4, loc='lower center', bbox_to_anchor=legend_bbox,
@@ -66,13 +64,13 @@ def plot_cdf(results):
     figure.subplots_adjust(bottom=bottom)
 
     # Add the title
-    title(results['title'])
+    #title(results['title'])
 
 def main():
     # Parse arguments
-    parser = argparse.ArgumentParser(description='Plot memcached latency')
-    parser.add_argument('--results', help='A YAML file containing the results.',
-        required=True)
+    parser = argparse.ArgumentParser(description='Plot per-job fairnes')
+    parser.add_argument('--results', help='A YAML file containing the '
+        'CDF results.', required=True)
     parser.add_argument('--figname', help='The output name of the figure.')
     args = parser.parse_args()
 
@@ -80,12 +78,8 @@ def main():
     with open(args.results) as f:
         results = yaml.load(f)
 
-    # Add a title if there is none
-    if 'title' not in results:
-        results['title'] = args.results
-
     # Plot the results
-    plot_cdf(results)
+    plot_fairness_cdf(results)
 
     # Save the figure if requested
     if args.figname:
