@@ -1,0 +1,164 @@
+#!/usr/bin/env python2.7
+import sys
+import os
+import os.path
+import pprint
+import cStringIO
+import tempfile
+import time
+
+# Suppress scapy IPv6 warning (must be done before importing scapy module)
+import logging
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
+
+import cli
+import commands
+
+try:
+    this_dir = os.path.dirname(os.path.realpath(__file__))
+    sys.path.insert(1, '%s/../libbess-python' % this_dir)
+    from bess import *
+except ImportError:
+    print >> sys.stderr, 'Cannot import the API module (libbess-python)'
+    raise
+
+
+class BESSCLI(cli.CLI):
+
+    def __init__(self, bess, cmd_db, **kwargs):
+        self.bess = bess
+        self.cmd_db = cmd_db
+        self.this_dir = this_dir
+
+        super(BESSCLI, self).__init__(self.cmd_db.cmdlist, **kwargs)
+
+    def get_var_attrs(self, var_token, partial_word):
+        return self.cmd_db.get_var_attrs(self, var_token, partial_word)
+
+    def split_var(self, var_type, line):
+        try:
+            return self.cmd_db.split_var(self, var_type, line)
+        except self.InternalError:
+            return super(BESSCLI, self).split_var(var_type, line)
+
+    def bind_var(self, var_type, line):
+        try:
+            return self.cmd_db.bind_var(self, var_type, line)
+        except self.InternalError:
+            return super(BESSCLI, self).bind_var(var_type, line)
+
+    def print_banner(self):
+        self.fout.write('Type "help" for more information.\n')
+
+    def get_default_args(self):
+        return [self]
+
+    def _handle_broken_connection(self):
+        host = self.bess.peer[0]
+        if host == 'localhost' or self.bess.peer[0].startswith('127.'):
+            self._print_crashlog()
+        self.bess.disconnect()
+
+    def call_func(self, func, args):
+        try:
+            super(BESSCLI, self).call_func(func, args)
+
+        except self.bess.APIError as e:
+            self.err(e)
+            raise self.HandledError()
+
+        except self.bess.RPCError as e:
+            self.err('RPC failed to {}:{} - {}'.format(
+                    self.bess.peer[0], self.bess.peer[1], e.message))
+
+            self._handle_broken_connection()
+            raise self.HandledError()
+
+        except self.bess.Error as e:
+            self.err(e.errmsg)
+
+            if e.err in errno.errorcode:
+                err_code = errno.errorcode[e.err]
+            else:
+                err_code = '<unknown>'
+
+            self.ferr.write('  BESS daemon response - errno=%d (%s: %s)\n' %
+                            (e.err, err_code, os.strerror(e.err)))
+
+            if e.details:
+                details = pprint.pformat(e.details)
+                initial_indent = '  error details: '
+                subsequent_indent = ' ' * len(initial_indent)
+
+                for i, line in enumerate(details.splitlines()):
+                    if i == 0:
+                        self.fout.write('%s%s\n' % (initial_indent, line))
+                    else:
+                        self.fout.write('%s%s\n' % (subsequent_indent, line))
+
+            raise self.HandledError()
+
+    def _print_crashlog(self):
+        try:
+            log_path = tempfile.gettempdir() + '/bessd_crash.log'
+            log = open(log_path).read()
+            ctime = time.ctime(os.path.getmtime(log_path))
+            self.ferr.write('From {} ({}):\n{}'.format(log_path, ctime, log))
+        except Exception as e:
+            self.ferr.write('Abruptly disconnected from bessd, but crashlog is '
+                            'not available:\n%s\n' % (str(e)))
+
+    def loop(self):
+        super(BESSCLI, self).loop()
+        self.bess.disconnect()
+
+    def get_prompt(self):
+        if self.bess.is_connected():
+            return '%s:%d $ ' % self.bess.peer
+
+        if self.bess.is_connection_broken():
+            self._handle_broken_connection()
+
+        return '<disconnected> $ '
+
+
+def run_cli(instream=sys.stdin):
+    s = BESS()
+    cli = BESSCLI(s, commands, fin=instream)
+
+    try:
+        s.connect()
+    except BESS.APIError as e:
+        if cli.interactive:
+            cli.ferr.write(e.message + '\n')
+            cli.ferr.write('Perhaps bessd daemon is not running locally? ' \
+                        'Try "daemon start".\n')
+
+    cli.loop()
+
+    # end of loop due to error? let them know which command failed.
+    if cli.stop_loop:
+        if cli.last_cmd:
+            cli.ferr.write('  Command failed: %s\n' % cli.last_cmd)
+        sys.exit(1)
+
+
+def main():
+    if len(sys.argv) == 1:
+        run_cli()
+    else:
+        cmds = []
+        line_buf = []
+
+        for arg in sys.argv[1:]:
+            if arg == '--':
+                cmds.append(' '.join(line_buf))
+                line_buf = []
+            else:
+                line_buf.append(arg)
+
+        cmds.append(' '.join(line_buf))
+        run_cli(cStringIO.StringIO('\n'.join(cmds)))
+
+if __name__ == '__main__':
+    main()

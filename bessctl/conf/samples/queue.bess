@@ -1,0 +1,25 @@
+import scapy.all as scapy
+
+eth = scapy.Ether(dst='00:02:15:37:a2:44', src='00:ae:f3:52:aa:d1')
+ip = scapy.IP()
+udp = scapy.UDP()
+payload = 'Hello World'
+
+test_packet = str(eth/ip/udp/payload)
+
+src::Source() \
+        -> Rewrite(templates=[test_packet]) \
+        -> queue::Queue() \
+        -> VLANPush(tci=2) \
+        -> Sink()
+
+bess.add_tc('rr', policy='round_robin', priority=0)
+
+bess.add_tc('fast', policy='rate_limit', resource='packet', limit={'packet': 9000000}, parent='rr')
+bess.add_tc('fast_leaf', policy='leaf', parent='fast')
+
+bess.add_tc('slow', policy='rate_limit', resource='packet', limit={'packet': 1000000}, parent='rr')
+bess.add_tc('slow_leaf', policy='leaf', parent='slow')
+
+bess.attach_task(src.name, tc='fast_leaf')
+bess.attach_task(queue.name, tc='slow_leaf')

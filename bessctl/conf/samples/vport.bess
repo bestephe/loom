@@ -1,0 +1,10 @@
+# To test a container vport, use this instead
+# v = VPort(docker=<name or CID>, ip_addr='192.168.10.1/24')
+v = VPort()
+
+p = PMDPort(port_id=0)
+
+PortInc(port=p.name) -> PortOut(port=v.name)
+PortInc(port=v.name) -> PortOut(port=p.name)
+
+print 'Two ports have been spliced: {} <-> {}'.format(p, v)
