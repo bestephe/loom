@@ -15,10 +15,10 @@ QMODEL_MQ = 'mq'
 
 MEMCACHED_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
-    'rate_limit': 10e9,
+    'rate_limit': 2e9,
     'iface': 'eno2',
     'max_mem': (16 * 1024),
-    'threads': 10,
+    'threads': 16,
 
     #XXX: Not really used anymore
     'servers': [
@@ -178,6 +178,8 @@ def main():
         'start memcached for the rate-limiting and fairness experiment')
     parser.add_argument('--config', help='An alternate configuration file. '
         'The configuration format is unsurprisingly not documented.')
+    parser.add_argument('--rate-limit', help='Override the rate-limit in '
+        'the config.', type=float)
     args = parser.parse_args()
 
     # Get the config
@@ -187,6 +189,10 @@ def main():
         config = MemcachedConfig(user_config)
     else:
         config = MemcachedConfig()
+
+    # Overwrite the rate-limit if requested.
+    if args.rate_limit:
+        config.rate_limit = args.rate_limit
 
     # Kill all old servers
     memcached_kill_servers(config)

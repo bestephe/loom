@@ -21,12 +21,12 @@
 #   Request distribution: zipfian
 
 recordcount=10000
-operationcount=30000
+operationcount=150000
 workload=com.yahoo.ycsb.workloads.CoreWorkload
 
-# Use 128KB records
+# Use 32KB records
 fieldcount=1
-fieldlength=131072
+fieldlength=32768
 
 readallfields=true
 

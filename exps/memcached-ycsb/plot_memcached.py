@@ -22,49 +22,59 @@ matplotlib.rcParams.update({'font.size': 14})
 
 master_hatch = ['//', '\\\\', 'x', '+', '\\', 'o', 'O', '.', '-',  '*']
 
-RESF = 'lines.memcached_rate.yaml'
+RESFS = ['lines.memcached_2gbps_rate.yaml', 'lines.memcached_4gbps_rate.yaml']
 
 def main():
-    # Load the data and set constants
-    plot_data = yaml.load(open(RESF))
-    lines = plot_data['lines']
-    width = 0.15
-    error_kw=dict(ecolor='gray', lw=2, capsize=5, capthick=2)
+    for resf in RESFS:
+        # Load the data and set constants
+        plot_data = yaml.load(open(resf))
+        lines = plot_data['lines']
+        width = 0.15
+        error_kw=dict(ecolor='gray', lw=2, capsize=5, capthick=2)
 
-    # Get the data into the right format
-    labels = [l['lname'] for l in lines]
-    data = [l['avg_gbps'] for l in lines]
-    stddev = [l['stddev'] for l in lines]
+        # Get the data into the right format
+        labels = [l['lname'] for l in lines]
+        data = [l['avg_gbps'] for l in lines]
+        stddev = [l['stddev'] for l in lines]
 
-    # Build the colormap
-    color_map = get_cmap('Set1')
-    c_norm = mplcolors.Normalize(vmin=0, vmax=len(lines)*1.7)
-    scalar_map = mplcm.ScalarMappable(norm=c_norm, cmap=color_map)
-    hatchcycle = itertools.cycle(master_hatch)
-    ax = gca()
-    ax.set_color_cycle([scalar_map.to_rgba(i) for i in \
-        xrange(len(lines))])
+        # Create the figure
+        figure = plt.figure(figsize=(6, 2.5))
+        #bottom = 0.30
 
-    # Plot the data
-    for dp_i, dp in enumerate(data):
-        color = scalar_map.to_rgba(dp_i)
-        rect = ax.bar(0.05 + (1.3 * dp_i * width), dp, width,
-            yerr=stddev[dp_i], color=color, error_kw=error_kw)
+        # Build the colormap
+        color_map = get_cmap('Set1')
+        c_norm = mplcolors.Normalize(vmin=0, vmax=len(lines)*1.7)
+        scalar_map = mplcm.ScalarMappable(norm=c_norm, cmap=color_map)
+        hatchcycle = itertools.cycle(master_hatch)
+        ax = gca()
+        ax.set_color_cycle([scalar_map.to_rgba(i) for i in \
+            xrange(len(lines))])
 
-    # Mess with axes
-    yax = ax.get_yaxis()
-    yax.grid(True)
-    ax.set_ylabel('Throughput (Gbps)')
+        # Plot the data
+        for dp_i, dp in enumerate(data):
+            color = scalar_map.to_rgba(dp_i)
+            rect = ax.bar(0.05 + (1.3 * dp_i * width), dp, width,
+                yerr=stddev[dp_i], color=color, error_kw=error_kw)
 
-    # Change xticks:
-    ax.set_xticks(0.05 + (width / 2.0) + (1.3 * width * np.arange(len(lines))))
-    print 'labels:', labels
-    ax.set_xticklabels(labels)
+        # Mess with axes
+        yax = ax.get_yaxis()
+        yax.grid(True)
+        ax.set_ylabel('Throughput (Gbps)')
 
-    # Save the figure
-    #figname = 'memcached_rate.pdf'
-    figname = 'memcached_rate.png'
-    savefig(figname)
+        # Change xticks:
+        ax.set_xticks(0.05 + (width / 2.0) + (1.3 * width * np.arange(len(lines))))
+        print 'labels:', labels
+        ax.set_xticklabels(labels)
+
+        plt.tight_layout()
+        #figure.subplots_adjust(bottom=bottom)
+
+        # Save the figure
+        prefix = resf.split('.')[1]
+        figname = prefix + '.pdf'
+        savefig(figname)
+        figname = prefix + '.png'
+        savefig(figname)
 
     show()
 

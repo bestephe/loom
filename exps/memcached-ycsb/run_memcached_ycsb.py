@@ -9,7 +9,7 @@ import subprocess
 import yaml
 from time import sleep
 
-YCSB_DIR = '/home/ubuntu/YCSB/'
+YCSB_DIR = '/users/brents/YCSB/'
 WORKLOAD = 'workload_read_asym'
 PROPERTIES = 'memcached_read_asym.properties'
 
@@ -28,7 +28,7 @@ def memcached_ycsb_load():
 
 def memcached_ycsb_run():
     run_cmd_tmpl = 'cd %(ycsb_dir)s; ./bin/ycsb run memcached -s ' \
-        '-P %(workload)s -P %(properties)s -threads 16'
+        '-P %(workload)s -P %(properties)s -threads 32 -p status.interval=1'
     run_cmd_args = {
         'ycsb_dir': YCSB_DIR, 
         'workload': os.path.abspath(WORKLOAD),
@@ -42,17 +42,31 @@ def memcached_ycsb_run():
     print out
 
     # Get the throughput
+    bytes_per_op = (32 * 1024)
     ops_persec = -1
+    ival_gbps = []
     for l in out.split('\n'):
         match = re.match(r".*OVERALL.*Throughput.*, (%s).*" \
             % FLOAT_DESC_STR, l)
         if match:
             ops_persec = float(match.groups()[0])
 
+        # Interval gbps
+        match = re.match(r".*sec:.*operations; (%s) current ops/sec.*" % FLOAT_DESC_STR, l)
+        if match:
+            opps = float(match.groups()[0])
+            igbps = opps * bytes_per_op * 8 / 1e9
+            ival_gbps.append(igbps)
+
     # Convert throughput to bps
-    bytes_per_op = (128 * 1024)
     gbps = ops_persec * bytes_per_op * 8 / 1e9
-    return gbps
+
+    # Throw away the first second of intervals because its always slow and the
+    # last second of intervals because its incomplete
+    ival_gbps = ival_gbps[1:-1]
+
+    results = {'gbps': gbps, 'ival_gbps': ival_gbps}
+    return results
 
 def main():
     # Parse arguments
@@ -70,14 +84,16 @@ def main():
     memcached_ycsb_load()
 
     # YCSB: Run the benchmark
-    gbps = memcached_ycsb_run()
+    results = memcached_ycsb_run()
+
+    #DEBUG
+    print yaml.dump(results)
 
     # Output the results
-    print 'gbps:', gbps
     if args.expname:
-        res_fname = 'results/memcachd_rate.%s.yaml' % args.expname
+        res_fname = 'results/memcached_rate.%s.yaml' % args.expname
         with open(res_fname, 'w') as resf:
-            yaml.dump({'gbps': gbps}, resf)
+            yaml.dump(results, resf)
 
 if __name__ == '__main__':
     main()
