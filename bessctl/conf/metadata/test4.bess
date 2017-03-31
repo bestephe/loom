@@ -1,2 +1,0 @@
-# simplest
-MetadataTest(write={'a':32, 'b':32, 'c':32, 'd':32}) -> MetadataTest(read={'a':32, 'b':32, 'c':32, 'd':32})
