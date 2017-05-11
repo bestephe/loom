@@ -28,7 +28,7 @@ import javax.annotation.Nullable
 
 import com.esotericsoftware.kryo.io.{Input => KryoInput, Output => KryoOuput}
 import com.esotericsoftware.kryo.{Kryo, KryoException}
-import com.ibm.crail.terasort.{TeraSort, ParseTeraOptions}
+import com.ibm.crail.terasort.TeraSort
 import org.apache.spark.TaskContext
 import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
 

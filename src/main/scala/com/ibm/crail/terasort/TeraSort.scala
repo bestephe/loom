@@ -25,10 +25,10 @@ package com.ibm.crail.terasort
 import java.util.Random
 
 import com.google.common.primitives.UnsignedBytes
-import com.ibm.crail.terasort.serializer.{ByteSerializer, F22Serializer, KryoSerializer}
+import com.ibm.crail.terasort.serializer.{ByteSerializer, KryoSerializer}
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.spark.rdd._
-import org.apache.spark.{SparkConf, SparkContext, Partitioner}
+import org.apache.spark.{Partitioner, SparkConf, SparkContext}
 
 object TeraSort {
 
@@ -132,9 +132,11 @@ object TeraSort {
           sorted.setSerializer(new ByteSerializer())
           exe += " serializer : byte "
         }else if (options.isSerializerF22) {
-          sorted.setSerializer(new F22Serializer())
           //TODO: printout warning to make sure
-          exe += " serializer : F22 "
+          println("-------------------------------------------")
+          println("F22 can only be loaded by spark-default config")
+          println("-------------------------------------------")
+          exe += " serializer : F22 (Warning: F22 can only be loaded by spark-default config) "
         } else {
           exe += " noSerializer + "
         }
@@ -225,8 +227,6 @@ object TeraSort {
       shuffle.setSerializer(new KryoSerializer())
     } else if (options.isSerializerByte) {
       shuffle.setSerializer(new ByteSerializer())
-    }else if (options.isSerializerF22) {
-      shuffle.setSerializer(new F22Serializer())
     }
     val out = new PairRDDFunctions(shuffle)
     out.saveAsNewAPIHadoopFile[TeraOutputFormat](outputFile)

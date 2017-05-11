@@ -25,59 +25,27 @@ package com.ibm.crail.terasort.serializer
 import java.io._
 import java.nio.ByteBuffer
 
-import com.ibm.crail.terasort.{TeraSort, TeraInputFormat}
-import com.ibm.crail.{CrailBufferedOutputStream, CrailMultiStream}
-import org.apache.spark.serializer.{DeserializationStream, SerializationStream, Serializer, SerializerInstance}
-import org.apache.spark.shuffle.crail.{CrailDeserializationStream, CrailSerializationStream, CrailSerializerInstance, CrailShuffleSerializer}
-import org.apache.spark.{ShuffleDependency, TaskContext}
+import com.ibm.crail.terasort.{TeraInputFormat, TeraSort}
+import com.ibm.crail.{CrailBufferedInputStream, CrailBufferedOutputStream}
+import org.apache.spark.TaskContext
+import org.apache.spark.serializer._
 
 import scala.reflect.ClassTag
 
-class F22Serializer() extends Serializer with Serializable with CrailShuffleSerializer {
-  override final def newInstance(): SerializerInstance = {
-    F22ShuffleSerializerInstance.getInstance()
-  }
-  override lazy val supportsRelocationOfSerializedObjects: Boolean = true
-
-  override def newCrailSerializer[K,V](dep: ShuffleDependency[K,_,V]): CrailSerializerInstance = {
+class F22Serializer() extends Serializable with CrailSerializer {
+  override final def newCrailSerializer(defaultSerializer: Serializer): CrailSerializerInstance = {
     F22ShuffleSerializerInstance.getInstance()
   }
 }
 
-class F22ShuffleSerializerInstance() extends SerializerInstance with CrailSerializerInstance {
+class F22ShuffleSerializerInstance() extends CrailSerializerInstance {
 
-  override final def serialize[T: ClassTag](t: T): ByteBuffer = {
-    throw new IOException("this call is not yet supported : serializer[] " +
-    " \n perhaps you forgot to set spark.crail.shuffle.sorter setting in your spark conf to match F22")
+  override def serializeCrailStream(output: CrailBufferedOutputStream): CrailSerializationStream = {
+    new F22SerializerStream(output)
   }
 
-  override final def deserialize[T: ClassTag](bytes: ByteBuffer): T = {
-    throw new IOException("this call is not yet supported : deserialize[]" +
-      " \n perhaps you forgot to set spark.crail.shuffle.sorter setting in your spark conf to match F22")
-  }
-
-  override final def deserialize[T: ClassTag](bytes: ByteBuffer, loader: ClassLoader): T = {
-    throw new IOException("this call is not yet supported : deserialize with classloader" +
-      " \n perhaps you forgot to set spark.crail.shuffle.sorter setting in your spark conf to match F22")
-  }
-
-  override final def serializeStream(s: OutputStream): SerializationStream = {
-    throw new IOException("this call is not yet supported : serializerStream with OutputStream " +
-      " \n perhaps you forgot to set spark.crail.shuffle.sorter setting in your spark conf to match F22")
-  }
-
-  /* this is the one we are interested in */
-  override final def deserializeStream(s: InputStream): DeserializationStream = {
-    throw new IOException("this call is not yet supported : deserializerStream with InputStream " +
-      " \n perhaps you forgot to set spark.crail.shuffle.sorter setting in your spark conf to match F22")
-  }
-
-  override def serializeCrailStream(s: CrailBufferedOutputStream): CrailSerializationStream = {
-    new F22SerializerStream(s)
-  }
-
-  override def deserializeCrailStream(s: CrailMultiStream): CrailDeserializationStream = {
-    new F22DeserializerStream(s)
+  override def deserializeCrailStream(input: CrailBufferedInputStream): CrailDeserializationStream = {
+    new F22DeserializerStream(input)
   }
 }
 
@@ -123,11 +91,11 @@ class F22SerializerStream(outStream: CrailBufferedOutputStream) extends CrailSer
   }
 }
 
-class F22DeserializerStream(inStream: CrailMultiStream) extends CrailDeserializationStream {
+class F22DeserializerStream(inStream: CrailBufferedInputStream) extends CrailDeserializationStream {
 
   override final def readObject[T: ClassTag](): T = {
     throw new IOException("this call is not yet supported : readObject " +
-      " \n perhaps you forgot to set spark.crail.shuffle.sorter setting in your spark conf to match F22")
+      " \n F22 is meant to use with readKey/readValue")
   }
 
   override def read(buf: ByteBuffer): Int = {
@@ -188,7 +156,6 @@ class F22DeserializerStream(inStream: CrailMultiStream) extends CrailDeserializa
   }
 
   override def available(): Int = {
-    //FIMXE: this is not ready, don't use this interface
     inStream.available()
   }
 }

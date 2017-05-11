@@ -22,8 +22,8 @@
 package com.ibm.crail.terasort.sorter
 
 import org.apache.spark.TaskContext
-import org.apache.spark.serializer.Serializer
-import org.apache.spark.shuffle.crail.{CrailDeserializationStream, CrailShuffleSorter}
+import org.apache.spark.serializer.{CrailDeserializationStream, Serializer}
+import org.apache.spark.shuffle.CrailShuffleSorter
 
 import scala.collection.mutable.ArrayBuffer
 

@@ -22,8 +22,6 @@
 
 package com.ibm.crail.terasort;
 
-import java.nio.ByteBuffer;
-
 public class SerializerBuffer {
     byte[] byteArray = null;
     int usage = 0;

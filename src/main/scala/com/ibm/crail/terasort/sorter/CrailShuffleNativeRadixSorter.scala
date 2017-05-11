@@ -24,11 +24,11 @@ package com.ibm.crail.terasort.sorter
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicLong
 
-import com.ibm.crail.terasort.{TeraSort, TeraInputFormat}
+import com.ibm.crail.terasort.{TeraInputFormat, TeraSort}
 import com.ibm.radixsort.NativeRadixSort
 import org.apache.spark.TaskContext
-import org.apache.spark.serializer.Serializer
-import org.apache.spark.shuffle.crail.{CrailDeserializationStream, CrailShuffleSorter}
+import org.apache.spark.serializer.{CrailDeserializationStream, Serializer}
+import org.apache.spark.shuffle.CrailShuffleSorter
 import sun.nio.ch.DirectBuffer
 
 import scala.collection.mutable.ListBuffer

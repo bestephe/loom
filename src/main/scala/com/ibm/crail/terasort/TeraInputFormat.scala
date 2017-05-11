@@ -26,8 +26,8 @@ import java.io.EOFException
 import java.util.List
 
 import org.apache.hadoop.fs.{FSDataInputStream, FileStatus, FileSystem, Path}
-import org.apache.hadoop.mapreduce.{InputSplit, JobContext, RecordReader, TaskAttemptContext}
 import org.apache.hadoop.mapreduce.lib.input.{FileInputFormat, FileSplit}
+import org.apache.hadoop.mapreduce.{InputSplit, JobContext, RecordReader, TaskAttemptContext}
 import org.apache.spark.TaskContext
 
 import scala.collection.JavaConversions._
