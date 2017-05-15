@@ -30,38 +30,62 @@ import com.ibm.crail.{CrailBufferedInputStream, CrailBufferedOutputStream}
 import org.apache.spark.TaskContext
 import org.apache.spark.serializer._
 
+import scala.collection.mutable
+import scala.collection.mutable.HashMap
 import scala.reflect.ClassTag
 
-class F22Serializer() extends Serializable with CrailSerializer {
+class F22Serializer() extends CrailSparkSerializer {
   override final def newCrailSerializer(defaultSerializer: Serializer): CrailSerializerInstance = {
-    F22ShuffleSerializerInstance.getInstance()
+    F22ShuffleSerializerInstance.getInstance(defaultSerializer)
   }
 }
 
-class F22ShuffleSerializerInstance() extends CrailSerializerInstance {
+class F22ShuffleSerializerInstance(defaultSerializer: Serializer) extends CrailSparkSerializerInstance(defaultSerializer) {
 
   override def serializeCrailStream(output: CrailBufferedOutputStream): CrailSerializationStream = {
-    new F22SerializerStream(output)
+    new F22SerializerStream(defaultSerializer, output)
   }
 
   override def deserializeCrailStream(input: CrailBufferedInputStream): CrailDeserializationStream = {
-    new F22DeserializerStream(input)
+    new F22DeserializerStream(defaultSerializer, input)
   }
 }
 
-object F22ShuffleSerializerInstance {
-  private var serIns:F22ShuffleSerializerInstance = null
-
-  final def getInstance():F22ShuffleSerializerInstance = {
+/* this implementation creates a new instance of the serializer for each new passed instance */
+object F22ShuffleSerializerInstanceHashMap {
+  private var serInstances:HashMap[Serializer, F22ShuffleSerializerInstance] =
+    new mutable.HashMap[Serializer, F22ShuffleSerializerInstance]()
+  final def getInstance(defaultSerializer: Serializer):F22ShuffleSerializerInstance = {
     this.synchronized {
-      if(serIns == null)
-        serIns = new F22ShuffleSerializerInstance()
+      serInstances.get(defaultSerializer) match {
+        case Some(cached:F22ShuffleSerializerInstance) => cached
+        case None =>
+          val newSer = new F22ShuffleSerializerInstance(defaultSerializer)
+          serInstances(defaultSerializer) = newSer
+          newSer
+      }
     }
-    serIns
   }
 }
 
-class F22SerializerStream(outStream: CrailBufferedOutputStream) extends CrailSerializationStream {
+/* this one keeps one singleton instance as we know internally how is it implemented */
+object F22ShuffleSerializerInstance {
+  private var serInstances:Option[F22ShuffleSerializerInstance] = None
+  final def getInstance(defaultSerializer: Serializer):F22ShuffleSerializerInstance = {
+    this.synchronized {
+      serInstances match {
+        case Some(cached:F22ShuffleSerializerInstance) => cached
+        case None =>
+          val newSer = new F22ShuffleSerializerInstance(defaultSerializer)
+          serInstances = Some(newSer)
+          newSer
+      }
+    }
+  }
+}
+
+class F22SerializerStream(defaultSerializer: Serializer, outStream: CrailBufferedOutputStream)
+  extends CrailSparkSerializationStream(defaultSerializer, outStream) {
 
   override final def writeObject[T: ClassTag](t: T): SerializationStream = {
     /* explicit byte casting */
@@ -91,7 +115,8 @@ class F22SerializerStream(outStream: CrailBufferedOutputStream) extends CrailSer
   }
 }
 
-class F22DeserializerStream(inStream: CrailBufferedInputStream) extends CrailDeserializationStream {
+class F22DeserializerStream(defaultSerializer: Serializer, inStream: CrailBufferedInputStream)
+  extends CrailSparkDeserializationStream(defaultSerializer, inStream) {
 
   override final def readObject[T: ClassTag](): T = {
     throw new IOException("this call is not yet supported : readObject " +
@@ -114,10 +139,17 @@ class F22DeserializerStream(inStream: CrailBufferedInputStream) extends CrailDes
             " crail reading bytes : " + soFar + " in " + timeUs + " usec or " + bw + " Mbps")
         }
         /* we have reached the end of the file */
-        return soFar
+        if(soFar == 0) {
+          // if this was the first iteration then we immediately hit -1
+          return -1
+        }  else {
+          // otherwise return what we have read so far
+          return soFar
+        }
       }
       soFar+=ret
     }
+    // if we are here then we must have read the full data
     require(soFar == asked, " wrong read logic, asked: " + asked + " soFar " + soFar)
     if(verbose) {
       val timeUs = (System.nanoTime() - start) / 1000

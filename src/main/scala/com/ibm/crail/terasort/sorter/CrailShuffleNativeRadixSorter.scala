@@ -111,18 +111,26 @@ class CrailShuffleNativeRadixSorter extends CrailShuffleSorter {
     /* we collect data in a list of OrderedByteBuffer */
     val bufferList = ListBuffer[OrderedByteBuffer]()
     var totalBytesRead = 0
+    /* expectedRead needs to be a multiple of KV size otherwise we will break the record boundary */
     val expectedRead = TaskContext.get().getLocalProperty(TeraSort.f22BufSizeKey).toInt
-    var bytesRead = expectedRead // to start the loop
-    while(bytesRead == expectedRead) {
-      /* this needs to be a multiple of KV size otherwise we will break the record boundary */
+    var hitEOF = false // did we hit EOF?
+    while(!hitEOF) {
+      // we get a new buffer with an anticipated size of `expectedRead` bytes
       val oBuf = OrderedByteBufferCache.getInstance().getBuffer
-      bytesRead = inputStream.read(oBuf.buf)
-      require(bytesRead % TeraInputFormat.RECORD_LEN == 0,
-        " bytesRead " + bytesRead + " is not a multiple of the record length " + TeraInputFormat.RECORD_LEN)
-      /* from F22 semantics, when we hit EOF we will get 0 */
-      if(bytesRead >= 0) {
-        /* if we did not read -1, which is EOF then insert - make sure to flip ;) */
-        oBuf.buf.flip()
+      //we need to fill this buffer - the F22 read method loops over the input stream, no need to do it here
+      var ret = inputStream.read(oBuf.buf)
+      if(ret == -1) {
+        hitEOF = true
+      }
+      // after the reading, we flip
+      oBuf.buf.flip()
+      // this gives us how much we have read
+      val bytesRead = oBuf.buf.remaining()
+      if(bytesRead > 0) {
+        // if we read more than zero, we do some work
+        require(bytesRead % TeraInputFormat.RECORD_LEN == 0,
+          " bytesRead " + bytesRead + " is not a multiple of the record length " + TeraInputFormat.RECORD_LEN)
+        // add the buffer to the list
         bufferList+=oBuf
         /* once we have it then lets sort it */
         NativeRadixSort.sort(oBuf.buf.asInstanceOf[DirectBuffer].address() /* address */,
@@ -130,8 +138,8 @@ class CrailShuffleNativeRadixSorter extends CrailShuffleSorter {
           TeraInputFormat.KEY_LEN /* can use on the serializer interface of keySize and valueSize */,
           TeraInputFormat.RECORD_LEN)
       }
+      // general accounting for the total read size
       totalBytesRead+=bytesRead
-      /* now if we have read less than expected, that would be the end of the file */
     }
     if(verbose) {
       System.err.println(TeraSort.verbosePrefixSorter + " TID: " + TaskContext.get().taskAttemptId() +
