@@ -3,14 +3,15 @@
 #include <cstring>
 #include <sstream>
 
+#include "copy.h"
 #include "endian.h"
 #include "format.h"
-#include "time.h"
+#include "random.h"
 
 namespace bess {
 namespace utils {
 
-using Address = EthHeader::Address;
+using Address = Ethernet::Address;
 
 Address::Address(const std::string &str) {
   if (!FromString(str)) {
@@ -20,7 +21,7 @@ Address::Address(const std::string &str) {
 
 bool Address::FromString(const std::string &str) {
   int ret = Parse(str, "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", &bytes[0],
-                   &bytes[1], &bytes[2], &bytes[3], &bytes[4], &bytes[5]);
+                  &bytes[1], &bytes[2], &bytes[3], &bytes[4], &bytes[5]);
   return (ret == Address::kSize);
 }
 
@@ -30,12 +31,10 @@ std::string Address::ToString() const {
 }
 
 void Address::Randomize() {
-  uint64_t tsc = rdtsc();
+  Random rng;
 
-  if (is_be_system()) {
-    memcpy(bytes, reinterpret_cast<char *>(&tsc) + 2, sizeof(bytes));
-  } else {
-    memcpy(bytes, &tsc, sizeof(bytes));
+  for (size_t i = 0; i < Address::kSize; i++) {
+    bytes[i] = rng.Get() & 0xff;
   }
 
   bytes[0] &= 0xfe;  // not broadcast/multicast

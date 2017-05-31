@@ -1,9 +1,5 @@
 #include "module.h"
 
-#include <fcntl.h>
-#include <sys/uio.h>
-#include <unistd.h>
-
 #include <glog/logging.h>
 
 #include <algorithm>
@@ -15,6 +11,7 @@
 #include "mem_alloc.h"
 #include "scheduler.h"
 #include "utils/pcap.h"
+#include "worker.h"
 
 const Commands Module::cmds;
 
@@ -91,6 +88,25 @@ bool ModuleBuilder::RegisterModuleClass(
   return true;
 }
 
+bool ModuleBuilder::DeregisterModuleClass(const std::string &class_name) {
+  // Check if the module builder exists
+  auto it = all_module_builders_holder().find(class_name);
+  if (it == all_module_builders_holder().end()) {
+    return false;
+  }
+
+  // Check if any module of the class still exists
+  const ModuleBuilder *builder = &(it->second);
+  for (auto const &e : all_modules()) {
+    if (e.second->module_builder() == builder) {
+      return false;
+    }
+  }
+
+  all_module_builders_holder().erase(it);
+  return true;
+}
+
 std::string ModuleBuilder::GenerateDefaultName(
     const std::string &class_name, const std::string &default_template) {
   std::string name_template;
@@ -144,43 +160,42 @@ const std::map<std::string, Module *> &ModuleBuilder::all_modules() {
   return all_modules_;
 }
 
-pb_cmd_response_t ModuleBuilder::RunCommand(
+CommandResponse ModuleBuilder::RunCommand(
     Module *m, const std::string &user_cmd,
     const google::protobuf::Any &arg) const {
-  pb_cmd_response_t response;
   for (auto &cmd : cmds_) {
     if (user_cmd == cmd.cmd) {
-      if (!cmd.mt_safe && is_any_worker_running()) {
-        set_cmd_response_error(&response,
-                               pb_error(EBUSY,
-                                        "There is a running worker "
-                                        "and command '%s' is not MT safe",
-                                        cmd.cmd.c_str()));
-        return response;
+      bool workers_running = false;
+      for (const auto wid : m->active_workers_) {
+        workers_running |= is_worker_running(wid);
+      }
+      if (!cmd.mt_safe && workers_running) {
+        return CommandFailure(EBUSY,
+                              "There is a running worker and command "
+                              "'%s' is not MT safe",
+                              cmd.cmd.c_str());
       }
 
       return cmd.func(m, arg);
     }
   }
 
-  set_cmd_response_error(&response,
-                         pb_error(ENOTSUP, "'%s' does not support command '%s'",
-                                  class_name_.c_str(), user_cmd.c_str()));
-  return response;
+  return CommandFailure(ENOTSUP, "'%s' does not support command '%s'",
+                        class_name_.c_str(), user_cmd.c_str());
 }
 
-pb_error_t ModuleBuilder::RunInit(Module *m,
-                                  const google::protobuf::Any &arg) const {
+CommandResponse ModuleBuilder::RunInit(Module *m,
+                                       const google::protobuf::Any &arg) const {
   return init_func_(m, arg);
 }
 
 // -------------------------------------------------------------------------
-pb_error_t Module::InitWithGenericArg(const google::protobuf::Any &arg) {
+CommandResponse Module::InitWithGenericArg(const google::protobuf::Any &arg) {
   return module_builder_->RunInit(this, arg);
 }
 
-pb_error_t Module::Init(const bess::pb::EmptyArg &) {
-  return pb_errno(0);
+CommandResponse Module::Init(const bess::pb::EmptyArg &) {
+  return CommandSuccess();
 }
 
 void Module::DeInit() {}
@@ -195,15 +210,25 @@ void Module::ProcessBatch(bess::PacketBatch *) {
 }
 
 task_id_t Module::RegisterTask(void *arg) {
-  Worker *w = get_next_active_worker();
-  bess::LeafTrafficClass *c = w->scheduler()->default_leaf_class();
+  ModuleTask *t = new ModuleTask(arg, nullptr);
 
-  tasks_.push_back(new Task(this, arg, c));
+  std::string leafname = std::string("!leaf_") + name_ + std::string(":") +
+                         std::to_string(tasks_.size());
+  bess::LeafTrafficClass<Task> *c =
+      bess::TrafficClassBuilder::CreateTrafficClass<
+          bess::LeafTrafficClass<Task>>(leafname, Task(this, arg, t));
+
+  add_tc_to_orphan(c, -1);
+
+  tasks_.push_back(t);
   return tasks_.size() - 1;
 }
 
 void Module::DestroyAllTasks() {
   for (auto task : tasks_) {
+    auto c = task->GetTC();
+    CHECK(detach_tc(c));
+    delete c;
     delete task;
   }
   tasks_.clear();
@@ -213,6 +238,85 @@ void Module::DeregisterAllAttributes() {
   for (const auto &it : attrs_) {
     pipeline_->DeregisterAttribute(it.name);
   }
+}
+
+placement_constraint Module::ComputePlacementConstraints(
+    std::unordered_set<const Module *> *visited) const {
+  // Take the constraints we have.
+  int constraint = node_constraints_;
+  // Follow the rest of the tree unless we have already been here.
+  if (visited->find(this) == visited->end()) {
+    visited->insert(this);
+    for (size_t i = 0; i < ogates_.size(); i++) {
+      if (ogates_[i]) {
+        auto next = static_cast<Module *>(ogates_[i]->arg());
+        // Restrict constraints to account for other modules in the pipeline.
+        constraint &= next->ComputePlacementConstraints(visited);
+        if (constraint == 0) {
+          LOG(WARNING) << "At " << name_
+                       << " after accounting for constraints from module "
+                       << next->name_ << " no feasible placement exists.";
+        }
+      }
+    }
+  }
+  return constraint;
+}
+
+void Module::AddActiveWorker(int wid, const ModuleTask *t) {
+  if (!HaveVisitedWorker(t)) {  // Have not already accounted for
+                                // worker.
+    active_workers_[wid] = true;
+    visited_tasks_.push_back(t);
+    // Check if we should propagate downstream. We propagate if either
+    // `propagate_workers_` is true or if the current module created the task.
+    bool propagate = propagate_workers_;
+    if (!propagate) {
+      for (const auto task : tasks_) {
+        if (t == task) {
+          propagate = true;
+          break;
+        }
+      }
+    }
+    if (propagate) {
+      for (auto ogate : ogates_) {
+        if (ogate) {
+          auto next = static_cast<Module *>(ogate->arg());
+          next->AddActiveWorker(wid, t);
+        }
+      }
+    }
+  }
+}
+
+CheckConstraintResult Module::CheckModuleConstraints() const {
+  int active_workers = num_active_workers();
+  CheckConstraintResult valid = CHECK_OK;
+  if (active_workers < min_allowed_workers_ ||
+      active_workers > max_allowed_workers_) {
+    LOG(ERROR) << "Mismatch in number of workers for module " << name_
+               << " min required " << min_allowed_workers_ << " max allowed "
+               << max_allowed_workers_ << " attached workers "
+               << active_workers;
+    if (active_workers > max_allowed_workers_) {
+      LOG(ERROR) << "Violates thread safety, returning fatal error";
+      return CHECK_FATAL_ERROR;
+    }
+  }
+
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
+    if (active_workers_[wid]) {
+      placement_constraint socket = 1ull << workers[wid]->socket();
+      if ((socket & node_constraints_) == 0) {
+        LOG(ERROR) << "Worker wid " << wid
+                   << " does not meet placement constraints for module "
+                   << name_;
+        valid = CHECK_NONFATAL_ERROR;
+      }
+    }
+  }
+  return valid;
 }
 
 int Module::AddMetadataAttr(const std::string &name, size_t size,
@@ -295,7 +399,7 @@ int Module::ConnectModules(gate_idx_t ogate_idx, Module *m_next,
   ogate->set_igate_idx(igate_idx);
 
   // Gate tracking is enabled by default
-  ogate->AddHook(new TrackGate());
+  ogate->AddHook(new Track());
   igate->PushOgate(ogate);
 
   return 0;
@@ -488,78 +592,26 @@ void _trace_after_call(void) {
 }
 #endif
 
-// TODO(melvin): Much of this belongs in the TcpDump constructor.
-int Module::EnableTcpDump(const char *fifo, int is_igate, gate_idx_t gate_idx) {
-  static const struct pcap_hdr PCAP_FILE_HDR = {
-      .magic_number = PCAP_MAGIC_NUMBER,
-      .version_major = PCAP_VERSION_MAJOR,
-      .version_minor = PCAP_VERSION_MINOR,
-      .thiszone = PCAP_THISZONE,
-      .sigfigs = PCAP_SIGFIGS,
-      .snaplen = PCAP_SNAPLEN,
-      .network = PCAP_NETWORK,
-  };
-  bess::Gate *gate;
-
-  int fd;
-  int ret;
-
-  /* Don't allow tcpdump to be attached to gates that are not active */
-  if (!is_igate && !is_active_gate<bess::OGate>(ogates_, gate_idx))
-    return -EINVAL;
-
-  if (is_igate && !is_active_gate<bess::IGate>(igates_, gate_idx))
-    return -EINVAL;
-
-  fd = open(fifo, O_WRONLY | O_NONBLOCK);
-  if (fd < 0)
-    return -errno;
-
-  /* Looooong time ago Linux ignored O_NONBLOCK in open().
-   * Try again just in case. */
-  ret = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-  if (ret < 0) {
-    close(fd);
-    return -errno;
+void propagate_active_worker() {
+  for (auto &pair : ModuleBuilder::all_modules()) {
+    Module *m = pair.second;
+    m->ResetActiveWorkerSet();
   }
-
-  ret = write(fd, &PCAP_FILE_HDR, sizeof(PCAP_FILE_HDR));
-  if (ret < 0) {
-    close(fd);
-    return -errno;
+  for (int i = 0; i < Worker::kMaxWorkers; i++) {
+    if (workers[i] == nullptr) {
+      continue;
+    }
+    int socket = 1ull << workers[i]->socket();
+    int core = workers[i]->core();
+    bess::TrafficClass *root = workers[i]->scheduler()->root();
+    if (root) {
+      root->Traverse([i, socket, core](bess::TCChildArgs *args) {
+        bess::TrafficClass *c = args->child();
+        if (c->policy() == bess::POLICY_LEAF) {
+          auto leaf = static_cast<bess::LeafTrafficClass<Task> *>(c);
+          leaf->Task().AddActiveWorker(i);
+        }
+      });
+    }
   }
-
-  if (is_igate) {
-    gate = igates_[gate_idx];
-  } else {
-    gate = ogates_[gate_idx];
-  }
-
-  TcpDump *tcpdump = new TcpDump();
-  if (!gate->AddHook(tcpdump)) {
-    tcpdump->set_fifo_fd(fd);
-  } else {
-    delete tcpdump;
-  }
-
-  return 0;
-}
-
-int Module::DisableTcpDump(int is_igate, gate_idx_t gate_idx) {
-  if (!is_igate && !is_active_gate<bess::OGate>(ogates_, gate_idx))
-    return -EINVAL;
-
-  if (is_igate && !is_active_gate<bess::IGate>(igates_, gate_idx))
-    return -EINVAL;
-
-  bess::Gate *gate;
-  if (is_igate) {
-    gate = igates_[gate_idx];
-  } else {
-    gate = ogates_[gate_idx];
-  }
-
-  gate->RemoveHook(kGateHookTcpDumpGate);
-
-  return 0;
 }

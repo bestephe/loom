@@ -11,14 +11,19 @@ class DummyPort : public Port {
  public:
   DummyPort() : Port(), deinited_(nullptr) {}
 
-  virtual void InitDriver() { initialized_ = true; }
+  void InitDriver() override { initialized_ = true; }
 
-  pb_error_t Init(const google::protobuf::Any &) { return pb_errno(42); }
+  CommandResponse Init(const google::protobuf::Any &) {
+    return CommandFailure(42);
+  }
 
-  virtual void DeInit() {
+  void DeInit() override {
     if (deinited_)
       *deinited_ = true;
   }
+
+  int RecvPackets(queue_t, bess::Packet **, int) override { return 0; }
+  int SendPackets(queue_t, bess::Packet **, int) override { return 0; }
 
   void set_deinited(bool *val) { deinited_ = val; }
 
@@ -76,8 +81,8 @@ TEST_F(PortTest, CreatePort) {
   bess::pb::EmptyArg arg_;
   google::protobuf::Any arg;
   arg.PackFrom(arg_);
-  pb_error_t err = p->InitWithGenericArg(arg);
-  EXPECT_EQ(42, err.err());
+  CommandResponse err = p->InitWithGenericArg(arg);
+  EXPECT_EQ(42, err.error().code());
 }
 
 // Checks that adding a port puts it into the global port collection.

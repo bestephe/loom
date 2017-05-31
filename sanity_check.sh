@@ -1,24 +1,29 @@
 #!/bin/bash
 
 BESSCTL='./bessctl/bessctl'
-SCRIPTS='./bessctl/conf/samples'
+SCRIPTS='./bessctl/conf'
 OUTFILE='sanity_check.out'
 
-TESTS='exactmatch.bess
-	flowgen.bess
-	generic_encap.bess
-	hash_lb.bess
-	igate.bess
-	iplookup.bess
-	l2_forward.bess
-	multicore.bess
-	queue.bess
-	roundrobin.bess
-	s2s.bess
-	unix_port.bess
-	update.bess
-	vlantest.bess
-	wildcardmatch.bess'
+TESTS='samples/exactmatch.bess
+  samples/flowgen.bess
+  samples/generic_encap.bess
+  samples/hash_lb.bess
+  samples/igate.bess
+  samples/iplookup.bess
+  samples/l2_forward.bess
+  samples/multicore.bess
+  samples/queue.bess
+  samples/roundrobin.bess
+  samples/s2s.bess
+  samples/tc/complextree.bess
+  samples/unix_port.bess
+  samples/update.bess
+  samples/vlantest.bess
+  samples/wildcardmatch.bess
+  samples/nat.bess
+  samples/worker_split.bess
+  samples/qtest.bess
+  testing/test_constraint_checker.bess'
 
 function fail
 {
@@ -27,8 +32,7 @@ function fail
   exit 2
 }
 
-echo "This script runs a collection of BESS sample scripts and makes sure \
-nothing blows up. Sit back and relax."
+echo "This script runs a collection of BESS sample scripts and makes sure nothing blows up. Sit back and relax."
 rm -f $OUTFILE
 
 for file in $TESTS
@@ -40,7 +44,7 @@ do
   then
     fail
   fi
-  sleep 25
+  sleep 15
   $BESSCTL daemon stop
   success=$?
   if [ $success -ne 0 ] 

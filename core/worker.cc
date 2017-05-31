@@ -10,20 +10,24 @@
 
 #include <cassert>
 #include <climits>
+#include <list>
 #include <string>
+#include <utility>
 
 #include "metadata.h"
+#include "module.h"
 #include "opts.h"
 #include "packet.h"
 #include "scheduler.h"
-#include "task.h"
 #include "utils/time.h"
 
 using bess::Scheduler;
+using bess::DefaultScheduler;
+using bess::ExperimentalScheduler;
 
 int num_workers = 0;
-std::thread worker_threads[MAX_WORKERS];
-Worker *volatile workers[MAX_WORKERS];
+std::thread worker_threads[Worker::kMaxWorkers];
+Worker *volatile workers[Worker::kMaxWorkers];
 
 using bess::TrafficClassBuilder;
 using namespace bess::traffic_class_initializer_types;
@@ -33,15 +37,16 @@ using bess::RoundRobinTrafficClass;
 using bess::RateLimitTrafficClass;
 using bess::LeafTrafficClass;
 
-const char *Worker::kRootClassNamePrefix = "root_";
-const char *Worker::kDefaultLeafClassNamePrefix = "defaultleaf_";
+std::list<std::pair<int, bess::TrafficClass *>> orphan_tcs;
 
 // See worker.h
 __thread Worker ctx;
 
+template <typename CallableTask>
 struct thread_arg {
   int wid;
   int core;
+  Scheduler<CallableTask> *scheduler;
 };
 
 #define SYS_CPU_DIR "/sys/devices/system/cpu/cpu%u"
@@ -51,10 +56,12 @@ struct thread_arg {
 int is_cpu_present(unsigned int core_id) {
   char path[PATH_MAX];
   int len = snprintf(path, sizeof(path), SYS_CPU_DIR "/" CORE_ID_FILE, core_id);
-  if (len <= 0 || (unsigned)len >= sizeof(path))
+  if (len <= 0 || (unsigned)len >= sizeof(path)) {
     return 0;
-  if (access(path, F_OK) != 0)
+  }
+  if (access(path, F_OK) != 0) {
     return 0;
+  }
 
   return 1;
 }
@@ -62,7 +69,7 @@ int is_cpu_present(unsigned int core_id) {
 int is_worker_core(int cpu) {
   int wid;
 
-  for (wid = 0; wid < MAX_WORKERS; wid++) {
+  for (wid = 0; wid < Worker::kMaxWorkers; wid++) {
     if (is_worker_active(wid) && workers[wid]->core() == cpu)
       return 1;
   }
@@ -70,7 +77,7 @@ int is_worker_core(int cpu) {
   return 0;
 }
 
-static void pause_worker(int wid) {
+void pause_worker(int wid) {
   if (workers[wid] && workers[wid]->status() == WORKER_RUNNING) {
     workers[wid]->set_status(WORKER_PAUSING);
 
@@ -82,7 +89,7 @@ static void pause_worker(int wid) {
 }
 
 void pause_all_workers() {
-  for (int wid = 0; wid < MAX_WORKERS; wid++)
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++)
     pause_worker(wid);
 }
 
@@ -91,7 +98,7 @@ enum class worker_signal : uint64_t {
   quit,
 };
 
-static void resume_worker(int wid) {
+void resume_worker(int wid) {
   if (workers[wid] && workers[wid]->status() == WORKER_PAUSED) {
     int ret;
     worker_signal sig = worker_signal::unblock;
@@ -104,12 +111,43 @@ static void resume_worker(int wid) {
   }
 }
 
-void resume_all_workers() {
-  bess::metadata::default_pipeline.ComputeMetadataOffsets();
-  // TODO(barath): Handle orphan tasks somehow.
-  // process_orphan_tasks();
+/*!
+ * Attach orphan TCs to workers. Note this does not ensure optimal placement.
+ * This method can only be called when all workers are paused.
+ */
+void attach_orphans() {
+  CHECK(!is_any_worker_running());
+  // Distribute all orphan TCs to workers.
+  for (const auto &tc : orphan_tcs) {
+    bess::TrafficClass *c = tc.second;
+    if (c->parent()) {
+      continue;
+    }
 
-  for (int wid = 0; wid < MAX_WORKERS; wid++)
+    Worker *w;
+
+    int wid = tc.first;
+    if (wid == -1 || workers[wid] == nullptr) {
+      w = get_next_active_worker();
+    } else {
+      w = workers[wid];
+    }
+
+    w->scheduler()->AttachOrphan(c, w->wid());
+  }
+
+  orphan_tcs.clear();
+}
+
+void resume_all_workers() {
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
+    if (workers[wid]) {
+      workers[wid]->scheduler()->AdjustDefault();
+    }
+  }
+
+  bess::metadata::default_pipeline.ComputeMetadataOffsets();
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++)
     resume_worker(wid);
 }
 
@@ -133,19 +171,20 @@ void destroy_worker(int wid) {
 }
 
 void destroy_all_workers() {
-  for (int wid = 0; wid < MAX_WORKERS; wid++)
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++)
     destroy_worker(wid);
 }
 
-int is_any_worker_running() {
+bool is_any_worker_running() {
   int wid;
 
-  for (wid = 0; wid < MAX_WORKERS; wid++) {
-    if (workers[wid] && workers[wid]->status() == WORKER_RUNNING)
-      return 1;
+  for (wid = 0; wid < Worker::kMaxWorkers; wid++) {
+    if (is_worker_running(wid)) {
+      return true;
+    }
   }
 
-  return 0;
+  return false;
 }
 
 void Worker::SetNonWorker() {
@@ -195,7 +234,7 @@ int Worker::BlockWorker() {
 
 /* The entry point of worker threads */
 void *Worker::Run(void *_arg) {
-  struct thread_arg *arg = (struct thread_arg *)_arg;
+  struct thread_arg<Task> *arg = (struct thread_arg<Task> *)_arg;
 
   cpu_set_t set;
 
@@ -214,16 +253,7 @@ void *Worker::Run(void *_arg) {
   fd_event_ = eventfd(0, 0);
   DCHECK_GE(fd_event_, 0);
 
-  // By default create a root node of default policy with a single leaf.
-  std::string root_name = kRootClassNamePrefix + std::to_string(wid_);
-  std::string leaf_name = kDefaultLeafClassNamePrefix + std::to_string(wid_);
-  const bess::priority_t kDefaultPriority = 10;
-  PriorityTrafficClass *root =
-      TrafficClassBuilder::CreateTrafficClass<PriorityTrafficClass>(root_name);
-  LeafTrafficClass *leaf =
-      TrafficClassBuilder::CreateTrafficClass<LeafTrafficClass>(leaf_name);
-  root->AddChild(leaf, kDefaultPriority);
-  scheduler_ = new Scheduler(root, leaf_name);
+  scheduler_ = arg->scheduler;
 
   current_tsc_ = rdtsc();
 
@@ -257,16 +287,29 @@ void *run_worker(void *_arg) {
   return ctx.Run(_arg);
 }
 
-void launch_worker(int wid, int core) {
-  struct thread_arg arg = {.wid = wid, .core = core};
+void launch_worker(int wid, int core, [[maybe_unused]] const std::string &scheduler) {
+  struct thread_arg<Task> arg = {
+    .wid = wid,
+    .core = core,
+    .scheduler = nullptr
+  };
+  if (scheduler == "") {
+    arg.scheduler = new DefaultScheduler<Task>();
+  } else if (scheduler == "experimental") {
+    arg.scheduler = new ExperimentalScheduler<Task>();
+  } else {
+    CHECK(false) << "Scheduler " << scheduler << " is invalid.";
+  }
+
   worker_threads[wid] = std::thread(run_worker, &arg);
   worker_threads[wid].detach();
 
   INST_BARRIER();
 
   /* spin until it becomes ready and fully paused */
-  while (!is_worker_active(wid) || workers[wid]->status() != WORKER_PAUSED)
+  while (!is_worker_active(wid) || workers[wid]->status() != WORKER_PAUSED) {
     continue;
+  }
 
   num_workers++;
 }
@@ -279,10 +322,51 @@ Worker *get_next_active_worker() {
   }
 
   while (!is_worker_active(prev_wid)) {
-    prev_wid = (prev_wid + 1) % MAX_WORKERS;
+    prev_wid = (prev_wid + 1) % Worker::kMaxWorkers;
   }
 
   Worker *ret = workers[prev_wid];
-  prev_wid = (prev_wid + 1) % MAX_WORKERS;
+  prev_wid = (prev_wid + 1) % Worker::kMaxWorkers;
   return ret;
+}
+
+void add_tc_to_orphan(bess::TrafficClass *c, int wid) {
+  orphan_tcs.emplace_back(wid, c);
+}
+
+bool remove_tc_from_orphan(bess::TrafficClass *c) {
+  for (auto it = orphan_tcs.begin(); it != orphan_tcs.end();) {
+    if (it->second == c) {
+      orphan_tcs.erase(it);
+      return true;
+    } else {
+      it++;
+    }
+  }
+
+  return false;
+}
+
+const std::list<std::pair<int, bess::TrafficClass *>> &list_orphan_tcs() {
+  return orphan_tcs;
+}
+
+bool detach_tc(bess::TrafficClass *c) {
+  bess::TrafficClass *parent = c->parent();
+  if (parent) {
+    return parent->RemoveChild(c);
+  }
+
+  // Try to remove from root of one of the schedulers
+  for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
+    if (workers[wid]) {
+      bool found = workers[wid]->scheduler()->RemoveRoot(c);
+      if (found) {
+        return true;
+      }
+    }
+  }
+
+  // Try to remove from orphan_tcs
+  return remove_tc_from_orphan(c);
 }

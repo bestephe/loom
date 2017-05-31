@@ -10,8 +10,8 @@ class Measure final : public Module {
  public:
   Measure()
       : Module(),
-        rtt_hist_(Histogram<uint64_t>(kBuckets, kBucketWidth)),
-        jitter_hist_(Histogram<uint64_t>(kBuckets, kBucketWidth)),
+        rtt_hist_(kBuckets, kBucketWidth),
+        jitter_hist_(kBuckets, kBucketWidth),
         rand_(Random()),
         jitter_sample_prob_(),
         last_rtt_ns_(),
@@ -22,11 +22,12 @@ class Measure final : public Module {
         bytes_cnt_(),
         total_latency_() {}
 
-  pb_error_t Init(const bess::pb::MeasureArg &arg);
+  CommandResponse Init(const bess::pb::MeasureArg &arg);
 
   void ProcessBatch(bess::PacketBatch *batch) override;
 
-  pb_cmd_response_t CommandGetSummary(const bess::pb::EmptyArg &arg);
+  CommandResponse CommandGetSummary(const bess::pb::EmptyArg &arg);
+  CommandResponse CommandClear(const bess::pb::EmptyArg &arg);
 
   static const Commands cmds;
 

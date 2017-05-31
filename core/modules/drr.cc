@@ -1,17 +1,13 @@
 #include "drr.h"
 
-#include <glog/logging.h>
-#include <rte_ether.h>
-#include <rte_ip.h>
-#include <rte_udp.h>
-#include <time.h>
-
 #include <cmath>
 #include <fstream>
 #include <iostream>
 #include <string>
 
-#include "../utils/common.h"
+#include "../utils/ether.h"
+#include "../utils/ip.h"
+#include "../utils/udp.h"
 
 uint32_t RoundToPowerTwo(uint32_t v) {
   v--;
@@ -45,8 +41,8 @@ DRR::~DRR() {
   std::free(flow_ring_);
 }
 
-pb_error_t DRR::Init(const bess::pb::DRRArg& arg) {
-  pb_error_t err;
+CommandResponse DRR::Init(const bess::pb::DRRArg& arg) {
+  CommandResponse err;
   task_id_t tid;
 
   if (arg.num_flows() != 0) {
@@ -55,14 +51,14 @@ pb_error_t DRR::Init(const bess::pb::DRRArg& arg) {
 
   if (arg.max_flow_queue_size() != 0) {
     err = SetMaxFlowQueueSize(arg.max_flow_queue_size());
-    if (err.err() != 0) {
+    if (err.error().code() != 0) {
       return err;
     }
   }
 
   if (arg.quantum() != 0) {
     err = SetQuantumSize(arg.quantum());
-    if (err.err() != 0) {
+    if (err.error().code() != 0) {
       return err;
     }
   }
@@ -70,29 +66,25 @@ pb_error_t DRR::Init(const bess::pb::DRRArg& arg) {
   /* register task */
   tid = RegisterTask(nullptr);
   if (tid == INVALID_TASK_ID) {
-    return pb_error(ENOMEM, "task creation failed");
+    return CommandFailure(ENOMEM, "task creation failed");
   }
 
   int err_num = 0;
   flow_ring_ = AddQueue(max_number_flows_, &err_num);
   if (err_num != 0) {
-    return pb_errno(err_num);
+    return CommandFailure(-err_num);
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
-pb_cmd_response_t DRR::CommandQuantumSize(const bess::pb::DRRQuantumArg& arg) {
-  pb_cmd_response_t response;
-  set_cmd_response_error(&response, SetQuantumSize(arg.quantum()));
-  return response;
+CommandResponse DRR::CommandQuantumSize(const bess::pb::DRRQuantumArg& arg) {
+  return SetQuantumSize(arg.quantum());
 }
 
-pb_cmd_response_t DRR::CommandMaxFlowQueueSize(
+CommandResponse DRR::CommandMaxFlowQueueSize(
     const bess::pb::DRRMaxFlowQueueSizeArg& arg) {
-  pb_cmd_response_t response;
-  set_cmd_response_error(&response, SetMaxFlowQueueSize(arg.max_queue_size()));
-  return response;
+  return SetMaxFlowQueueSize(arg.max_queue_size());
 }
 
 void DRR::ProcessBatch(bess::PacketBatch* batch) {
@@ -262,14 +254,18 @@ uint32_t DRR::GetNextPackets(bess::PacketBatch* batch, Flow* f, int* err) {
 }
 
 DRR::FlowId DRR::GetId(bess::Packet* pkt) {
-  struct ether_hdr* eth = pkt->head_data<struct ether_hdr*>();
-  struct ipv4_hdr* ip = reinterpret_cast<struct ipv4_hdr*>(eth + 1);
-  int ip_bytes = (ip->version_ihl & 0xf) << 2;
-  struct udp_hdr* udp = reinterpret_cast<struct udp_hdr*>(
-      reinterpret_cast<uint8_t*>(ip) + ip_bytes);  // Assumes a l-4 header
+  using bess::utils::Ethernet;
+  using bess::utils::Ipv4;
+  using bess::utils::Udp;
+
+  Ethernet* eth = pkt->head_data<Ethernet*>();
+  Ipv4* ip = reinterpret_cast<Ipv4*>(eth + 1);
+  size_t ip_bytes = ip->header_length << 2;
+  Udp* udp = reinterpret_cast<Udp*>(reinterpret_cast<uint8_t*>(ip) +
+                                    ip_bytes);  // Assumes a l-4 header
   // TODO(joshua): handle packet fragmentation
-  FlowId id = {ip->src_addr, ip->dst_addr, udp->src_port, udp->dst_port,
-               ip->next_proto_id};
+  FlowId id = {ip->src.value(), ip->dst.value(), udp->src_port.value(),
+               udp->dst_port.value(), ip->protocol};
   return id;
 }
 
@@ -336,6 +332,7 @@ void DRR::Enqueue(Flow* f, bess::Packet* newpkt, int* err) {
         RoundToPowerTwo(llring_count(f->queue) * kQueueGrowthFactor);
     f->queue = ResizeQueue(f->queue, slots, err);
     if (*err != 0) {
+      bess::Packet::Free(newpkt);
       return;
     }
   }
@@ -343,6 +340,8 @@ void DRR::Enqueue(Flow* f, bess::Packet* newpkt, int* err) {
   *err = llring_enqueue(f->queue, reinterpret_cast<void*>(newpkt));
   if (*err == 0) {
     f->timer = get_epoch_time();
+  } else {
+    bess::Packet::Free(newpkt);
   }
 }
 
@@ -372,21 +371,21 @@ llring* DRR::ResizeQueue(llring* old_queue, uint32_t new_size, int* err) {
   return new_queue;
 }
 
-pb_error_t DRR::SetQuantumSize(uint32_t size) {
+CommandResponse DRR::SetQuantumSize(uint32_t size) {
   if (size == 0) {
-    return pb_error(EINVAL, "quantum size must be at least 1");
+    return CommandFailure(EINVAL, "quantum size must be at least 1");
   }
 
   quantum_ = size;
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
-pb_error_t DRR::SetMaxFlowQueueSize(uint32_t queue_size) {
+CommandResponse DRR::SetMaxFlowQueueSize(uint32_t queue_size) {
   if (queue_size == 0) {
-    return pb_error(EINVAL, "max queue size must be at least 1");
+    return CommandFailure(EINVAL, "max queue size must be at least 1");
   }
   max_queue_size_ = queue_size;
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 ADD_MODULE(DRR, "DRR", "Deficit Round Robin")

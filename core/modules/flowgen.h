@@ -1,25 +1,26 @@
 #ifndef BESS_MODULES_FLOWGEN_H_
 #define BESS_MODULES_FLOWGEN_H_
 
+#include "../module.h"
+#include "../module_msg.pb.h"
+
 #include <queue>
 #include <stack>
 
-#include "../module.h"
-#include "../module_msg.pb.h"
+#include "../utils/endian.h"
 #include "../utils/random.h"
 
 typedef std::pair<uint64_t, struct flow *> Event;
-typedef std::priority_queue<Event, std::vector<Event>,
-                            std::greater<Event>>
+typedef std::priority_queue<Event, std::vector<Event>, std::greater<Event>>
     EventQueue;
 
 struct flow {
   int packets_left;
   bool first_pkt;
+
   uint32_t next_seq_no;
-  /* Note that these are in NETWORK ORDER */
-  uint32_t src_ip, dst_ip;
-  uint16_t src_port, dst_port;
+  bess::utils::be32_t src_ip, dst_ip;
+  bess::utils::be16_t src_port, dst_port;
 };
 
 class FlowGen final : public Module {
@@ -55,11 +56,14 @@ class FlowGen final : public Module {
         flow_pps_(),
         flow_pkts_(),
         flow_gap_ns_(),
-        pareto_() {}
+        pareto_(),
+        burst_() {}
 
   static const Commands cmds;
-  pb_error_t Init(const bess::pb::FlowGenArg &arg);
-  pb_cmd_response_t CommandUpdate(const bess::pb::FlowGenArg &arg);
+  CommandResponse Init(const bess::pb::FlowGenArg &arg);
+  CommandResponse CommandUpdate(const bess::pb::FlowGenArg &arg);
+  CommandResponse CommandSetBurst(
+      const bess::pb::FlowGenCommandSetBurstArg &arg);
 
   void DeInit() override;
 
@@ -76,11 +80,11 @@ class FlowGen final : public Module {
   void MeasureParetoMean();
   void PopulateInitialFlows();
 
-  pb_error_t UpdateBaseAddresses();
+  CommandResponse UpdateBaseAddresses();
   bess::Packet *FillPacket(struct flow *f);
   void GeneratePackets(bess::PacketBatch *batch);
 
-  pb_error_t ProcessArguments(const bess::pb::FlowGenArg &arg);
+  CommandResponse ProcessArguments(const bess::pb::FlowGenArg &arg);
 
   // the number of concurrent flows
   int active_flows_;
@@ -131,6 +135,8 @@ class FlowGen final : public Module {
     double inversed_alpha; /* 1.0 / alpha */
     double mean;           /* determined by alpha */
   } pareto_;
+
+  int burst_;
 };
 
 #endif  // BESS_MODULES_FLOWGEN_H_

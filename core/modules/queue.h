@@ -9,9 +9,11 @@ class Queue final : public Module {
  public:
   static const Commands cmds;
 
-  Queue() : Module(), queue_(), prefetch_(), burst_() {}
+  Queue() : Module(), queue_(), prefetch_(), burst_() {
+    propagate_workers_ = false;
+  }
 
-  pb_error_t Init(const bess::pb::QueueArg &arg);
+  CommandResponse Init(const bess::pb::QueueArg &arg);
 
   void DeInit() override;
 
@@ -20,14 +22,14 @@ class Queue final : public Module {
 
   std::string GetDesc() const override;
 
-  pb_cmd_response_t CommandSetBurst(
-      const bess::pb::QueueCommandSetBurstArg &arg);
-  pb_cmd_response_t CommandSetSize(const bess::pb::QueueCommandSetSizeArg &arg);
+  CommandResponse CommandSetBurst(const bess::pb::QueueCommandSetBurstArg &arg);
+  CommandResponse CommandSetSize(const bess::pb::QueueCommandSetSizeArg &arg);
+
+  CheckConstraintResult CheckModuleConstraints() const override;
 
  private:
   int Resize(int slots);
-  pb_error_t SetBurst(int64_t burst);
-  pb_error_t SetSize(uint64_t size);
+  CommandResponse SetSize(uint64_t size);
 
   struct llring *queue_;
   bool prefetch_;

@@ -1,38 +1,29 @@
 #include "random_update.h"
 
-#include <rte_byteorder.h>
-
-#include "../utils/time.h"
+using bess::utils::be32_t;
 
 const Commands RandomUpdate::cmds = {
     {"add", "RandomUpdateArg", MODULE_CMD_FUNC(&RandomUpdate::CommandAdd), 0},
     {"clear", "EmptyArg", MODULE_CMD_FUNC(&RandomUpdate::CommandClear), 0},
 };
 
-pb_error_t RandomUpdate::Init(const bess::pb::RandomUpdateArg &arg) {
-  pb_cmd_response_t response = CommandAdd(arg);
-  return response.error();
+CommandResponse RandomUpdate::Init(const bess::pb::RandomUpdateArg &arg) {
+  return CommandAdd(arg);
 }
 
-pb_cmd_response_t RandomUpdate::CommandAdd(
-    const bess::pb::RandomUpdateArg &arg) {
-  pb_cmd_response_t response;
-
+CommandResponse RandomUpdate::CommandAdd(const bess::pb::RandomUpdateArg &arg) {
   int curr = num_vars_;
   if (curr + arg.fields_size() > MAX_VARS) {
-    set_cmd_response_error(&response, pb_error(EINVAL,
-                                               "max %d variables "
-                                               "can be specified",
-                                               MAX_VARS));
-    return response;
+    return CommandFailure(EINVAL, "max %d variables can be specified",
+                          MAX_VARS);
   }
 
   for (int i = 0; i < arg.fields_size(); i++) {
     const auto &var = arg.fields(i);
 
-    uint8_t size;
-    int16_t offset;
-    uint32_t mask;
+    size_t size;
+    size_t offset;
+    be32_t mask;
     uint32_t min;
     uint32_t max;
 
@@ -41,70 +32,53 @@ pb_cmd_response_t RandomUpdate::CommandAdd(
     min = var.min();
     max = var.max();
 
-    if (offset < 0) {
-      set_cmd_response_error(&response, pb_error(EINVAL, "too small 'offset'"));
-      return response;
-    }
-
     switch (size) {
       case 1:
-        offset -= 3;
-        mask = rte_cpu_to_be_32(0xffffff00);
+        mask = be32_t(0x00ffffff);
         min = std::min(min, static_cast<uint32_t>(0xff));
         max = std::min(max, static_cast<uint32_t>(0xff));
         break;
 
       case 2:
-        offset -= 2;
-        mask = rte_cpu_to_be_32(0xffff0000);
+        mask = be32_t(0x0000ffff);
         min = std::min(min, static_cast<uint32_t>(0xffff));
         max = std::min(max, static_cast<uint32_t>(0xffff));
         break;
 
       case 4:
-        mask = rte_cpu_to_be_32(0x00000000);
+        mask = be32_t(0x00000000);
         min = std::min(min, static_cast<uint32_t>(0xffffffffu));
         max = std::min(max, static_cast<uint32_t>(0xffffffffu));
         break;
 
       default:
-        set_cmd_response_error(&response,
-                               pb_error(EINVAL, "'size' must be 1, 2, or 4"));
-        return response;
+        return CommandFailure(EINVAL, "'size' must be 1, 2, or 4");
     }
 
-    if (offset + 4 > SNBUF_DATA) {
-      set_cmd_response_error(&response, pb_error(EINVAL, "too large 'offset'"));
-      return response;
+    if (offset + size > SNBUF_DATA) {
+      return CommandFailure(EINVAL, "too large 'offset'");
     }
 
     if (min > max) {
-      set_cmd_response_error(&response, pb_error(EINVAL,
-                                                 "'min' should not be "
-                                                 "greater than 'max'"));
-      return response;
+      return CommandFailure(EINVAL, "'min' should not be greater than 'max'");
     }
 
     vars_[curr + i].offset = offset;
     vars_[curr + i].mask = mask;
     vars_[curr + i].min = min;
 
-    /* avoid modulo 0 */
+    // avoid modulo 0
     vars_[curr + i].range = (max - min + 1) ?: 0xffffffff;
+    vars_[curr + i].bit_shift = (4 - size) * 8;
   }
 
   num_vars_ = curr + arg.fields_size();
-
-  set_cmd_response_error(&response, pb_errno(0));
-  return response;
+  return CommandSuccess();
 }
 
-pb_cmd_response_t RandomUpdate::CommandClear(const bess::pb::EmptyArg &) {
+CommandResponse RandomUpdate::CommandClear(const bess::pb::EmptyArg &) {
   num_vars_ = 0;
-
-  pb_cmd_response_t response;
-  set_cmd_response_error(&response, pb_errno(0));
-  return response;
+  return CommandSuccess();
 }
 
 void RandomUpdate::ProcessBatch(bess::PacketBatch *batch) {
@@ -113,19 +87,16 @@ void RandomUpdate::ProcessBatch(bess::PacketBatch *batch) {
   for (int i = 0; i < num_vars_; i++) {
     const auto var = &vars_[i];
 
-    uint32_t mask = var->mask;
+    be32_t mask = var->mask;
     uint32_t min = var->min;
     uint32_t range = var->range;
-    int16_t offset = var->offset;
+    size_t offset = var->offset;
+    size_t bit_shift = var->bit_shift;
 
     for (int j = 0; j < cnt; j++) {
-      bess::Packet *snb = batch->pkts()[j];
-      char *head = snb->head_data<char *>();
-
-      uint32_t *p = reinterpret_cast<uint32_t *>(head + offset);
+      be32_t *p = batch->pkts()[j]->head_data<be32_t *>(offset);
       uint32_t rand_val = min + rng_.GetRange(range);
-
-      *p = (*p & mask) | rte_cpu_to_be_32(rand_val);
+      *p = (*p & mask) | (be32_t(rand_val) << bit_shift);
     }
   }
 

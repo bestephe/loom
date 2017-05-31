@@ -2,15 +2,16 @@
 
 #include <cmath>
 
+#include "../utils/common.h"
 #include "../utils/ether.h"
 #include "../utils/ip.h"
 #include "../utils/time.h"
 #include "../utils/udp.h"
 #include "timestamp.h"
 
-using bess::utils::EthHeader;
-using bess::utils::Ipv4Header;
-using bess::utils::UdpHeader;
+using bess::utils::Ethernet;
+using bess::utils::Ipv4;
+using bess::utils::Udp;
 
 static bool IsTimestamped(bess::Packet *pkt, size_t offset, uint64_t *time) {
   auto *marker = pkt->head_data<Timestamp::MarkerType *>(offset);
@@ -27,17 +28,17 @@ static bool IsTimestamped(bess::Packet *pkt, size_t offset, uint64_t *time) {
 const Commands Measure::cmds = {
     {"get_summary", "EmptyArg", MODULE_CMD_FUNC(&Measure::CommandGetSummary),
      0},
+    {"clear", "EmptyArg", MODULE_CMD_FUNC(&Measure::CommandClear), 0},
 };
 
-pb_error_t Measure::Init(const bess::pb::MeasureArg &arg) {
+CommandResponse Measure::Init(const bess::pb::MeasureArg &arg) {
   // seconds from nanoseconds
-  warmup_ns_ = arg.warmup() * 1000000000ul;
+  warmup_ns_ = arg.warmup() * 1000000000ull;
 
   if (arg.offset()) {
     offset_ = arg.offset();
   } else {
-    offset_ = sizeof(struct EthHeader) + sizeof(struct Ipv4Header) +
-              sizeof(struct UdpHeader);
+    offset_ = sizeof(Ethernet) + sizeof(Ipv4) + sizeof(Udp);
   }
 
   if (arg.jitter_sample_prob()) {
@@ -48,7 +49,7 @@ pb_error_t Measure::Init(const bess::pb::MeasureArg &arg) {
 
   start_ns_ = tsc_to_ns(rdtsc());
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 void Measure::ProcessBatch(bess::PacketBatch *batch) {
@@ -80,7 +81,7 @@ void Measure::ProcessBatch(bess::PacketBatch *batch) {
             last_rtt_ns_ = diff;
             continue;
           }
-          uint64_t jitter = std::abs(diff - last_rtt_ns_);
+          uint64_t jitter = absdiff(diff, last_rtt_ns_);
           jitter_hist_.insert(jitter);
           last_rtt_ns_ = diff;
         }
@@ -90,12 +91,10 @@ void Measure::ProcessBatch(bess::PacketBatch *batch) {
   RunNextModule(batch);
 }
 
-pb_cmd_response_t Measure::CommandGetSummary(const bess::pb::EmptyArg &) {
+CommandResponse Measure::CommandGetSummary(const bess::pb::EmptyArg &) {
   uint64_t pkt_total = pkt_cnt_;
   uint64_t byte_total = bytes_cnt_;
   uint64_t bits = (byte_total + pkt_total * 24) * 8;
-
-  pb_cmd_response_t response;
 
   bess::pb::MeasureCommandGetSummaryResponse r;
 
@@ -114,10 +113,13 @@ pb_cmd_response_t Measure::CommandGetSummary(const bess::pb::EmptyArg &) {
   r.set_jitter_50_ns(jitter_hist_.percentile(50));
   r.set_jitter_99_ns(jitter_hist_.percentile(99));
 
-  response.mutable_error()->set_err(0);
-  response.mutable_other()->PackFrom(r);
+  return CommandSuccess(r);
+}
 
-  return response;
+CommandResponse Measure::CommandClear(const bess::pb::EmptyArg &) {
+  rtt_hist_.reset();
+  jitter_hist_.reset();
+  return CommandResponse();
 }
 
 ADD_MODULE(Measure, "measure",

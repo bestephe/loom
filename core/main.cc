@@ -9,6 +9,7 @@
 #include "opts.h"
 #include "packet.h"
 #include "port.h"
+#include "version.h"
 
 int main(int argc, char *argv[]) {
   FLAGS_logbuflevel = -1;
@@ -17,15 +18,10 @@ int main(int argc, char *argv[]) {
   google::InstallFailureFunction(bess::debug::GoPanic);
   bess::debug::SetTrapHandler();
 
+  google::SetVersionString(VERSION);
   google::SetUsageMessage("BESS Command Line Options:");
   google::ParseCommandLineFlags(&argc, &argv, true);
   bess::bessd::ProcessCommandLineArgs();
-
-  if (!bess::bessd::LoadModules(bess::bessd::GetCurrentDirectory() +
-                                "modules")) {
-    PLOG(FATAL) << "LoadModules() failed";
-  }
-
   bess::bessd::CheckRunningAsRoot();
 
   int pidfile_fd = bess::bessd::CheckUniqueInstance(FLAGS_i);
@@ -39,8 +35,16 @@ int main(int argc, char *argv[]) {
     signal_fd = bess::bessd::Daemonize();
   }
 
+  LOG(INFO) << "bessd " << google::VersionString();
+
   // Store our PID (child's, if daemonized) in the PID file.
   bess::bessd::WritePidfile(pidfile_fd, getpid());
+
+  // Load plugins
+  if (!bess::bessd::LoadPlugins(FLAGS_modules)) {
+    PLOG(FATAL) << "LoadPlugins() failed to load from directory: "
+                << FLAGS_modules;
+  }
 
   // TODO(barath): Make these DPDK calls generic, so as to not be so tied to
   // DPDK.
@@ -49,18 +53,21 @@ int main(int argc, char *argv[]) {
 
   PortBuilder::InitDrivers();
 
-  SetupControl();
+  {
+    ApiServer server;
+    server.Listen("127.0.0.1", FLAGS_p);
 
-  // Signal the parent that all initialization has been finished.
-  if (!FLAGS_f) {
-    uint64_t one = 1;
-    if (write(signal_fd, &one, sizeof(one)) < 0) {
-      PLOG(FATAL) << "write(signal_fd)";
+    // Signal the parent that all initialization has been finished.
+    if (!FLAGS_f) {
+      uint64_t one = 1;
+      if (write(signal_fd, &one, sizeof(one)) < 0) {
+        PLOG(FATAL) << "write(signal_fd)";
+      }
+      close(signal_fd);
     }
-    close(signal_fd);
-  }
 
-  RunControl();
+    server.Run();
+  }
 
   rte_eal_mp_wait_lcore();
   bess::close_mempool();

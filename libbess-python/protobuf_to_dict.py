@@ -5,7 +5,8 @@ from google.protobuf.message import Message
 from google.protobuf.descriptor import FieldDescriptor
 
 
-__all__ = ["protobuf_to_dict", "TYPE_CALLABLE_MAP", "dict_to_protobuf", "REVERSE_TYPE_CALLABLE_MAP"]
+__all__ = ["protobuf_to_dict", "TYPE_CALLABLE_MAP",
+           "dict_to_protobuf", "REVERSE_TYPE_CALLABLE_MAP"]
 
 
 EXTENSION_CONTAINER = '___X'
@@ -31,6 +32,12 @@ TYPE_CALLABLE_MAP = {
 }
 
 
+def repeated_map(type_k_callable, type_v_callable):
+    return lambda values: {type_k_callable(k): type_v_callable(v)
+                           for k, v in values.items()
+                           }
+
+
 def repeated(type_callable):
     return lambda value_list: [type_callable(value) for value in value_list]
 
@@ -43,9 +50,24 @@ def protobuf_to_dict(pb, type_callable_map=TYPE_CALLABLE_MAP, use_enum_labels=Fa
     result_dict = {}
     extensions = {}
     for field, value in pb.ListFields():
-        type_callable = _get_field_value_adaptor(pb, field, type_callable_map, use_enum_labels)
-        if field.label == FieldDescriptor.LABEL_REPEATED:
-            type_callable = repeated(type_callable)
+        if field.type == FieldDescriptor.TYPE_MESSAGE and \
+                field.message_type.GetOptions().map_entry:
+            field_k = field.message_type.fields_by_name['key']
+            type_k_callable = _get_field_value_adaptor(pb,
+                                                       field_k,
+                                                       type_callable_map,
+                                                       use_enum_labels)
+            field_v = field.message_type.fields_by_name['value']
+            type_v_callable = _get_field_value_adaptor(pb,
+                                                       field_v,
+                                                       type_callable_map,
+                                                       use_enum_labels)
+            type_callable = repeated_map(type_k_callable, type_v_callable)
+        else:
+            type_callable = _get_field_value_adaptor(
+                pb, field, type_callable_map, use_enum_labels)
+            if field.label == FieldDescriptor.LABEL_REPEATED:
+                type_callable = repeated(type_callable)
 
         if field.is_extension:
             extensions[str(field.number)] = type_callable(value)
@@ -62,8 +84,8 @@ def _get_field_value_adaptor(pb, field, type_callable_map=TYPE_CALLABLE_MAP, use
     if field.type == FieldDescriptor.TYPE_MESSAGE:
         # recursively encode protobuf sub-message
         return lambda pb: protobuf_to_dict(pb,
-            type_callable_map=type_callable_map,
-            use_enum_labels=use_enum_labels)
+                                           type_callable_map=type_callable_map,
+                                           use_enum_labels=use_enum_labels)
 
     if use_enum_labels and field.type == FieldDescriptor.TYPE_ENUM:
         return lambda value: enum_label_name(field, value)
@@ -105,9 +127,11 @@ def _get_field_mapping(pb, dict_value, strict):
             continue
         if key not in pb.DESCRIPTOR.fields_by_name:
             if strict:
-                raise KeyError("%s does not have a field called %s" % (pb, key))
+                raise KeyError("%s does not have a field called %s" %
+                               (pb.__class__.__name__, key))
             continue
-        field_mapping.append((pb.DESCRIPTOR.fields_by_name[key], value, getattr(pb, key, None)))
+        field_mapping.append((pb.DESCRIPTOR.fields_by_name[
+                             key], value, getattr(pb, key, None)))
 
     for ext_num, ext_val in dict_value.get(EXTENSION_CONTAINER, {}).items():
         try:
@@ -116,7 +140,9 @@ def _get_field_mapping(pb, dict_value, strict):
             raise ValueError("Extension keys must be integers.")
         if ext_num not in pb._extensions_by_number:
             if strict:
-                raise KeyError("%s does not have a extension with number %s. Perhaps you forgot to import it?" % (pb, key))
+                raise KeyError("%s does not have a extension with number %s. "
+                               "Perhaps you forgot to import it?" %
+                               (pb.__class__.__name__, key))
             continue
         ext_field = pb._extensions_by_number[ext_num]
         pb_val = pb.Extensions[ext_field]
@@ -160,10 +186,12 @@ def _dict_to_protobuf(pb, value, type_callable_map, strict):
 
     return pb
 
+
 def _string_to_enum(field, input_value):
     enum_dict = field.enum_type.values_by_name
     try:
         input_value = enum_dict[input_value].number
     except KeyError:
-        raise KeyError("`%s` is not a valid value for field `%s`" % (input_value, field.name))
+        raise KeyError("`%s` is not a valid value for field `%s`" %
+                       (input_value, field.name))
     return input_value

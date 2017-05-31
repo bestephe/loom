@@ -56,10 +56,15 @@ ifeq "$(shell expr $(CXXCOMPILER) = g++ \& $(CXXVERSION) \< 50000)" "0"
 	CXXFLAGS += -Wshadow
 endif
 
+# Disable GNU_UNIQUE symbol for g++
+ifeq "$(shell expr $(CXXCOMPILER) = g++)" "1"
+	CXXFLAGS += -fno-gnu-unique
+endif
+
 LDFLAGS += -rdynamic -L$(DPDK_LIB_DIR) -Wl,-rpath=$(DPDK_LIB_DIR) -pthread
 ifdef BESS_LINK_DYNAMIC
     LIBS_ALL_SHARED = -Wl,-call_shared
-    LIBS_DL_SHARED = 
+    LIBS_DL_SHARED =
 else # Used static libraries
     LIBS_ALL_SHARED =
     LIBS_DL_SHARED = -Wl,-call_shared
@@ -98,7 +103,6 @@ PROTO_HEADERS := $(patsubst %.cc,%.h, $(PROTO_SRCS))
 PROTOCFLAGS += --proto_path=$(PROTO_DIR) --cpp_out=. --grpc_out=. --plugin=protoc-gen-grpc=`which grpc_cpp_plugin`
 
 ALL_SRCS := $(wildcard *.cc utils/*.cc modules/*.cc drivers/*.cc hooks/*.cc)
-HEADERS := $(wildcard *.h utils/*.h modules/*.h drivers/*.h hooks/*.h)
 
 TEST_SRCS := $(filter %_test.cc gtest_main.cc, $(ALL_SRCS))
 TEST_OBJS := $(TEST_SRCS:.cc=.o)
@@ -114,6 +118,7 @@ MODULE_OBJS := $(MODULE_SRCS:.cc=.o)
 MODULE_LIBS := $(MODULE_OBJS:.o=.so)
 
 SRCS := $(filter-out $(TEST_SRCS) $(BENCH_SRCS) $(MODULE_SRCS), $(ALL_SRCS)) $(PROTO_SRCS)
+HEADERS := $(wildcard *.h utils/*.h drivers/*.h hooks/*.h)
 OBJS := $(SRCS:.cc=.o)
 
 EXEC := bessd
@@ -126,7 +131,7 @@ all: $(EXEC) modules tests benchmarks
 
 clean:
 	rm -rf $(EXEC) .deps/*.d .deps/*/*.d *_test */*_test *_bench */*_bench \
-		*.a *.pb.* *.o */*.o *.gcda *.gcno */*.gcda */*.gcno \
+		*.a *.pb.* *.o */*.o *.so */*.so *.gcov *.gcda *.gcno */*.gcda */*.gcno \
 		coverage.info coverage_html
 
 tags:
@@ -145,6 +150,20 @@ benchmarks: $(BENCH_OBJS) $(BENCH_EXEC)
 protobuf: $(PROTO_SRCS)
 
 modules: protobuf $(MODULE_OBJS) $(MODULE_LIBS)
+
+# Generate version string from the current status of the git working copy
+VERSION ?= $(shell git describe --dirty --always --tags 2>/dev/null)
+
+# Default if previous command fails (e.g., when building from a tarball)
+DEFAULT_VERSION = unknown
+
+VERSION_LINE = \#define VERSION \"$(or $(VERSION), $(DEFAULT_VERSION))\"
+version.h: $(SRCS) $(filter-out version.h, $(HEADERS))
+	@echo "$(VERSION_LINE)" > $@
+
+# Make sure version.h is created before its use.
+# This is necessary since ./deps/main.d might not be there yet.
+main.o: version.h
 
 # This build wrapper takes 4 parameters:
 # $(1): build type (CXX, LD, ...)

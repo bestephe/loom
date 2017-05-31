@@ -1,15 +1,11 @@
-#include <rte_config.h>
-
 #include "ip_lookup.h"
 
-#include <arpa/inet.h>
-
-#include <rte_byteorder.h>
 #include <rte_config.h>
 #include <rte_errno.h>
-#include <rte_ether.h>
-#include <rte_ip.h>
 #include <rte_lpm.h>
+
+#include "../utils/ether.h"
+#include "../utils/ip.h"
 
 #define VECTOR_OPTIMIZATION 1
 
@@ -21,9 +17,11 @@ const Commands IPLookup::cmds = {
     {"add", "IPLookupCommandAddArg", MODULE_CMD_FUNC(&IPLookup::CommandAdd), 0},
     {"clear", "EmptyArg", MODULE_CMD_FUNC(&IPLookup::CommandClear), 0}};
 
-pb_error_t IPLookup::Init(const bess::pb::EmptyArg &) {
+CommandResponse IPLookup::Init(const bess::pb::IPLookupArg &arg) {
   struct rte_lpm_config conf = {
-      .max_rules = 1024, .number_tbl8s = 128, .flags = 0,
+      .max_rules = arg.max_rules() ? arg.max_rules() : 1024,
+      .number_tbl8s = arg.max_tbl8s() ? arg.max_tbl8s() : 128,
+      .flags = 0,
   };
 
   default_gate_ = DROP_GATE;
@@ -31,10 +29,10 @@ pb_error_t IPLookup::Init(const bess::pb::EmptyArg &) {
   lpm_ = rte_lpm_create(name().c_str(), /* socket_id = */ 0, &conf);
 
   if (!lpm_) {
-    return pb_error(rte_errno, "DPDK error: %s", rte_strerror(rte_errno));
+    return CommandFailure(rte_errno, "DPDK error: %s", rte_strerror(rte_errno));
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 void IPLookup::DeInit() {
@@ -44,6 +42,9 @@ void IPLookup::DeInit() {
 }
 
 void IPLookup::ProcessBatch(bess::PacketBatch *batch) {
+  using bess::utils::Ethernet;
+  using bess::utils::Ipv4;
+
   gate_idx_t out_gates[bess::PacketBatch::kMaxBurst];
   gate_idx_t default_gate = default_gate_;
 
@@ -56,29 +57,29 @@ void IPLookup::ProcessBatch(bess::PacketBatch *batch) {
 
   /* 4 at a time */
   for (i = 0; i + 3 < cnt; i += 4) {
-    struct ether_hdr *eth;
-    struct ipv4_hdr *ip;
+    Ethernet *eth;
+    Ipv4 *ip;
 
     uint32_t a0, a1, a2, a3;
     uint32_t next_hops[4];
 
     __m128i ip_addr;
 
-    eth = batch->pkts()[i]->head_data<struct ether_hdr *>();
-    ip = (struct ipv4_hdr *)(eth + 1);
-    a0 = ip->dst_addr;
+    eth = batch->pkts()[i]->head_data<Ethernet *>();
+    ip = (Ipv4 *)(eth + 1);
+    a0 = ip->dst.raw_value();
 
-    eth = batch->pkts()[i + 1]->head_data<struct ether_hdr *>();
-    ip = (struct ipv4_hdr *)(eth + 1);
-    a1 = ip->dst_addr;
+    eth = batch->pkts()[i + 1]->head_data<Ethernet *>();
+    ip = (Ipv4 *)(eth + 1);
+    a1 = ip->dst.raw_value();
 
-    eth = batch->pkts()[i + 2]->head_data<struct ether_hdr *>();
-    ip = (struct ipv4_hdr *)(eth + 1);
-    a2 = ip->dst_addr;
+    eth = batch->pkts()[i + 2]->head_data<Ethernet *>();
+    ip = (Ipv4 *)(eth + 1);
+    a2 = ip->dst.raw_value();
 
-    eth = batch->pkts()[i + 3]->head_data<struct ether_hdr *>();
-    ip = (struct ipv4_hdr *)(eth + 1);
-    a3 = ip->dst_addr;
+    eth = batch->pkts()[i + 3]->head_data<Ethernet *>();
+    ip = (Ipv4 *)(eth + 1);
+    a3 = ip->dst.raw_value();
 
     ip_addr = _mm_set_epi32(a3, a2, a1, a0);
     ip_addr = _mm_shuffle_epi8(ip_addr, bswap_mask);
@@ -94,16 +95,16 @@ void IPLookup::ProcessBatch(bess::PacketBatch *batch) {
 
   /* process the rest one by one */
   for (; i < cnt; i++) {
-    struct ether_hdr *eth;
-    struct ipv4_hdr *ip;
+    Ethernet *eth;
+    Ipv4 *ip;
 
     uint32_t next_hop;
     int ret;
 
-    eth = batch->pkts()[i]->head_data<struct ether_hdr *>();
-    ip = (struct ipv4_hdr *)(eth + 1);
+    eth = batch->pkts()[i]->head_data<Ethernet *>();
+    ip = (Ipv4 *)(eth + 1);
 
-    ret = rte_lpm_lookup(lpm_, rte_be_to_cpu_32(ip->dst_addr), &next_hop);
+    ret = rte_lpm_lookup(lpm_, ip->dst.raw_value(), &next_hop);
 
     if (ret == 0) {
       out_gates[i] = next_hop;
@@ -115,74 +116,55 @@ void IPLookup::ProcessBatch(bess::PacketBatch *batch) {
   RunSplit(out_gates, batch);
 }
 
-pb_cmd_response_t IPLookup::CommandAdd(
+CommandResponse IPLookup::CommandAdd(
     const bess::pb::IPLookupCommandAddArg &arg) {
-  pb_cmd_response_t response;
+  using bess::utils::be32_t;
 
-  struct in_addr ip_addr_be;
-  uint32_t ip_addr; /* in cpu order */
-  uint32_t netmask;
-  int ret;
+  be32_t net_addr;
+  be32_t net_mask;
   gate_idx_t gate = arg.gate();
 
   if (!arg.prefix().length()) {
-    set_cmd_response_error(&response, pb_error(EINVAL, "prefix' is missing"));
-    return response;
+    return CommandFailure(EINVAL, "prefix' is missing");
+  }
+  if (!bess::utils::ParseIpv4Address(arg.prefix(), &net_addr)) {
+    return CommandFailure(EINVAL, "Invalid IP prefix: %s",
+                          arg.prefix().c_str());
   }
 
-  const char *prefix = arg.prefix().c_str();
   uint64_t prefix_len = arg.prefix_len();
-
-  ret = inet_aton(prefix, &ip_addr_be);
-  if (!ret) {
-    set_cmd_response_error(&response,
-                           pb_error(EINVAL, "Invalid IP prefix: %s", prefix));
-    return response;
-  }
-
   if (prefix_len > 32) {
-    set_cmd_response_error(
-        &response, pb_error(EINVAL, "Invalid prefix length: %" PRIu64, prefix_len));
-    return response;
+    return CommandFailure(EINVAL, "Invalid prefix length: %" PRIu64,
+                          prefix_len);
   }
 
-  ip_addr = rte_be_to_cpu_32(ip_addr_be.s_addr);
-  netmask = ~0 ^ ((1 << (32 - prefix_len)) - 1);
+  net_mask = be32_t(~((1ull << (32 - prefix_len)) - 1));
 
-  if (ip_addr & ~netmask) {
-    set_cmd_response_error(
-        &response, pb_error(EINVAL, "Invalid IP prefix %s/%" PRIu64 " %x %x", prefix,
-                            prefix_len, ip_addr, netmask));
-    return response;
+  if ((net_addr & ~net_mask).value()) {
+    return CommandFailure(EINVAL, "Invalid IP prefix %s/%" PRIu64 " %x %x",
+                          arg.prefix().c_str(), prefix_len, net_addr.value(),
+                          net_mask.value());
   }
 
   if (!is_valid_gate(gate)) {
-    set_cmd_response_error(&response,
-                           pb_error(EINVAL, "Invalid gate: %hu", gate));
-    return response;
+    return CommandFailure(EINVAL, "Invalid gate: %hu", gate);
   }
 
   if (prefix_len == 0) {
     default_gate_ = gate;
   } else {
-    ret = rte_lpm_add(lpm_, ip_addr, prefix_len, gate);
+    int ret = rte_lpm_add(lpm_, net_addr.value(), prefix_len, gate);
     if (ret) {
-      set_cmd_response_error(&response, pb_error(-ret, "rpm_lpm_add() failed"));
-      return response;
+      return CommandFailure(-ret, "rpm_lpm_add() failed");
     }
   }
 
-  set_cmd_response_error(&response, pb_errno(0));
-  return response;
+  return CommandSuccess();
 }
 
-pb_cmd_response_t IPLookup::CommandClear(const bess::pb::EmptyArg &) {
-  pb_cmd_response_t response;
-
+CommandResponse IPLookup::CommandClear(const bess::pb::EmptyArg &) {
   rte_lpm_delete_all(lpm_);
-  default_gate_ = DROP_GATE;
-  set_cmd_response_error(&response, pb_errno(0));
-  return response;
+  return CommandSuccess();
 }
 
 ADD_MODULE(IPLookup, "ip_lookup",
