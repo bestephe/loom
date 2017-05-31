@@ -1,0 +1,73 @@
+def queue_test():
+    # This is taken from queue.bess
+    src = Source()
+    src -> queue::Queue() \
+        -> VLANPush(tci=2) \
+        -> Sink()
+
+    bess.add_tc('fast', policy='rate_limit',
+                resource='packet', limit={'packet': 9000000})
+    src.attach_task('fast')
+
+    bess.add_tc('slow', policy='rate_limit',
+                resource='packet', limit={'packet': 1000000})
+    queue.attach_task('slow')
+
+
+def nat_test():
+    # From nat.bess -- check that revisiting the same module works correctly.
+    nat = NAT(ext_addrs=['192.168.1.1'])
+
+    # Swap src/dst MAC
+    mac = MACSwap()
+
+    # Swap src/dst IP addresses / ports
+    ip = IPSwap()
+
+    Source() -> 0:nat:0 -> mac -> ip -> 1:nat:1 -> Sink()
+
+
+def nat_queue_test():
+    # Check a combination.
+    nat = NAT(ext_addrs=['192.168.1.1'])
+
+    # Swap src/dst IP addresses / ports
+    ip = IPSwap()
+
+    Source() -> 0:nat:0 -> Queue() -> ip -> 1:nat:1 -> Sink()
+
+
+def nat_negative_test():
+    src0 = Source()
+    src1 = Source()
+    bess.add_worker(0, 0)
+    bess.add_worker(1, 1)
+    nat = NAT(ext_addrs=['192.168.1.1'])
+    src0 -> 0:nat:0 -> Sink()
+    src1 -> 1:nat:1 -> Sink()
+    src0.attach_task(wid=0)
+    src1.attach_task(wid=1)
+
+
+def test_no_error(test):
+    test()
+    ret = bess.check_constraints()
+    assert(not ret)
+
+    bess.reset_all()
+
+
+def test_fatal_error(test):
+    test()
+    try:
+        ret = bess.check_constraints()
+        assert(False)  # Should never get here.
+    except bess.ConstraintError as e:
+        pass
+    bess.reset_all()
+
+
+test_no_error(queue_test)
+test_no_error(nat_test)
+test_no_error(nat_queue_test)
+test_fatal_error(nat_negative_test)

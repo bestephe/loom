@@ -10,15 +10,15 @@ class Split final : public Module {
 
   Split() : Module(), mask_(), attr_id_(), offset_(), size_() {}
 
-  pb_error_t Init(const bess::pb::SplitArg &arg);
+  CommandResponse Init(const bess::pb::SplitArg &arg);
 
   void ProcessBatch(bess::PacketBatch *batch);
 
  private:
   uint64_t mask_;
   int attr_id_;
-  int offset_;
-  int size_;
+  size_t offset_;
+  size_t size_;
 };
 
 #endif  // BESS_MODULES_SPLIT_H_

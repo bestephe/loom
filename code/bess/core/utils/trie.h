@@ -12,26 +12,33 @@ class Trie {
  public:
   // Node definition
   struct Node {
-    Node() : leaf(), children() {
-      for (int i = 0; i < 256; i++) {
-        children[i] = nullptr;
-      }
-    }
+    Node() : leaf(), children() {}
 
-    ~Node() {
-      if (!leaf) {
-        for (int i = 0; i < 256; i++) {
-          delete children[i];
+    Node(const Node& other) {
+      leaf = other.leaf;
+      for (int i = 0; i < 256; i++) {
+        if (other.children[i] != nullptr) {
+          children[i].reset(new Node(*(other.children[i])));
         }
       }
     }
 
+    Node& operator=(const Node& other) {
+      leaf = other.leaf;
+      for (int i = 0; i < 256; i++) {
+        if (other.children[i] != nullptr) {
+          children[i].reset(new Node(*(other.children[i])));
+        }
+      }
+      return *this;
+    }
+
     bool leaf;
-    Node *children[256];
+    std::unique_ptr<Node> children[256];
   };
 
-  Trie() : root_(new Node()) {}
-  ~Trie() { delete root_; }
+  Trie() : root_() {}
+  Trie(const Trie& t) : root_(t.root_) { }
 
   // Inserts a string into the trie
   void Insert(const std::string& key);
@@ -43,41 +50,41 @@ class Trie {
   bool LookupKey(const std::string& key);
 
  private:
-  Node* root_;
+  Node root_;
 };
 
 inline void Trie::Insert(const std::string& key) {
-  Node* cur = root_;
+  Node* cur = &root_;
   for (const char& c : key) {
     size_t idx = c;
     if (cur->children[idx] == nullptr) {
-      cur->children[idx] = new Node();
+      cur->children[idx].reset(new Node());
     }
-    cur = cur->children[idx];
+    cur = cur->children[idx].get();
   }
   cur->leaf = true;
 }
 
 inline bool Trie::Lookup(const std::string& prefix) {
-  Node* cur = root_;
+  Node* cur = &root_;
   for (const char& c : prefix) {
     size_t idx = c;
     if (cur->children[idx] == nullptr) {
       return false;
     }
-    cur = cur->children[idx];
+    cur = cur->children[idx].get();
   }
   return true;
 }
 
 inline bool Trie::LookupKey(const std::string& key) {
-  Node* cur = root_;
+  Node* cur = &root_;
   for (const char& c : key) {
     size_t idx = c;
     if (cur->children[idx] == nullptr) {
       break;
     }
-    cur = cur->children[idx];
+    cur = cur->children[idx].get();
   }
   return cur->leaf;
 }

@@ -9,11 +9,10 @@ class VPort final : public Port {
   VPort() : fd_(), bar_(), map_(), netns_fd_(), container_pid_() {}
   void InitDriver() override;
 
-  pb_error_t Init(const bess::pb::VPortArg &arg);
+  CommandResponse Init(const bess::pb::VPortArg &arg);
   void DeInit() override;
 
-  virtual int RecvPackets(queue_t qid, bess::Packet **pkts,
-                          int max_cnt) override;
+  int RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) override;
   int SendPackets(queue_t qid, bess::Packet **pkts, int cnt) override;
 
  private:
@@ -30,7 +29,7 @@ class VPort final : public Port {
   void *AllocBar(struct tx_queue_opts *txq_opts,
                  struct rx_queue_opts *rxq_opts);
   int SetIPAddrSingle(const std::string &ip_addr);
-  pb_error_t SetIPAddr(const bess::pb::VPortArg &arg);
+  CommandResponse SetIPAddr(const bess::pb::VPortArg &arg);
 
   int fd_;
 

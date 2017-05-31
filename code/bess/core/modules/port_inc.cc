@@ -6,42 +6,41 @@ const Commands PortInc::cmds = {
      MODULE_CMD_FUNC(&PortInc::CommandSetBurst), 1},
 };
 
-pb_error_t PortInc::Init(const bess::pb::PortIncArg &arg) {
+CommandResponse PortInc::Init(const bess::pb::PortIncArg &arg) {
   const char *port_name;
   queue_t num_inc_q;
   int ret;
-  pb_error_t err;
+  CommandResponse err;
+  placement_constraint placement;
 
   burst_ = bess::PacketBatch::kMaxBurst;
 
   if (!arg.port().length()) {
-    return pb_error(EINVAL, "'port' must be given as a string");
+    return CommandFailure(EINVAL, "'port' must be given as a string");
   }
   port_name = arg.port().c_str();
 
   const auto &it = PortBuilder::all_ports().find(port_name);
   if (it == PortBuilder::all_ports().end()) {
-    return pb_error(ENODEV, "Port %s not found", port_name);
+    return CommandFailure(ENODEV, "Port %s not found", port_name);
   }
-  port_ = it->second;
 
-  if (arg.burst() != 0) {
-    err = SetBurst(arg.burst());
-    if (err.err() != 0) {
-      return err;
-    }
-  }
+  port_ = it->second;
+  burst_ = bess::PacketBatch::kMaxBurst;
 
   num_inc_q = port_->num_queues[PACKET_DIR_INC];
   if (num_inc_q == 0) {
-    return pb_error(ENODEV, "Port %s has no incoming queue", port_name);
+    return CommandFailure(ENODEV, "Port %s has no incoming queue", port_name);
   }
+
+  placement = port_->GetNodePlacementConstraint();
+  node_constraints_ = placement;
 
   for (queue_t qid = 0; qid < num_inc_q; qid++) {
     task_id_t tid = RegisterTask((void *)(uintptr_t)qid);
 
     if (tid == INVALID_TASK_ID) {
-      return pb_error(ENOMEM, "Task creation failed");
+      return CommandFailure(ENOMEM, "Task creation failed");
     }
   }
 
@@ -52,10 +51,10 @@ pb_error_t PortInc::Init(const bess::pb::PortIncArg &arg) {
   ret = port_->AcquireQueues(reinterpret_cast<const module *>(this),
                              PACKET_DIR_INC, nullptr, 0);
   if (ret < 0) {
-    return pb_errno(-ret);
+    return CommandFailure(-ret);
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 void PortInc::DeInit() {
@@ -118,21 +117,17 @@ struct task_result PortInc::RunTask(void *arg) {
   return ret;
 }
 
-pb_error_t PortInc::SetBurst(int64_t burst) {
-  if (burst == 0 ||
-      burst > static_cast<int64_t>(bess::PacketBatch::kMaxBurst)) {
-    return pb_error(EINVAL, "burst size must be [1,%zu]",
-                    bess::PacketBatch::kMaxBurst);
-  }
-  burst_ = burst;
-  return pb_errno(0);
-}
-
-pb_cmd_response_t PortInc::CommandSetBurst(
+CommandResponse PortInc::CommandSetBurst(
     const bess::pb::PortIncCommandSetBurstArg &arg) {
-  pb_cmd_response_t response;
-  set_cmd_response_error(&response, SetBurst(arg.burst()));
-  return response;
+  uint64_t burst = arg.burst();
+
+  if (burst > bess::PacketBatch::kMaxBurst) {
+    return CommandFailure(EINVAL, "burst size must be [0,%zu]",
+                          bess::PacketBatch::kMaxBurst);
+  }
+
+  burst_ = burst;
+  return CommandSuccess();
 }
 
 ADD_MODULE(PortInc, "port_inc", "receives packets from a port")

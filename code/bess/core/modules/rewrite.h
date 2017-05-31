@@ -18,22 +18,23 @@ class Rewrite final : public Module {
         template_size_(),
         templates_() {}
 
-  pb_error_t Init(const bess::pb::RewriteArg &arg);
+  CommandResponse Init(const bess::pb::RewriteArg &arg);
 
   void ProcessBatch(bess::PacketBatch *batch) override;
 
-  pb_cmd_response_t CommandAdd(const bess::pb::RewriteArg &arg);
-  pb_cmd_response_t CommandClear(const bess::pb::EmptyArg &arg);
+  CommandResponse CommandAdd(const bess::pb::RewriteArg &arg);
+  CommandResponse CommandClear(const bess::pb::EmptyArg &arg);
 
  private:
   inline void DoRewrite(bess::PacketBatch *batch);
   inline void DoRewriteSingle(bess::PacketBatch *batch);
 
-  /* For fair round robin we remember the next index for later.
-   * [0, num_templates - 1] */
-  int next_turn_;
+  // For fair round robin we remember the next index for later.
+  // Note its value can be [0, kMaxBurst - 1], not [0, num_templates_],
+  // to avoid interger modulo operations.
+  size_t next_turn_;
 
-  int num_templates_;
+  size_t num_templates_;
   uint16_t template_size_[kNumSlots];
   unsigned char templates_[kNumSlots][kMaxTemplateSize] __ymm_aligned;
 };

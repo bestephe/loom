@@ -50,32 +50,26 @@ int Queue::Resize(int slots) {
   return 0;
 }
 
-pb_error_t Queue::Init(const bess::pb::QueueArg &arg) {
+CommandResponse Queue::Init(const bess::pb::QueueArg &arg) {
   task_id_t tid;
-  pb_error_t err;
+  CommandResponse err;
 
   tid = RegisterTask(nullptr);
-  if (tid == INVALID_TASK_ID)
-    return pb_error(ENOMEM, "Task creation failed");
-
-  if (arg.burst() != 0) {
-    err = SetBurst(arg.burst());
-    if (err.err() != 0) {
-      return err;
-    }
-  } else {
-    burst_ = bess::PacketBatch::kMaxBurst;
+  if (tid == INVALID_TASK_ID) {
+    return CommandFailure(ENOMEM, "Task creation failed");
   }
+
+  burst_ = bess::PacketBatch::kMaxBurst;
 
   if (arg.size() != 0) {
     err = SetSize(arg.size());
-    if (err.err() != 0) {
+    if (err.error().code() != 0) {
       return err;
     }
   } else {
     int ret = Resize(DEFAULT_QUEUE_SIZE);
     if (ret) {
-      return pb_errno(-ret);
+      return CommandFailure(-ret);
     }
   }
 
@@ -83,7 +77,7 @@ pb_error_t Queue::Init(const bess::pb::QueueArg &arg) {
     prefetch_ = true;
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 void Queue::DeInit() {
@@ -147,44 +141,53 @@ struct task_result Queue::RunTask(void *) {
   return ret;
 }
 
-pb_error_t Queue::SetBurst(int64_t burst) {
-  if (burst == 0 ||
-      burst > static_cast<int64_t>(bess::PacketBatch::kMaxBurst)) {
-    return pb_error(EINVAL, "burst size must be [1,%zu]",
-                    bess::PacketBatch::kMaxBurst);
+CommandResponse Queue::CommandSetBurst(
+    const bess::pb::QueueCommandSetBurstArg &arg) {
+  uint64_t burst = arg.burst();
+
+  if (burst > bess::PacketBatch::kMaxBurst) {
+    return CommandFailure(EINVAL, "burst size must be [0,%zu]",
+                          bess::PacketBatch::kMaxBurst);
   }
 
   burst_ = burst;
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
-pb_error_t Queue::SetSize(uint64_t size) {
+CommandResponse Queue::SetSize(uint64_t size) {
   if (size < 4 || size > 16384) {
-    return pb_error(EINVAL, "must be in [4, 16384]");
+    return CommandFailure(EINVAL, "must be in [4, 16384]");
   }
 
   if (size & (size - 1)) {
-    return pb_error(EINVAL, "must be a power of 2");
+    return CommandFailure(EINVAL, "must be a power of 2");
   }
 
   int ret = Resize(size);
   if (ret) {
-    return pb_errno(-ret);
+    return CommandFailure(-ret);
   }
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
-pb_cmd_response_t Queue::CommandSetBurst(
-    const bess::pb::QueueCommandSetBurstArg &arg) {
-  pb_cmd_response_t response;
-  set_cmd_response_error(&response, SetBurst(arg.burst()));
-  return response;
-}
-pb_cmd_response_t Queue::CommandSetSize(
+CommandResponse Queue::CommandSetSize(
     const bess::pb::QueueCommandSetSizeArg &arg) {
-  pb_cmd_response_t response;
-  set_cmd_response_error(&response, SetSize(arg.size()));
-  return response;
+  return SetSize(arg.size());
+}
+
+CheckConstraintResult Queue::CheckModuleConstraints() const {
+  CheckConstraintResult status = CHECK_OK;
+  if (num_active_tasks() - tasks().size() < 1) {  // Assume multi-producer.
+    LOG(ERROR) << "Queue has no producers";
+    status = CHECK_NONFATAL_ERROR;
+  }
+
+  if (tasks().size() > 1) {  // Assume single consumer.
+    LOG(ERROR) << "More than one consumer for the queue" << name();
+    return CHECK_FATAL_ERROR;
+  }
+
+  return status;
 }
 
 ADD_MODULE(Queue, "queue",

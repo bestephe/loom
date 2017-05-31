@@ -18,11 +18,13 @@ class AcmeModule : public Module {
 
   static const Commands cmds;
 
-  pb_error_t Init(const bess::pb::EmptyArg &) { return pb_errno(42); }
+  CommandResponse Init(const bess::pb::EmptyArg &) {
+    return CommandFailure(42);
+  }
 
-  pb_cmd_response_t FooPb(const bess::pb::EmptyArg &) {
+  CommandResponse FooPb(const bess::pb::EmptyArg &) {
     n += 1;
-    return pb_cmd_response_t();
+    return CommandResponse();
   }
 
   int n = {};
@@ -31,18 +33,18 @@ class AcmeModule : public Module {
 const Commands AcmeModule::cmds = {
     {"foo", "EmptyArg", MODULE_CMD_FUNC(&AcmeModule::FooPb), 0}};
 
+DEF_MODULE(AcmeModule, "acme_module", "foo bar");
+
 // Simple harness for testing the Module class.
 class ModuleTester : public ::testing::Test {
  protected:
-  virtual void SetUp() {
-    ADD_MODULE(AcmeModule, "acme_module", "foo bar");
-    ASSERT_TRUE(__module__AcmeModule);
-  }
+  ModuleTester() : AcmeModule_singleton() {}
 
-  virtual void TearDown() {
-    ModuleBuilder::DestroyAllModules();
-    ModuleBuilder::all_module_builders_holder(true);
-  }
+  virtual void SetUp() {}
+
+  virtual void TearDown() { ModuleBuilder::DestroyAllModules(); }
+
+  AcmeModule_class AcmeModule_singleton;
 };
 
 int create_acme(const char *name, Module **m) {
@@ -65,8 +67,8 @@ int create_acme(const char *name, Module **m) {
   bess::pb::EmptyArg arg_;
   google::protobuf::Any arg;
   arg.PackFrom(arg_);
-  pb_error_t err = (*m)->InitWithGenericArg(arg);
-  EXPECT_EQ(42, err.err());
+  CommandResponse ret = (*m)->InitWithGenericArg(arg);
+  EXPECT_EQ(42, ret.error().code());
 
   ModuleBuilder::AddModule(*m);
 
@@ -81,11 +83,9 @@ int create_acme(const char *name, Module **m) {
 // Check that new module classes are actually created correctly and stored in
 // the table of module classes
 TEST(ModuleBuilderTest, RegisterModuleClass) {
-  size_t num_builders = ModuleBuilder::all_module_builders().size();
-  ADD_MODULE(AcmeModule, "acme_module", "foo bar");
-  ASSERT_TRUE(__module__AcmeModule);
+  ASSERT_EQ(0, ModuleBuilder::all_module_builders().count("AcmeModule"));
 
-  EXPECT_EQ(num_builders + 1, ModuleBuilder::all_module_builders().size());
+  AcmeModule_class AcmeModule_singleton;
   ASSERT_EQ(1, ModuleBuilder::all_module_builders().count("AcmeModule"));
 
   const ModuleBuilder &builder =
@@ -97,8 +97,6 @@ TEST(ModuleBuilderTest, RegisterModuleClass) {
   EXPECT_EQ(1, builder.NumIGates());
   EXPECT_EQ(1, builder.NumOGates());
   EXPECT_EQ(1, builder.cmds().size());
-
-  ModuleBuilder::all_module_builders_holder(true);
 }
 
 TEST(ModuleBuilderTest, GenerateDefaultNameTemplate) {
@@ -115,8 +113,6 @@ TEST(ModuleBuilderTest, GenerateDefaultNameTemplate) {
 // Check that module builders create modules correctly when given a name
 TEST_F(ModuleTester, CreateModuleWithName) {
   Module *m1, *m2;
-  ADD_MODULE(AcmeModule, "acme_module", "foo bar");
-  ASSERT_TRUE(__module__AcmeModule);
 
   EXPECT_EQ(0, create_acme("bar", &m1));
   ASSERT_NE(nullptr, m1);
@@ -148,16 +144,16 @@ TEST_F(ModuleTester, RunCommand) {
   google::protobuf::Any arg;
   arg.PackFrom(arg_);
 
-  pb_cmd_response_t response;
+  CommandResponse response;
 
   for (int i = 0; i < 10; i++) {
     response = m->RunCommand("foo", arg);
-    EXPECT_EQ(0, response.error().err());
+    EXPECT_EQ(0, response.error().code());
   }
   EXPECT_EQ(10, (static_cast<AcmeModule *>(m))->n);
 
   response = m->RunCommand("bar", arg);
-  EXPECT_EQ(ENOTSUP, response.error().err());
+  EXPECT_EQ(ENOTSUP, response.error().code());
 }
 
 TEST_F(ModuleTester, ConnectModules) {

@@ -1,0 +1,18 @@
+# This sample exists merely as a way to check
+# that constraint detection is correctly working.
+# This should detect constraint violations for
+# both workers, and indicate that no worker can
+# satisfy the constraints on `src1`. It should
+# also identify that `hlb` is unused.
+bess.add_worker(0, 0)
+bess.add_worker(1, 1)
+
+p0 = PMDPort(pci='82:00.0')
+p1 = PMDPort(pci='82:00.1')
+p2 = PMDPort(pci='07:00.0')
+hlb = HashLB(gates=[0, 1], mode='l2')
+src0::PortInc(port=p0.name) -> Sink()
+src1::PortInc(port=p2.name) -> PortOut(port=p1.name)
+
+src0.attach_task(wid=0)
+src1.attach_task(wid=1)

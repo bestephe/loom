@@ -54,7 +54,7 @@ message ExactMatchCommandClearArg {
 }
 
 /**
- * The ExactMatch module has a command `setDefaultGate(...)` which takes one parameter.
+ * The ExactMatch module has a command `set_default_gate(...)` which takes one parameter.
  * This command routes all traffic which does _not_ match a rule to a specified gate.
  * Example use in bessctl: `setDefaultGate(gate=2)`
  */
@@ -63,17 +63,26 @@ message ExactMatchCommandSetDefaultGateArg {
 }
 
 /**
- * The HashLB module has a command `setMode(...)` which takes one parameter.
+ * The FlowGen module has a command `set_burst(...)` that allows you to specify
+ * the maximum number of packets to be stored in a single PacketBatch released
+ * by the module.
+ */
+message FlowGenCommandSetBurstArg {
+  uint64 burst = 1;
+}
+
+/**
+ * The HashLB module has a command `set_mode(...)` which takes one parameter.
  * The mode specifies whether the load balancer will hash over the src/dest ethernet header (l2),
  * over the src/dest IP addresses (l3), or over the flow 5-tuple (l4).
- * Example use in bessctl: `lb.setMode('l2')`
+ * Example use in bessctl: `lb.set_mode('l2')`
  */
 message HashLBCommandSetModeArg {
   string mode = 1; /// What fields to hash over, l1, l2, or l3 are only valid values.
 }
 
 /**
- * The HashLB module has a command `setGates(...)` which takes one parameter.
+ * The HashLB module has a command `set_gates(...)` which takes one parameter.
  * This function takes in a list of gate numbers to send hashed traffic out over.
  * Example use in bessctl: `lb.setGates(gates=[0,1,2,3])`
  */
@@ -83,8 +92,8 @@ message HashLBCommandSetGatesArg {
 
 /**
  * The IPLookup module has a command `add(...)` which takes three paramters.
- * This function accepts the routing rules -- CIDR prefix, CIDR prefix length, and what gate to forward
- * matching traffic out on.
+ * This function accepts the routing rules -- CIDR prefix, CIDR prefix length,
+ * and what gate to forward matching traffic out on.
  * Example use in bessctl: `table.add(prefix='10.0.0.0', prefix_len=8, gate=2)`
  */
 message IPLookupCommandAddArg {
@@ -124,7 +133,7 @@ message L2ForwardCommandDeleteArg {
 
 /**
  * For traffic reaching the L2Forward module which does not match a MAC rule,
- * the function `setDefaultGate(...)` allows you to specify a default gate
+ * the function `set_default_gate(...)` allows you to specify a default gate
  * to direct unmatched traffic to.
  */
 message L2ForwardCommandSetDefaultGateArg {
@@ -163,16 +172,10 @@ message L2ForwardCommandPopulateArg {
   int64 gate_count = 3; /// How many gates to create in the L2Forward module.
 }
 
-/**
- * This function requests a summary of the statistics stored in the Measure module.
- * It takes no parameters and returns a GetSummaryResponse.
- */
-message MeasureCommandGetSummaryArg {
-}
 
 /**
- * The Measure module function `getSummary()` takes no parameters and returns the following
- * values.
+ * The Measure module function `get_summary()` takes no parameters and returns
+ * the following values.
  */
 message MeasureCommandGetSummaryResponse {
   double timestamp = 1; /// Seconds since boot.
@@ -206,7 +209,7 @@ message DRRArg {
 }
 
 /**
- * the SetQuantumSize function sets a new quantum for DRR module to operate on. 
+ * the SetQuantumSize function sets a new quantum for DRR module to operate on.
  */
 message DRRQuantumArg {
   uint32 quantum = 1;  /// the number of bytes to allocate to each on every round
@@ -214,61 +217,73 @@ message DRRQuantumArg {
 
 /**
  * The SetMaxQueueSize function sets a new maximum flow queue size for DRR module.
- * If the flow's queue gets to this size, the module starts dropping packets to 
- * that flow until the queue is below this size.  
+ * If the flow's queue gets to this size, the module starts dropping packets to
+ * that flow until the queue is below this size.
  */
 message DRRMaxFlowQueueSizeArg {
   uint32 max_queue_size = 1;  /// the max size that any Flows queue can get
 }
 
 /**
- * The module PortInc has a function SetBurst that allows you to specify the maximum number of packets to be stored in a single PacketBatch released by the module.
+ * The module PortInc has a function `set_burst(...)` that allows you to specify the
+ * maximum number of packets to be stored in a single PacketBatch released by
+ * the module.
  */
 message PortIncCommandSetBurstArg {
-  int64 burst = 1; /// The maximum "burst" of packets (ie, the maximum batch size)
+  uint64 burst = 1; /// The maximum "burst" of packets (ie, the maximum batch size)
 }
 
 /**
- * The module QueueInc has a function `setBurst(...)` that allows you to specify the maximum number of packets to be stored in a single PacketBatch released by the module.
+ * The module QueueInc has a function `set_burst(...)` that allows you to specify
+ * the maximum number of packets to be stored in a single PacketBatch released
+ * by the module.
  */
 message QueueIncCommandSetBurstArg {
-  int64 burst = 1; /// The maximum "burst" of packets (ie, the maximum batch size)
+  uint64 burst = 1; /// The maximum "burst" of packets (ie, the maximum batch size)
 }
 
 /**
- * The module QueueInc has a function `setBurst(...)` that allows you to specify the maximum number of packets to be stored in a single PacketBatch released by the module.
+ * The module QueueInc has a function `set_burst(...)` that allows you to specify
+ * the maximum number of packets to be stored in a single PacketBatch released
+ * by the module.
  */
 message QueueCommandSetBurstArg {
-  int64 burst = 1; /// The maximum "burst" of packets (ie, the maximum batch size)
+  uint64 burst = 1; /// The maximum "burst" of packets (ie, the maximum batch size)
 }
 
 /**
- * The module QueueInc has a function `setSize(...)` that allows specifying the size of the queue in total number of packets.
+ * The module QueueInc has a function `set_size(...)` that allows specifying the
+ * size of the queue in total number of packets.
  */
 message QueueCommandSetSizeArg {
   uint64 size = 1; /// The maximum number of packets to store in the queue.
 }
 
 /**
- * The function `clear()` for RandomUpdate takes no parameters and clears all state in the module.
+ * The function `clear()` for RandomUpdate takes no parameters and clears all
+ * state in the module.
  */
 message RandomUpdateCommandClearArg {
 }
 
 /**
- * The function `clear()` for Rewrite takes no parameters and clears all state in the module.
+ * The function `clear()` for Rewrite takes no parameters and clears all state
+ * in the module.
  */
 message RewriteCommandClearArg {
 }
 
 /**
- * The function `clear()` for Update takes no parameters and clears all state in the module.
+ * The function `clear()` for Update takes no parameters and clears all state in
+ * the module.
  */
 message UpdateCommandClearArg {
 }
 
 /**
- * The module WildcardMatch has a command `add(...)` which inserts a new rule into the WildcardMatch module. For an example of code using WilcardMatch see `bess/bessctl/conf/samples/wildcardmatch.bess`.
+ * The module WildcardMatch has a command `add(...)` which inserts a new rule
+ * into the WildcardMatch module. For an example of code using WilcardMatch see
+ * `bess/bessctl/conf/samples/wildcardmatch.bess`.
  */
 message WildcardMatchCommandAddArg {
   uint64 gate = 1; /// Traffic matching this new rule will be sent to this gate.
@@ -294,10 +309,41 @@ message WildcardMatchCommandClearArg {
 
 /**
  * For traffic which does not match any rule in the WildcardMatch module,
- * the `setDefaultGate(...)` function specifies which gate to send this extra traffic to.
+ * the `set_default_gate(...)` function specifies which gate to send this extra traffic to.
  */
 message WildcardMatchCommandSetDefaultGateArg {
   uint64 gate = 1;
+}
+
+/**
+ * A rule from the WildcardMatch module.
+ */
+message WildcardMatchRule {
+  uint64 gate = 1; /// Traffic matching this new rule will be sent to this gate.
+  int64 priority = 2; ///If a packet matches multiple rules, the rule with higher priority will be applied. If priorities are equal behavior is undefined.
+  repeated uint64 values = 3; /// The values to check for in each fieild.
+  repeated uint64 masks = 4; /// The bitmask for each field -- set 0x0 to ignore the field altogether.
+}
+
+/**
+ * A field over which the WildcardMatch module should inspect.
+ */
+message WildcardMatchField {
+  uint64 size = 1; /// The length in bytes of the field to inspect.
+  oneof position {
+    uint64 offset = 2; /// The field offset into the packet data, if the field lies in the packet itself.
+    string attribute = 3; /// The metadata attribute to inspect, if the field is a metadata attribute.
+  }
+}
+
+/**
+ * The module WildcardMatch has a function `get_rules()` which
+ * returns the current set of running rules.
+ */
+message WildcardMatchCommandGetRulesResponse {
+  uint64 default_gate = 1; /// The default gate
+  repeated WildcardMatchField fields = 2; /// The fields provided in initializing WCM
+  repeated WildcardMatchRule rules = 3; /// All rules provided via calls to `WilcardMatch.add(...)`
 }
 
 /**
@@ -399,7 +445,7 @@ message ExactMatchArg {
     uint64 size = 1; /// The length, in bytes, of the field to inspect.
     uint64 mask = 4; /// A bitmask over the field to specify which bits to inspect (default 0xff).
     oneof position {
-      string name = 2; ///Metadata attribute name, if field resides in metadata.
+      string attribute = 2; ///Metadata attribute name, if field resides in metadata.
       int64 offset = 3; /// The offset, in bytes, from the start of the packet that the field resides in (if field resides in packet data)..
     }
   }
@@ -443,14 +489,14 @@ message GenericDecapArg {
  * Takes a list of fields. Each field is either:
  *
  *  1. {'size': X, 'value': Y}		(for constant values)
- *  2. {'size': X, 'attr': Y}		(for metadata attributes)
+ *  2. {'size': X, 'attribute': Y}	(for metadata attributes)
  *
- * e.g.: GenericEncap([{'size': 4, 'value':0xdeadbeef},
- *                     {'size': 2, 'attr':'foo'},
- *                     {'size': 2, 'value':0x1234}])
+ * e.g.: GenericEncap([{'size': 4, 'value': 0xdeadbeef},
+ *                     {'size': 2, 'attribute': 'foo'},
+ *                     {'size': 2, 'value': 0x1234}])
  * will prepend a 8-byte header:
  *    de ad be ef <xx> <xx> 12 34
- * where the 2-byte <xx> <xx> comes from the value of metadata arribute 'foo'
+ * where the 2-byte <xx> <xx> comes from the value of metadata attribute 'foo'
  * for each packet.
  * An example script using GenericEncap is in [`bess/bessctl/conf/samples/generic_encap.bess`](https://github.com/NetSys/bess/blob/master/bessctl/conf/samples/generic_encap.bess).
  *
@@ -463,8 +509,8 @@ message GenericEncapArg {
    */
   message Field {
     uint64 size = 1; /// The length of the field.
-    oneof attribute {
-      string attr_name = 2; /// The metadata attribute name to pull the field value from
+    oneof insertion {
+      string attribute = 2; /// The metadata attribute name to pull the field value from
       uint64 value = 3; /// Or, the fixed value to insert into the packet (max 8 bytes).
     }
   }
@@ -503,6 +549,8 @@ message IPEncapArg {
  * __Output Gates__: many (configurable, depending on rule values)
  */
 message IPLookupArg {
+  uint32 max_rules = 1; /// Maximum number of rules (default: 1024)
+  uint32 max_tbl8s = 2; /// Maximum number of IP prefixes with smaller than /24 (default: 128)
 }
 
 /**
@@ -564,20 +612,18 @@ message MetadataTestArg {
 }
 
 /**
- * The NAT module implements address translation, rewriting packet source addresses
- * for a specified internal prefix with IPs according to a specified
- * external prefix. To see an example
- * of NAT in use, see [`bess/bessctl/conf/samples/nat.bess`](https://github.com/NetSys/bess/blob/master/bessctl/conf/samples/nat.bess)
+ * The NAT module implements IPv4 address/port translation, rewriting packet
+ * source addresses with external addresses as specified. Currently only
+ * supports TCP/UDP/ICMP. Note that address/port in packet payload
+ * (e.g., FTP, SIP, RTSP, etc.) are NOT translated.
+ * To see an example of NAT in use, see:
+ * [`bess/bessctl/conf/samples/nat.bess`](https://github.com/NetSys/bess/blob/master/bessctl/conf/samples/nat.bess)
  *
  * __Input Gates__: 2
  * __Output Gates__: 2
  */
 message NATArg {
-  message Rule {
-    string internal_addr_block = 1; /// Internal IP block in CIDR.
-    string external_addr_block = 2; /// External IP block in CIDR.
-  }
-  repeated Rule rules = 1; /// A list of rules for rewriting
+  repeated string ext_addrs = 1; /// list of external IP addresses
 }
 
 /**
@@ -597,8 +643,7 @@ message NoOpArg {
  */
 message PortIncArg {
   string port = 1; /// The portname to connect to.
-  int64 burst = 2; /// The number of packets per batch to release.
-  bool prefetch = 3; /// Whether or not to prefetch packets from the port.
+  bool prefetch = 2; /// Whether or not to prefetch packets from the port.
 }
 
 /**
@@ -625,8 +670,7 @@ message PortOutArg {
 message QueueIncArg {
   string port = 1; /// The portname to connect to (read from).
   uint64 qid = 2; /// The queue on that port to read from. qid starts from 0.
-  int64 burst = 3; /// The maximum number of packets to release in a batch.
-  bool prefetch = 4; ///When prefetch is enabled, the module will perform CPU prefetch on the first 64B of each packet onto CPU L1 cache. Default value is false. 
+  bool prefetch = 3; /// When prefetch is enabled, the module will perform CPU prefetch on the first 64B of each packet onto CPU L1 cache. Default value is false.
 }
 
 /**
@@ -651,8 +695,7 @@ message QueueOutArg {
  */
 message QueueArg {
   uint64 size = 1; /// The maximum number of packets to store in the queue.
-  int64 burst = 2; /// The maximum number of packets to release from the queue in one batch.
-  bool prefetch = 3; /// When prefetch is enabled, the module will perform CPU prefetch on the first 64B of each packet onto CPU L1 cache. Default value is false.
+  bool prefetch = 2; /// When prefetch is enabled, the module will perform CPU prefetch on the first 64B of each packet onto CPU L1 cache. Default value is false.
 }
 
 /**
@@ -699,7 +742,7 @@ message RewriteArg {
 }
 
 /**
- * The RoundRobin module has a function `setGates(...)` which changes
+ * The RoundRobin module has a function `set_gates(...)` which changes
  * the total number of output gates in the module.
  */
 message RoundRobinCommandSetGatesArg {
@@ -707,7 +750,7 @@ message RoundRobinCommandSetGatesArg {
 }
 
 /**
- * The RoundRobin module has a function `setMode(...)` which specifies whether
+ * The RoundRobin module has a function `set_mode(...)` which specifies whether
  * to balance traffic across gates per-packet or per-batch.
  */
 message RoundRobinCommandSetModeArg {
@@ -738,7 +781,7 @@ message ReplicateArg {
 }
 
 /**
- * The Replicate module has a function `setGates(...)` which changes
+ * The Replicate module has a function `set_gates(...)` which changes
  * the total number of output gates in the module.
  */
 message ReplicateCommandSetGatesArg {
@@ -779,7 +822,7 @@ message SinkArg {
 }
 
 /**
- * The Source module has a function `setBurst(...)` which
+ * The Source module has a function `set_burst(...)` which
  * specifies the maximum number of packets to release in a single packetbatch
  * from the module.
  *
@@ -791,7 +834,7 @@ message SourceCommandSetBurstArg {
 }
 
 /**
- * The Source module has a function `setPktSize(...)` which specifies the size
+ * The Source module has a function `set_pkt_size(...)` which specifies the size
  * of packets to be produced by the Source module.
  */
 message SourceCommandSetPktSizeArg {
@@ -803,7 +846,6 @@ message SourceCommandSetPktSizeArg {
  */
 message SourceArg {
   uint64 pkt_size = 1; /// The size (in bytes) of packet data to produce.
-  uint64 burst = 2; /// The number of packets to produce with every batch released.
 }
 
 /**
@@ -816,8 +858,10 @@ message SourceArg {
  */
 message SplitArg {
   uint64 size = 1; /// The size of the value to read in bytes
-  string name = 2; /// The name of the metadata field to read.
-  int64 offset = 3; /// The offset (in bytes) of the data field to read.
+  oneof type {
+    string attribute = 2; /// The name of the metadata field to read.
+    int64 offset = 3; /// The offset (in bytes) of the data field to read.
+  }
 }
 
 /**
@@ -926,15 +970,5 @@ message VXLANEncapArg {
  * __Output Gates__: many (configurable)
  */
 message WildcardMatchArg {
-  /**
-   * A field over which the WildcardMatch module should inspect.
-   */
-  message Field {
-    uint64 size = 1; /// The length in bytes of the field to inspect.
-    oneof length {
-      uint64 offset = 2; /// The field offset into the packet data, if the field lies in the packet itself.
-      string attribute = 3; /// The metadata attribute to inspect, if the field is a metadata attribute.
-    }
-  }
-  repeated Field fields = 1; /// A list of WildcardMatch fields.
+  repeated WildcardMatchField fields = 1; /// A list of WildcardMatch fields.
 }

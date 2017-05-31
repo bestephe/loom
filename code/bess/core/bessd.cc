@@ -368,11 +368,43 @@ static inline bool HasSuffix(const std::string &s, const std::string &suffix) {
          std::equal(suffix.rbegin(), suffix.rend(), s.rbegin());
 }
 
-bool LoadModule(const std::string &module_path) {
-  return (dlopen(module_path.c_str(), RTLD_NOW) != nullptr);
+// Store handles of loaded plugins
+// key: plugin path (std::string), value: handle (void *)
+static std::unordered_map<std::string, void *> plugin_handles;
+
+std::vector<std::string> ListPlugins() {
+  std::vector<std::string> list;
+  for (auto &kv : plugin_handles) {
+    list.push_back(kv.first);
+  }
+  return list;
 }
 
-bool LoadModules(const std::string &directory) {
+bool LoadPlugin(const std::string &path) {
+  void *handle = dlopen(path.c_str(), RTLD_NOW);
+  if (handle != nullptr) {
+    plugin_handles.emplace(path, handle);
+    return true;
+  }
+  return false;
+}
+
+bool UnloadPlugin(const std::string &path) {
+  auto it = plugin_handles.find(path);
+  if (it == plugin_handles.end()) {
+    VLOG(1) << "Plugin " << path << " not found.";
+    return false;
+  }
+  bool success = (dlclose(it->second) == 0);
+  if (success) {
+    plugin_handles.erase(it);
+  } else {
+    LOG(WARNING) << "Error unloading module " << path << ": " << dlerror();
+  }
+  return success;
+}
+
+bool LoadPlugins(const std::string &directory) {
   DIR *dir = opendir(directory.c_str());
   if (!dir) {
     return false;
@@ -382,8 +414,9 @@ bool LoadModules(const std::string &directory) {
     if (entry->d_type == DT_REG && HasSuffix(entry->d_name, ".so")) {
       const std::string full_path = directory + "/" + entry->d_name;
       LOG(INFO) << "Loading module: " << full_path;
-      if (!LoadModule(full_path)) {
-        LOG(WARNING) << "Cannot load module " << full_path;
+      if (!LoadPlugin(full_path)) {
+        LOG(WARNING) << "Error loading module " << full_path << ": "
+                     << dlerror();
         closedir(dir);
         return false;
       }

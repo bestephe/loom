@@ -10,6 +10,9 @@ service BESSControl {
   //  System
   //  -------------------------------------------------------------------------
 
+  /// Query version of bessd
+  rpc GetVersion (EmptyRequest) returns (VersionResponse) {}
+
   /// Reset the current packet processing datapath to the initial state.
   ///
   /// This command is identical to the following sequence:
@@ -37,8 +40,19 @@ service BESSControl {
   ///
   /// At the moment plugins can only contain module types,
   /// but might also support drivers/hooks/schedulers in the future.
-  /// FIXME: rename (e.g., ImportPlugin)
-  rpc ImportMclass (ImportMclassRequest) returns (EmptyResponse) {}
+  rpc ImportPlugin (ImportPluginRequest) returns (EmptyResponse) {}
+
+  /// Unload a plugin
+  ///
+  /// At the moment plugins can only contain module types,
+  /// but might also support drivers/hooks/schedulers in the future.
+  rpc UnloadPlugin (UnloadPluginRequest) returns (EmptyResponse) {}
+
+  /// List imported plugins
+  ///
+  /// At the moment plugins can only contain module types,
+  /// but might also support drivers/hooks/schedulers in the future.
+  rpc ListPlugins (EmptyRequest) returns (ListPluginsResponse) {}
 
 
   //  -------------------------------------------------------------------------
@@ -57,6 +71,22 @@ service BESSControl {
   ///  ResumeAll()
   /// Keep the duration as short as possible, to avoid packet drops.
   rpc PauseAll (EmptyRequest) returns (EmptyResponse) {}
+
+  /// Pause the specified worker temporarily
+  ///
+  /// Some RPC commands to BESS or individual modules/ports require that
+  /// threads must be inactive, to avoid race conditions.
+  /// For such commands, use PauseWorker at the beginning and ResumeWorker at the end.
+  ///  PauseWorker(0)
+  ///   SomeCommand1()
+  ///   SomeCommand2()
+  ///   ...
+  ///  ResumeWorker(0)
+  /// Keep the duration as short as possible, to avoid packet drops.
+  rpc PauseWorker (PauseWorkerRequest) returns (EmptyResponse) {}
+
+  /// Resume the specified worker
+  rpc ResumeWorker (ResumeWorkerRequest) returns (EmptyResponse) {}
 
   /// Resume all paused workers
   rpc ResumeAll (EmptyRequest) returns (EmptyResponse) {}
@@ -92,6 +122,9 @@ service BESSControl {
   /// Enumerate all existing workers
   rpc ListTcs (ListTcsRequest) returns (ListTcsResponse) {}
 
+  /// Check scheduling contraints
+  rpc CheckSchedulingConstraints (EmptyRequest) returns (CheckSchedulingConstraintsResponse) {}
+
   /// Create a new traffic class
   ///
   /// NOTE: There should be no running worker to run this command.
@@ -100,24 +133,15 @@ service BESSControl {
   /// Update parameters of an existing traffic class
   ///
   /// NOTE: There should be no running worker to run this command.
-  rpc UpdateTc (UpdateTcRequest) returns (EmptyResponse) {}
+  rpc UpdateTcParams (UpdateTcParamsRequest) returns (EmptyResponse) {}
+
+  /// Change parent (and child arguments) of an existing traffic class
+  ///
+  /// NOTE: There should be no running worker to run this command.
+  rpc UpdateTcParent (UpdateTcParentRequest) returns (EmptyResponse) {}
 
   /// Collect statistics of a traffic class
   rpc GetTcStats (GetTcStatsRequest) returns (GetTcStatsResponse) {}
-
-  /// Attach a task to the specified traffic class (TC)
-  ///
-  /// Some modules (PortInc/QueueInc/Source/Queue/etc) create schedulable tasks.
-  /// By attaching tasks to a traffic class, their resource usage (e.g., link
-  /// bandwidth or CPU cycles) can be measured and policed.
-  /// If wid is given instead of tc, the task will be attached to a default TC
-  /// running on the specified worker
-  /// If there are tasks that are not attached to any TC when BESS resumes,
-  /// BESS will assign tasks across TCs on all existing workers in an
-  /// arbitrary manner.
-  ///
-  /// NOTE: There should be no running worker to run this command.
-  rpc AttachTask (AttachTaskRequest) returns (EmptyResponse) {}
 
 
   //  -------------------------------------------------------------------------
@@ -225,45 +249,12 @@ service BESSControl {
   ///
   /// NOTE: Some commands cannot be used if there are running workers.
   ///       For those commands you must pause all workers first.
-  rpc ModuleCommand (ModuleCommandRequest) returns (ModuleCommandResponse) {}
-
+  rpc ModuleCommand (CommandRequest) returns (CommandResponse) {}
 
   //  -------------------------------------------------------------------------
-  //  Module hook
+  //  Gate hooks
   //  -------------------------------------------------------------------------
 
-  /// Enable "track" hook on a gate (or all gates)
-  ///
-  /// "track" hook accumulates the number of total packets & batches passing
-  /// through a gate. This incurs some amount of CPU overheads. While the cost
-  /// is very small, remember that the delay adds up at every gate.
-  ///
-  /// NOTE: There should be no running worker to run this command.
-  rpc EnableTrack (EnableTrackRequest) returns (EmptyResponse) {}
-
-  /// Disable "track" hook on a gate (or all gates)
-  ///
-  /// You may want to disable the hook to squeeze out CPU cycles
-  /// as much as you can.
-  ///
-  /// NOTE: There should be no running worker to run this command.
-  rpc DisableTrack (DisableTrackRequest) returns (EmptyResponse) {}
-
-  /// Enable tcpdump tapping at an input/output gate.
-  ///
-  /// Once the tap is installed, all packets going through the gate will be
-  /// captured and sent in PCAP format to the specified named pipe (FIFO).
-  /// Thus you can run `tcpdump -r <path to FIFO>` or save the stream in a file.
-  /// This feature may afffect performance.
-  ///
-  /// NOTE: There should be no running worker to run this command.
-  rpc EnableTcpdump (EnableTcpdumpRequest) returns (EmptyResponse) {}
-
-  /// Disable tcpdump tapping at an input/output gate.
-  ///
-  /// Stop mirroring packets and Close the FIFO. Also see EnableTcpdumpRequest.
-  /// Once disabled the performance overhead will be gone.
-  ///
-  /// NOTE: There should be no running worker to run this command.
-  rpc DisableTcpdump (DisableTcpdumpRequest) returns (EmptyResponse) {}
+  /// Enable/Disable a gate hook.
+  rpc ConfigureGateHook (ConfigureGateHookRequest) returns (CommandResponse) {}
 }

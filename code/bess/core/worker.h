@@ -13,17 +13,13 @@
 #include "traffic_class.h"
 #include "utils/common.h"
 
-#define MAX_WORKERS 4
-
-#define MAX_MODULES_PER_PATH 256
-
 // XXX
 typedef uint16_t gate_idx_t;
 #define MAX_GATES 8192
 
 /*  TODO: worker threads doesn't necessarily be pinned to 1 core
  *
- *  n: MAX_WORKERS
+ *  n: kMaxWorkers
  *
  *  Role              DPDK lcore ID      Hardware core(s)
  *  --------------------------------------------------------
@@ -42,14 +38,15 @@ typedef enum {
 } worker_status_t;
 
 namespace bess {
+template <typename CallableTask>
 class Scheduler;
 }  // namespace bess
 
+class Task;
+
 class Worker {
  public:
-  static const bess::TrafficPolicy kDefaultRootPolicy;
-  static const char *kRootClassNamePrefix;
-  static const char *kDefaultLeafClassNamePrefix;
+  static const int kMaxWorkers = 64;
 
   /* ----------------------------------------------------------------------
    * functions below are invoked by non-worker threads (the master)
@@ -79,7 +76,7 @@ class Worker {
     return pframe_pool_;
   }
 
-  bess::Scheduler *scheduler() { return scheduler_; }
+  bess::Scheduler<Task> *scheduler() { return scheduler_; }
 
   uint64_t silent_drops() { return silent_drops_; }
   void set_silent_drops(uint64_t drops) { silent_drops_ = drops; }
@@ -100,14 +97,14 @@ class Worker {
  private:
   volatile worker_status_t status_;
 
-  int wid_;  /* always [0, MAX_WORKERS - 1] */
-  int core_; /* TODO: should be cpuset_t */
+  int wid_;   // always [0, kMaxWorkers - 1]
+  int core_;  // TODO: should be cpuset_t
   int socket_;
   int fd_event_;
 
   struct rte_mempool *pframe_pool_;
 
-  bess::Scheduler *scheduler_;
+  bess::Scheduler<Task> *scheduler_;
 
   uint64_t silent_drops_; /* packets that have been sent to a deadend */
 
@@ -135,21 +132,30 @@ static_assert(std::is_trivially_destructible<Worker>::value,
               "not trivially destructible");
 #endif
 
+// TODO: C++-ify
+
 extern int num_workers;
-extern std::thread worker_threads[MAX_WORKERS];
-extern Worker *volatile workers[MAX_WORKERS];
+extern std::thread worker_threads[Worker::kMaxWorkers];
+extern Worker *volatile workers[Worker::kMaxWorkers];
 
 /* ------------------------------------------------------------------------
  * functions below are invoked by non-worker threads (the master)
  * ------------------------------------------------------------------------ */
 int is_worker_core(int cpu);
 
+void pause_worker(int wid);
 void pause_all_workers();
+
+/*!
+ * Attach orphan TCs to workers. Note this does not ensure optimal placement.
+ */
+void attach_orphans();
+void resume_worker(int wid);
 void resume_all_workers();
 void destroy_worker(int wid);
 void destroy_all_workers();
 
-int is_any_worker_running();
+bool is_any_worker_running();
 
 int is_cpu_present(unsigned int core_id);
 
@@ -157,13 +163,36 @@ static inline int is_worker_active(int wid) {
   return workers[wid] != nullptr;
 }
 
-static inline int is_worker_running(int wid) {
+inline bool is_worker_running(int wid) {
   return workers[wid] && workers[wid]->status() == WORKER_RUNNING;
 }
 
-/* arg (int) is the core id the worker should run on */
-void launch_worker(int wid, int core);
+// arg (int) is the core id the worker should run on, and optionally the
+// scheduler to use.
+void launch_worker(int wid, int core, const std::string &scheduler = "");
 
 Worker *get_next_active_worker();
+
+// Add 'c' to the list of orphan traffic classes.
+void add_tc_to_orphan(bess::TrafficClass *c, int wid);
+
+// Return true if 'c' was removed from the list of orphan traffic classes.
+// 'c' is now owned by the caller, and it must be attached to a tree or
+// destroyed.
+//
+// Otherwise, return false
+bool remove_tc_from_orphan(bess::TrafficClass *c);
+
+// Returns a list of all the orphan traffic classes.
+const std::list<std::pair<int, bess::TrafficClass *>> &list_orphan_tcs();
+
+// Try to detach 'c' from a scheduler, or from the list of orhpan traffic
+// classes.
+//
+// Return true if successful. 'c' is now owned by the caller, and it must be
+// attached to a tree or destroyed.
+//
+// Otherwise, return false
+bool detach_tc(bess::TrafficClass *c);
 
 #endif  // BESS_WORKER_H_

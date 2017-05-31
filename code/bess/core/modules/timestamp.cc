@@ -1,18 +1,13 @@
 #include "timestamp.h"
 
-#include <rte_config.h>
-#include <rte_ether.h>
-#include <rte_ip.h>
-#include <rte_udp.h>
-
 #include "../utils/ether.h"
 #include "../utils/ip.h"
 #include "../utils/time.h"
 #include "../utils/udp.h"
 
-using bess::utils::EthHeader;
-using bess::utils::Ipv4Header;
-using bess::utils::UdpHeader;
+using bess::utils::Ethernet;
+using bess::utils::Ipv4;
+using bess::utils::Udp;
 
 static inline void timestamp_packet(bess::Packet *pkt, size_t offset,
                                     uint64_t time) {
@@ -36,14 +31,13 @@ static inline void timestamp_packet(bess::Packet *pkt, size_t offset,
   *ts = time;
 }
 
-pb_error_t Timestamp::Init(const bess::pb::TimestampArg &arg) {
+CommandResponse Timestamp::Init(const bess::pb::TimestampArg &arg) {
   if (arg.offset()) {
     offset_ = arg.offset();
   } else {
-    offset_ = sizeof(struct EthHeader) + sizeof(struct Ipv4Header) +
-              sizeof(struct UdpHeader);
+    offset_ = sizeof(Ethernet) + sizeof(Ipv4) + sizeof(Udp);
   }
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 void Timestamp::ProcessBatch(bess::PacketBatch *batch) {

@@ -107,18 +107,19 @@ class WildcardMatch final : public Module {
   WildcardMatch()
       : Module(), default_gate_(), total_key_size_(), fields_(), tuples_() {}
 
-  pb_error_t Init(const bess::pb::WildcardMatchArg &arg);
+  CommandResponse Init(const bess::pb::WildcardMatchArg &arg);
 
   void ProcessBatch(bess::PacketBatch *batch) override;
 
   std::string GetDesc() const override;
 
-  pb_cmd_response_t CommandAdd(const bess::pb::WildcardMatchCommandAddArg &arg);
-  pb_cmd_response_t CommandDelete(
+  CommandResponse CommandAdd(const bess::pb::WildcardMatchCommandAddArg &arg);
+  CommandResponse CommandDelete(
       const bess::pb::WildcardMatchCommandDeleteArg &arg);
-  pb_cmd_response_t CommandClear(const bess::pb::EmptyArg &arg);
-  pb_cmd_response_t CommandSetDefaultGate(
+  CommandResponse CommandClear(const bess::pb::EmptyArg &arg);
+  CommandResponse CommandSetDefaultGate(
       const bess::pb::WildcardMatchCommandSetDefaultGateArg &arg);
+  CommandResponse CommandGetRules(const bess::pb::EmptyArg &);
 
  private:
   struct WmTuple {
@@ -128,11 +129,11 @@ class WildcardMatch final : public Module {
 
   gate_idx_t LookupEntry(const wm_hkey_t &key, gate_idx_t def_gate);
 
-  pb_error_t AddFieldOne(const bess::pb::WildcardMatchArg_Field &field,
-                         struct WmField *f);
+  CommandResponse AddFieldOne(const bess::pb::WildcardMatchField &field,
+                              struct WmField *f);
 
   template <typename T>
-  pb_error_t ExtractKeyMask(const T &arg, wm_hkey_t *key, wm_hkey_t *mask);
+  CommandResponse ExtractKeyMask(const T &arg, wm_hkey_t *key, wm_hkey_t *mask);
 
   int FindTuple(wm_hkey_t *mask);
   int AddTuple(wm_hkey_t *mask);

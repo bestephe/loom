@@ -33,10 +33,6 @@
 
 #define ROUND_TO_64(x) ((x + 32) & (~0x3f))
 
-/* We cannot directly use phys_addr_t on 32bit machines,
- * since it may be sizeof(phys_addr_t) != sizeof(void *) */
-typedef uintptr_t paddr_t;
-
 static inline int find_next_nonworker_cpu(int cpu) {
   do {
     cpu = (cpu + 1) % sysconf(_SC_NPROCESSORS_ONLN);
@@ -46,7 +42,7 @@ static inline int find_next_nonworker_cpu(int cpu) {
 
 static void refill_tx_bufs(struct llring *r) {
   bess::Packet *pkts[REFILL_HIGH];
-  void *objs[REFILL_HIGH];
+  phys_addr_t objs[REFILL_HIGH];
 
   int deficit;
   int ret;
@@ -63,7 +59,7 @@ static void refill_tx_bufs(struct llring *r) {
     return;
 
   for (int i = 0; i < ret; i++)
-    objs[i] = (void *)(uintptr_t)pkts[i]->paddr();
+    objs[i] = pkts[i]->paddr();
 
   ret = llring_mp_enqueue_bulk(r, objs, ret);
   DCHECK_EQ(ret, 0);
@@ -72,53 +68,56 @@ static void refill_tx_bufs(struct llring *r) {
 static void drain_sn_to_drv_q(struct llring *q) {
   /* sn_to_drv queues contain physical address of packet buffers */
   for (;;) {
-    paddr_t paddr;
+    phys_addr_t paddr;
     bess::Packet *snb;
     int ret;
 
-    ret = llring_mc_dequeue(q, (void **)&paddr);
+    ret = llring_mc_dequeue(q, &paddr);
     if (ret)
       break;
 
     snb = bess::Packet::from_paddr(paddr);
     if (!snb) {
-      LOG(ERROR) << "paddr_to_snb(" << paddr << ") failed";
+      LOG(ERROR) << "from_paddr(" << paddr << ") failed";
       continue;
     }
 
-    bess::Packet::Free(bess::Packet::from_paddr(paddr));
+    bess::Packet::Free(snb);
   }
 }
 
 static void drain_drv_to_sn_q(struct llring *q) {
   /* sn_to_drv queues contain virtual address of packet buffers */
   for (;;) {
-    bess::Packet *snb;
+    phys_addr_t paddr;
     int ret;
 
-    ret = llring_mc_dequeue(q, (void **)&snb);
+    ret = llring_mc_dequeue(q, &paddr);
     if (ret)
       break;
 
-    bess::Packet::Free(snb);
+    bess::Packet::Free(bess::Packet::from_paddr(paddr));
   }
 }
 
 static void reclaim_packets(struct llring *ring) {
-  void *objs[bess::PacketBatch::kMaxBurst];
+  phys_addr_t objs[bess::PacketBatch::kMaxBurst];
+  bess::Packet *pkts[bess::PacketBatch::kMaxBurst];
   int ret;
 
   for (;;) {
     ret = llring_mc_dequeue_burst(ring, objs, bess::PacketBatch::kMaxBurst);
     if (ret == 0)
       break;
-
-    bess::Packet::Free((bess::Packet **)objs, ret);
+    for (int i = 0; i < ret; i++) {
+      pkts[i] = bess::Packet::from_paddr(objs[i]);
+    }
+    bess::Packet::Free(pkts, ret);
   }
 }
 
-static pb_error_t docker_container_pid(const std::string &cid,
-                                       int *container_pid) {
+static CommandResponse docker_container_pid(const std::string &cid,
+                                            int *container_pid) {
   char buf[1024];
 
   FILE *fp;
@@ -127,35 +126,31 @@ static pb_error_t docker_container_pid(const std::string &cid,
   int exit_code;
 
   if (cid.length() == 0)
-    return pb_error(EINVAL,
-                    "field 'docker' should be "
-                    "a containder ID or name in string");
+    return CommandFailure(EINVAL,
+                          "field 'docker' should be "
+                          "a containder ID or name in string");
 
   ret = snprintf(buf, static_cast<int>(sizeof(buf)),
                  "docker inspect --format '{{.State.Pid}}' "
                  "%s 2>&1",
                  cid.c_str());
   if (ret >= static_cast<int>(sizeof(buf)))
-    return pb_error(EINVAL,
-                    "The specified Docker "
-                    "container ID or name is too long");
+    return CommandFailure(EINVAL,
+                          "The specified Docker "
+                          "container ID or name is too long");
 
   fp = popen(buf, "r");
   if (!fp) {
-    const std::string details =
-        bess::utils::Format("popen() errno=%d (%s)", errno, strerror(errno));
-
-    return pb_error_details(
-        ESRCH, details.c_str(),
-        "Command 'docker' is not available. (not installed?)");
+    return CommandFailure(
+        ESRCH, "Command 'docker' is not available. (not installed?)");
   }
 
   ret = fread(buf, 1, sizeof(buf) - 1, fp);
   if (ret == 0)
-    return pb_error(ENOENT,
-                    "Cannot find the PID of "
-                    "container %s",
-                    cid.c_str());
+    return CommandFailure(ENOENT,
+                          "Cannot find the PID of "
+                          "container %s",
+                          cid.c_str());
 
   buf[ret] = '\0';
 
@@ -163,15 +158,11 @@ static pb_error_t docker_container_pid(const std::string &cid,
   exit_code = WEXITSTATUS(ret);
 
   if (exit_code != 0 || sscanf(buf, "%d", container_pid) == 0) {
-    // TODO(clan): Need to fully replicate the map in details
-    // snobj_map_set(details, "exit_code", snobj_int(exit_code));
-    // snobj_map_set(details, "docker_err", snobj_str(buf));
-
-    return pb_error_details(ESRCH, buf, "Cannot find the PID of container %s",
-                            cid.c_str());
+    return CommandFailure(ESRCH, "Cannot find the PID of container %s",
+                          cid.c_str());
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 static int next_cpu;
@@ -223,9 +214,9 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   conf->netns_fd = netns_fd_;
   conf->container_pid = container_pid_;
 
-  strcpy(conf->ifname, ifname_);
+  strncpy(conf->ifname, ifname_, IFNAMSIZ);
 
-  memcpy(conf->mac_addr, mac_addr, ETH_ALEN);
+  bess::utils::Copy(conf->mac_addr, mac_addr, ETH_ALEN);
 
   conf->num_txq = num_queues[PACKET_DIR_INC];
   conf->num_rxq = num_queues[PACKET_DIR_OUT];
@@ -299,7 +290,7 @@ void VPort::InitDriver() {
     exec_path[ret] = '\0';
     exec_dir = dirname(exec_path);
 
-    sprintf(cmd, "insmod %s/kmod/bess.ko", exec_dir);
+    snprintf(cmd, sizeof(cmd), "insmod %s/kmod/bess.ko", exec_dir);
     ret = system(cmd);
     if (WEXITSTATUS(ret) != 0) {
       LOG(WARNING) << "Cannot load kernel module " << exec_dir
@@ -333,7 +324,7 @@ int VPort::SetIPAddrSingle(const std::string &ip_addr) {
   return 0;
 }
 
-pb_error_t VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
+CommandResponse VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
   int child_pid = 0;
 
   int ret = 0;
@@ -345,7 +336,7 @@ pb_error_t VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
 
     child_pid = fork();
     if (child_pid < 0) {
-      return pb_errno(-child_pid);
+      return CommandFailure(-child_pid);
     }
 
     if (child_pid == 0) {
@@ -353,7 +344,7 @@ pb_error_t VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
       int fd;
 
       if (container_pid_) {
-        sprintf(buf, "/proc/%d/ns/net", container_pid_);
+        snprintf(buf, sizeof(buf), "/proc/%d/ns/net", container_pid_);
         fd = open(buf, O_RDONLY);
         if (fd < 0) {
           PLOG(ERROR) << "open(/proc/pid/ns/net)";
@@ -411,12 +402,12 @@ pb_error_t VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
   }
 
   if (ret < 0) {
-    return pb_error(-ret,
-                    "Failed to set IP addresses "
-                    "(incorrect IP address format?)");
+    return CommandFailure(-ret,
+                          "Failed to set IP addresses "
+                          "(incorrect IP address format?)");
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 void VPort::DeInit() {
@@ -430,9 +421,10 @@ void VPort::DeInit() {
   FreeBar();
 }
 
-pb_error_t VPort::Init(const bess::pb::VPortArg &arg) {
-  pb_error_t err;
+CommandResponse VPort::Init(const bess::pb::VPortArg &arg) {
+  CommandResponse err;
   int ret;
+  phys_addr_t phy_addr;
 
   struct tx_queue_opts txq_opts = tx_queue_opts();
   struct rx_queue_opts rxq_opts = rx_queue_opts();
@@ -442,43 +434,43 @@ pb_error_t VPort::Init(const bess::pb::VPortArg &arg) {
   container_pid_ = 0;
 
   if (arg.ifname().length() >= IFNAMSIZ) {
-    err = pb_error(EINVAL,
-                   "Linux interface name should be "
-                   "shorter than %d characters",
-                   IFNAMSIZ);
+    err = CommandFailure(EINVAL,
+                         "Linux interface name should be "
+                         "shorter than %d characters",
+                         IFNAMSIZ);
     goto fail;
   }
 
   if (arg.ifname().length()) {
-    strcpy(ifname_, arg.ifname().c_str());
+    strncpy(ifname_, arg.ifname().c_str(), IFNAMSIZ);
   } else {
-    strcpy(ifname_, name().c_str());
+    strncpy(ifname_, name().c_str(), IFNAMSIZ);
   }
 
   if (arg.cpid_case() == bess::pb::VPortArg::kDocker) {
     err = docker_container_pid(arg.docker(), &container_pid_);
-    if (err.err() != 0)
+    if (err.error().code() != 0)
       goto fail;
   } else if (arg.cpid_case() == bess::pb::VPortArg::kContainerPid) {
     container_pid_ = arg.container_pid();
   } else if (arg.cpid_case() == bess::pb::VPortArg::kNetns) {
     netns_fd_ = open(arg.netns().c_str(), O_RDONLY);
     if (netns_fd_ < 0) {
-      err =
-          pb_error(EINVAL, "Invalid network namespace %s", arg.netns().c_str());
+      err = CommandFailure(EINVAL, "Invalid network namespace %s",
+                           arg.netns().c_str());
       goto fail;
     }
   }
 
   if (arg.rxq_cpus_size() > 0 &&
       arg.rxq_cpus_size() != num_queues[PACKET_DIR_OUT]) {
-    err = pb_error(EINVAL, "Must specify as many cores as rxqs");
+    err = CommandFailure(EINVAL, "Must specify as many cores as rxqs");
     goto fail;
   }
 
   fd_ = open("/dev/bess", O_RDONLY);
   if (fd_ == -1) {
-    err = pb_error(ENODEV, "the kernel module is not loaded");
+    err = CommandFailure(ENODEV, "the kernel module is not loaded");
     goto fail;
   }
 
@@ -487,19 +479,20 @@ pb_error_t VPort::Init(const bess::pb::VPortArg &arg) {
   rxq_opts.loopback = arg.loopback();
 
   bar_ = AllocBar(&txq_opts, &rxq_opts);
+  phy_addr = rte_malloc_virt2phy(bar_);
 
-  VLOG(1) << "virt: " << bar_ << ", phys: " << rte_malloc_virt2phy(bar_);
+  VLOG(1) << "virt: " << bar_ << ", phys: " << phy_addr;
 
-  ret = ioctl(fd_, SN_IOC_CREATE_HOSTNIC, rte_malloc_virt2phy(bar_));
+  ret = ioctl(fd_, SN_IOC_CREATE_HOSTNIC, &phy_addr);
   if (ret < 0) {
-    err = pb_errno_details(-ret, "SN_IOC_CREATE_HOSTNIC failure");
+    err = CommandFailure(-ret, "SN_IOC_CREATE_HOSTNIC failure");
     goto fail;
   }
 
   if (arg.ip_addrs_size() > 0) {
     err = SetIPAddr(arg);
 
-    if (err.err() != 0) {
+    if (err.error().code() != 0) {
       DeInit();
       goto fail;
     }
@@ -530,7 +523,7 @@ pb_error_t VPort::Init(const bess::pb::VPortArg &arg) {
     PLOG(ERROR) << "ioctl(SN_IOC_SET_QUEUE_MAPPING)";
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 
 fail:
   if (fd_ >= 0)
@@ -544,18 +537,23 @@ fail:
 
 int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   struct queue *tx_queue = &inc_qs_[qid];
-
+  phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
   int cnt;
   int i;
 
-  cnt = llring_sc_dequeue_burst(tx_queue->drv_to_sn, (void **)pkts, max_cnt);
+  if (static_cast<size_t>(max_cnt) > bess::PacketBatch::kMaxBurst) {
+    max_cnt = bess::PacketBatch::kMaxBurst;
+  }
+  cnt = llring_sc_dequeue_burst(tx_queue->drv_to_sn, paddr, max_cnt);
 
   refill_tx_bufs(tx_queue->sn_to_drv);
 
   for (i = 0; i < cnt; i++) {
-    bess::Packet *pkt = pkts[i];
+    bess::Packet *pkt;
     struct sn_tx_desc *tx_desc;
     uint16_t len;
+
+    pkt = pkts[i] = bess::Packet::from_paddr(paddr[i]);
 
     tx_desc = pkt->scratchpad<struct sn_tx_desc *>();
     len = tx_desc->total_len;
@@ -573,9 +571,11 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
 int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   struct queue *rx_queue = &out_qs_[qid];
 
-  paddr_t paddr[bess::PacketBatch::kMaxBurst];
+  phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
 
   int ret;
+
+  assert(static_cast<size_t>(cnt) <= bess::PacketBatch::kMaxBurst);
 
   reclaim_packets(rx_queue->drv_to_sn);
 
@@ -624,7 +624,7 @@ int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
     }
   }
 
-  ret = llring_mp_enqueue_bulk(rx_queue->sn_to_drv, (void **)paddr, cnt);
+  ret = llring_mp_enqueue_bulk(rx_queue->sn_to_drv, paddr, cnt);
 
   if (ret == -LLRING_ERR_NOBUF)
     return 0;

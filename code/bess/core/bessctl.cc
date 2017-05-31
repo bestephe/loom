@@ -1,15 +1,12 @@
 #include "bessctl.h"
 
-#include <future>
-#include <map>
-#include <string>
 #include <thread>
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <grpc++/server.h>
 #include <grpc++/server_builder.h>
 #include <grpc++/server_context.h>
-#include <grpc/grpc.h>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -18,6 +15,7 @@
 
 #include "bessd.h"
 #include "gate.h"
+#include "hooks/tcpdump.h"
 #include "hooks/track.h"
 #include "message.h"
 #include "metadata.h"
@@ -31,31 +29,18 @@
 #include "utils/time.h"
 #include "worker.h"
 
-using grpc::Server;
-using grpc::ServerBuilder;
-using grpc::ServerContext;
-using grpc::ServerReader;
-using grpc::ServerReaderWriter;
-using grpc::ServerWriter;
 using grpc::Status;
 using grpc::ServerContext;
-using grpc::ServerBuilder;
 
-using bess::priority_t;
-using bess::resource_t;
-using bess::resource_share_t;
-using bess::PriorityTrafficClass;
 using bess::TrafficClassBuilder;
 using namespace bess::pb;
-
-static std::promise<void> exit_requested;
 
 template <typename T>
 static inline Status return_with_error(T* response, int code, const char* fmt,
                                        ...) {
   va_list ap;
   va_start(ap, fmt);
-  response->mutable_error()->set_err(code);
+  response->mutable_error()->set_code(code);
   response->mutable_error()->set_errmsg(bess::utils::FormatVarg(fmt, ap));
   va_end(ap);
   return Status::OK;
@@ -63,80 +48,133 @@ static inline Status return_with_error(T* response, int code, const char* fmt,
 
 template <typename T>
 static inline Status return_with_errno(T* response, int code) {
-  response->mutable_error()->set_err(code);
+  response->mutable_error()->set_code(code);
   response->mutable_error()->set_errmsg(strerror(code));
   return Status::OK;
 }
 
-static pb_error_t enable_track_for_module(const Module* m, gate_idx_t gate_idx,
-                                          bool is_igate, bool use_gate) {
+static CommandResponse enable_hook_for_module(
+    const Module* m, gate_idx_t gate_idx, bool is_igate, bool use_gate,
+    const bess::GateHookFactory& factory, const google::protobuf::Any& arg) {
   int ret;
 
   if (use_gate) {
-    if (!is_igate && gate_idx >= m->ogates().size()) {
-      return pb_error(EINVAL, "Output gate '%hu' does not exist", gate_idx);
+    bess::Gate* gate = nullptr;
+    if (is_igate) {
+      if (!is_active_gate(m->igates(), gate_idx)) {
+        return CommandFailure(EINVAL, "Input gate '%hu' does not exist",
+                              gate_idx);
+      }
+      gate = m->igates()[gate_idx];
+      bess::GateHook* hook = factory.CreateGateHook();
+      CommandResponse init_ret = factory.InitGateHook(hook, gate, arg);
+      if (init_ret.error().code() != 0) {
+        delete hook;
+        return init_ret;
+      }
+      if ((ret = gate->AddHook(hook))) {
+        return CommandFailure(ret, "Failed to track input gate '%hu'",
+                              gate_idx);
+      }
+    } else {
+      if (!is_active_gate(m->ogates(), gate_idx)) {
+        return CommandFailure(EINVAL, "Output gate '%hu' does not exist",
+                              gate_idx);
+      }
+      gate = m->ogates()[gate_idx];
+      bess::GateHook* hook = factory.CreateGateHook();
+      CommandResponse init_ret = factory.InitGateHook(hook, gate, arg);
+      if (init_ret.error().code() != 0) {
+        delete hook;
+        return init_ret;
+      }
+      if ((ret = gate->AddHook(hook))) {
+        delete hook;
+        return CommandFailure(ret, "Failed to track output gate '%hu'",
+                              gate_idx);
+      }
     }
-
-    if (is_igate && gate_idx >= m->igates().size()) {
-      return pb_error(EINVAL, "Input gate '%hu' does not exist", gate_idx);
-    }
-
-    if (is_igate && (ret = m->igates()[gate_idx]->AddHook(new TrackGate()))) {
-      return pb_error(ret, "Failed to track input gate '%hu'", gate_idx);
-    }
-
-    if ((ret = m->ogates()[gate_idx]->AddHook(new TrackGate()))) {
-      return pb_error(ret, "Failed to track output gate '%hu'", gate_idx);
-    }
+    return CommandSuccess();
   }
 
   if (is_igate) {
     for (auto& gate : m->igates()) {
-      if ((ret = gate->AddHook(new TrackGate()))) {
-        return pb_error(ret, "Failed to track input gate '%hu'",
-                        gate->gate_idx());
+      if (!gate) {
+        continue;
+      }
+      bess::GateHook* hook = factory.CreateGateHook();
+      CommandResponse init_ret = factory.InitGateHook(hook, gate, arg);
+      if (init_ret.error().code() != 0) {
+        delete hook;
+        return init_ret;
+      }
+      if ((ret = gate->AddHook(hook))) {
+        delete hook;
+        return CommandFailure(ret, "Failed to track input gate '%hu'",
+                              gate->gate_idx());
       }
     }
   } else {
     for (auto& gate : m->ogates()) {
-      if ((ret = gate->AddHook(new TrackGate()))) {
-        return pb_error(ret, "Failed to track output gate '%hu'",
-                        gate->gate_idx());
+      if (!gate) {
+        continue;
+      }
+      bess::GateHook* hook = factory.CreateGateHook();
+      CommandResponse init_ret = factory.InitGateHook(hook, gate, arg);
+      if (init_ret.error().code() != 0) {
+        delete hook;
+        return init_ret;
+      }
+      if ((ret = gate->AddHook(hook))) {
+        delete hook;
+        return CommandFailure(ret, "Failed to track output gate '%hu'",
+                              gate->gate_idx());
       }
     }
   }
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
-static pb_error_t disable_track_for_module(const Module* m, gate_idx_t gate_idx,
-                                           bool is_igate, bool use_gate) {
+static CommandResponse disable_hook_for_module(const Module* m,
+                                               gate_idx_t gate_idx,
+                                               bool is_igate, bool use_gate,
+                                               const std::string& hook) {
   if (use_gate) {
-    if (!is_igate && gate_idx >= m->ogates().size()) {
-      return pb_error(EINVAL, "Output gate '%hu' does not exist", gate_idx);
+    if (!is_igate && !is_active_gate(m->ogates(), gate_idx)) {
+      return CommandFailure(EINVAL, "Output gate '%hu' does not exist",
+                            gate_idx);
     }
 
-    if (is_igate && gate_idx >= m->igates().size()) {
-      return pb_error(EINVAL, "Input gate '%hu' does not exist", gate_idx);
+    if (is_igate && !is_active_gate(m->igates(), gate_idx)) {
+      return CommandFailure(EINVAL, "Input gate '%hu' does not exist",
+                            gate_idx);
     }
 
     if (is_igate) {
-      m->igates()[gate_idx]->RemoveHook(kGateHookTrackGate);
-      return pb_errno(0);
+      m->igates()[gate_idx]->RemoveHook(hook);
+      return CommandSuccess();
     }
-    m->ogates()[gate_idx]->RemoveHook(kGateHookTrackGate);
-    return pb_errno(0);
+
+    m->ogates()[gate_idx]->RemoveHook(hook);
+    return CommandSuccess();
   }
 
   if (is_igate) {
     for (auto& gate : m->igates()) {
-      gate->RemoveHook(kGateHookTrackGate);
+      if (!gate) {
+        continue;
+      }
+      gate->RemoveHook(hook);
     }
   } else {
     for (auto& gate : m->ogates()) {
-      gate->RemoveHook(kGateHookTrackGate);
+      if (!gate) {
+        continue;
+      }
+      gate->RemoveHook(hook);
     }
   }
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 static int collect_igates(Module* m, GetModuleInfoResponse* response) {
@@ -147,12 +185,12 @@ static int collect_igates(Module* m, GetModuleInfoResponse* response) {
 
     GetModuleInfoResponse_IGate* igate = response->add_igates();
 
-    TrackGate* t =
-        reinterpret_cast<TrackGate*>(g->FindHook(kGateHookTrackGate));
+    Track* t = reinterpret_cast<Track*>(g->FindHook(Track::kName));
 
     if (t) {
       igate->set_cnt(t->cnt());
       igate->set_pkts(t->pkts());
+      igate->set_bytes(t->bytes());
       igate->set_timestamp(get_epoch_time());
     }
 
@@ -176,11 +214,11 @@ static int collect_ogates(Module* m, GetModuleInfoResponse* response) {
     GetModuleInfoResponse_OGate* ogate = response->add_ogates();
 
     ogate->set_ogate(g->gate_idx());
-    TrackGate* t =
-        reinterpret_cast<TrackGate*>(g->FindHook(kGateHookTrackGate));
+    Track* t = reinterpret_cast<Track*>(g->FindHook(Track::kName));
     if (t) {
       ogate->set_cnt(t->cnt());
       ogate->set_pkts(t->pkts());
+      ogate->set_bytes(t->bytes());
       ogate->set_timestamp(get_epoch_time());
     }
     ogate->set_name(g->igate()->module()->name());
@@ -234,11 +272,11 @@ static ::Port* create_port(const std::string& name, const PortBuilder& driver,
     num_out_q = 1;
   }
 
-  bess::utils::EthHeader::Address mac_addr;
+  bess::utils::Ethernet::Address mac_addr;
 
   if (mac_addr_str.length() > 0) {
     if (!mac_addr.FromString(mac_addr_str)) {
-      perr->set_err(EINVAL);
+      perr->set_code(EINVAL);
       perr->set_errmsg(
           "MAC address should be "
           "formatted as a string "
@@ -250,13 +288,13 @@ static ::Port* create_port(const std::string& name, const PortBuilder& driver,
   }
 
   if (num_inc_q > MAX_QUEUES_PER_DIR || num_out_q > MAX_QUEUES_PER_DIR) {
-    perr->set_err(EINVAL);
+    perr->set_code(EINVAL);
     perr->set_errmsg("Invalid number of queues");
     return nullptr;
   }
 
   if (size_inc_q > MAX_QUEUE_SIZE || size_out_q > MAX_QUEUE_SIZE) {
-    perr->set_err(EINVAL);
+    perr->set_code(EINVAL);
     perr->set_errmsg("Invalid queue size");
     return nullptr;
   }
@@ -265,7 +303,7 @@ static ::Port* create_port(const std::string& name, const PortBuilder& driver,
 
   if (name.length() > 0) {
     if (PortBuilder::all_ports().count(name)) {
-      perr->set_err(EEXIST);
+      perr->set_code(EEXIST);
       perr->set_errmsg(
           bess::utils::Format("Port '%s' already exists", name.c_str()));
       return nullptr;
@@ -287,7 +325,7 @@ static ::Port* create_port(const std::string& name, const PortBuilder& driver,
     size_out_q = p->DefaultOutQueueSize();
   }
 
-  memcpy(p->mac_addr, mac_addr.bytes, ETH_ALEN);
+  bess::utils::Copy(p->mac_addr, mac_addr.bytes, ETH_ALEN);
   p->num_queues[PACKET_DIR_INC] = num_inc_q;
   p->num_queues[PACKET_DIR_OUT] = num_out_q;
   p->queue_size[PACKET_DIR_INC] = size_inc_q;
@@ -296,8 +334,20 @@ static ::Port* create_port(const std::string& name, const PortBuilder& driver,
   // DPDK functions may be called, so be prepared
   ctx.SetNonWorker();
 
-  *perr = p->InitWithGenericArg(arg);
-  if (perr->err() != 0) {
+  CommandResponse ret = p->InitWithGenericArg(arg);
+
+  {
+    google::protobuf::Any empty;
+
+    if (ret.data().SerializeAsString() != empty.SerializeAsString()) {
+      LOG(WARNING) << port_name << "::" << driver.class_name()
+                   << " Init() returned non-empty response: "
+                   << ret.data().DebugString();
+    }
+  }
+
+  if (ret.error().code() != 0) {
+    *perr = ret.error();
     return nullptr;
   }
 
@@ -316,10 +366,21 @@ static Module* create_module(const std::string& name,
 
   // DPDK functions may be called, so be prepared
   ctx.SetNonWorker();
-  *perr = m->InitWithGenericArg(arg);
-  if (perr->err() != 0) {
-    VLOG(1) << perr->DebugString();
-    ModuleBuilder::DestroyModule(m);
+
+  CommandResponse ret = m->InitWithGenericArg(arg);
+
+  {
+    google::protobuf::Any empty;
+
+    if (ret.data().SerializeAsString() != empty.SerializeAsString()) {
+      LOG(WARNING) << name << "::" << builder.class_name()
+                   << " Init() returned non-empty response: "
+                   << ret.data().DebugString();
+    }
+  }
+
+  if (ret.error().code() != 0) {
+    *perr = ret.error();
     return nullptr;
   }
 
@@ -330,8 +391,47 @@ static Module* create_module(const std::string& name,
   return m;
 }
 
+static void collect_tc(const bess::TrafficClass* c, int wid,
+                       ListTcsResponse_TrafficClassStatus* status) {
+  if (c->parent()) {
+    status->set_parent(c->parent()->name());
+  }
+
+  status->mutable_class_()->set_name(c->name());
+  status->mutable_class_()->set_blocked(c->blocked());
+
+  if (c->policy() >= 0 && c->policy() < bess::NUM_POLICIES) {
+    status->mutable_class_()->set_policy(bess::TrafficPolicyName[c->policy()]);
+  } else {
+    status->mutable_class_()->set_policy("invalid");
+  }
+
+  status->mutable_class_()->set_wid(wid);
+
+  if (c->policy() == bess::POLICY_RATE_LIMIT) {
+    const bess::RateLimitTrafficClass* rl =
+        reinterpret_cast<const bess::RateLimitTrafficClass*>(c);
+    std::string resource = bess::ResourceName.at(rl->resource());
+    int64_t limit = rl->limit_arg();
+    int64_t max_burst = rl->max_burst_arg();
+    status->mutable_class_()->mutable_limit()->insert({resource, limit});
+    status->mutable_class_()->mutable_max_burst()->insert(
+        {resource, max_burst});
+  }
+}
+
 class BESSControlImpl final : public BESSControl::Service {
  public:
+  void set_shutdown_func(const std::function<void()>& func) {
+    shutdown_func_ = func;
+  }
+
+  Status GetVersion(ServerContext*, const EmptyRequest*,
+                    VersionResponse* response) override {
+    response->set_version(google::VersionString());
+    return Status::OK;
+  }
+
   Status ResetAll(ServerContext* context, const EmptyRequest* request,
                   EmptyResponse* response) override {
     Status status;
@@ -343,22 +443,22 @@ class BESSControlImpl final : public BESSControl::Service {
     LOG(INFO) << "*** ResetAll requested ***";
 
     status = ResetModules(context, request, response);
-    if (response->error().err() != 0) {
+    if (response->error().code() != 0) {
       return status;
     }
 
     status = ResetPorts(context, request, response);
-    if (response->error().err() != 0) {
+    if (response->error().code() != 0) {
       return status;
     }
 
     status = ResetTcs(context, request, response);
-    if (response->error().err() != 0) {
+    if (response->error().code() != 0) {
       return status;
     }
 
     status = ResetWorkers(context, request, response);
-    if (response->error().err() != 0) {
+    if (response->error().code() != 0) {
       return status;
     }
 
@@ -372,10 +472,34 @@ class BESSControlImpl final : public BESSControl::Service {
     return Status::OK;
   }
 
+  Status PauseWorker(ServerContext*, const PauseWorkerRequest* req,
+                     EmptyResponse*) override {
+    int wid = req->wid();
+    // TODO: It should be made harder to wreak havoc on the rest of the daemon
+    // when using PauseWorker(). For now a warning and suggestion that this is
+    // for experts only is sufficient.
+    LOG(WARNING) << "PauseWorker() is an experimental operation and should be"
+                 << " used with care. Long-term support not guaranteed.";
+    pause_worker(wid);
+    LOG(INFO) << "*** Worker " << wid << " has been paused ***";
+    return Status::OK;
+  }
+
   Status ResumeAll(ServerContext*, const EmptyRequest*,
                    EmptyResponse*) override {
     LOG(INFO) << "*** Resuming ***";
+    if (!is_any_worker_running()) {
+      attach_orphans();
+    }
     resume_all_workers();
+    return Status::OK;
+  }
+
+  Status ResumeWorker(ServerContext*, const ResumeWorkerRequest* req,
+                      EmptyResponse*) override {
+    int wid = req->wid();
+    LOG(INFO) << "*** Resuming worker " << wid << " ***";
+    resume_worker(wid);
     return Status::OK;
   }
 
@@ -391,7 +515,7 @@ class BESSControlImpl final : public BESSControl::Service {
 
   Status ListWorkers(ServerContext*, const EmptyRequest*,
                      ListWorkersResponse* response) override {
-    for (int wid = 0; wid < MAX_WORKERS; wid++) {
+    for (int wid = 0; wid < Worker::kMaxWorkers; wid++) {
       if (!is_worker_active(wid))
         continue;
       ListWorkersResponse_WorkerStatus* status = response->add_workers_status();
@@ -407,7 +531,7 @@ class BESSControlImpl final : public BESSControl::Service {
   Status AddWorker(ServerContext*, const AddWorkerRequest* request,
                    EmptyResponse* response) override {
     uint64_t wid = request->wid();
-    if (wid >= MAX_WORKERS) {
+    if (wid >= Worker::kMaxWorkers) {
       return return_with_error(response, EINVAL, "Invalid worker id");
     }
     uint64_t core = request->core();
@@ -418,14 +542,20 @@ class BESSControlImpl final : public BESSControl::Service {
       return return_with_error(response, EEXIST, "worker:%d is already active",
                                wid);
     }
-    launch_worker(wid, core);
+    const std::string& scheduler = request->scheduler();
+    if (scheduler != "" && scheduler != "experimental") {
+      return return_with_error(response, EINVAL, "Invalid scheduler %s",
+                               scheduler.c_str());
+    }
+
+    launch_worker(wid, core, scheduler);
     return Status::OK;
   }
 
   Status DestroyWorker(ServerContext*, const DestroyWorkerRequest* request,
                        EmptyResponse* response) override {
     uint64_t wid = request->wid();
-    if (wid >= MAX_WORKERS) {
+    if (wid >= Worker::kMaxWorkers) {
       return return_with_error(response, EINVAL, "Invalid worker id");
     }
     Worker* worker = workers[wid];
@@ -437,17 +567,9 @@ class BESSControlImpl final : public BESSControl::Service {
     bess::TrafficClass* root = workers[wid]->scheduler()->root();
     if (root) {
       bool has_tasks = false;
-      root->Traverse(
-          [](const bess::TrafficClass* c, void* arg) {
-            bool have_tasks = false;
-            if (c->policy() == bess::POLICY_LEAF) {
-              have_tasks = reinterpret_cast<const bess::LeafTrafficClass*>(c)
-                               ->tasks()
-                               .size() > 0;
-            }
-            *reinterpret_cast<bool*>(arg) |= have_tasks;
-          },
-          static_cast<void*>(&has_tasks));
+      root->Traverse([&has_tasks](bess::TCChildArgs* c) {
+        has_tasks |= c->child()->policy() == bess::POLICY_LEAF;
+      });
       if (has_tasks) {
         return return_with_error(response, EBUSY, "Worker %d has active tasks ",
                                  wid);
@@ -477,78 +599,119 @@ class BESSControlImpl final : public BESSControl::Service {
     int i;
 
     wid_filter = request->wid();
-    if (wid_filter >= num_workers) {
-      return return_with_error(
-          response, EINVAL, "'wid' must be between 0 and %d", num_workers - 1);
+    if (wid_filter >= Worker::kMaxWorkers) {
+      return return_with_error(response, EINVAL,
+                               "'wid' must be between 0 and %d",
+                               Worker::kMaxWorkers - 1);
     }
 
     if (wid_filter < 0) {
       i = 0;
-      wid_filter = num_workers - 1;
+      wid_filter = Worker::kMaxWorkers - 1;
     } else {
       i = wid_filter;
     }
 
-    struct traverse_arg {
-      ListTcsResponse* response;
-      int wid;
-    };
-
     for (; i <= wid_filter; i++) {
-      const bess::TrafficClass* root = workers[i]->scheduler()->root();
+      if (workers[i] == nullptr) {
+        continue;
+      }
+      bess::TrafficClass* root = workers[i]->scheduler()->root();
       if (!root) {
-        return return_with_error(response, ENOENT, "worker:%d has no root tc",
-                                 i);
+        continue;
       }
 
-      struct traverse_arg arg__ = {response, i};
+      root->Traverse([&response, i](bess::TCChildArgs* args) {
+        bess::TrafficClass* c = args->child();
 
-      root->Traverse(
-          [](const bess::TrafficClass* c, void* arg) {
-            struct traverse_arg* arg_ =
-                reinterpret_cast<struct traverse_arg*>(arg);
+        ListTcsResponse_TrafficClassStatus* status =
+            response->add_classes_status();
 
-            ListTcsResponse_TrafficClassStatus* status =
-                arg_->response->add_classes_status();
+        collect_tc(c, i, status);
 
-            if (c->parent()) {
-              status->set_parent(c->parent()->name());
-            }
-
-            status->mutable_class_()->set_name(c->name());
-            status->mutable_class_()->set_blocked(c->blocked());
-
-            if (c->policy() >= 0 && c->policy() < bess::NUM_POLICIES) {
-              status->mutable_class_()->set_policy(
-                  bess::TrafficPolicyName[c->policy()]);
-            } else {
-              status->mutable_class_()->set_policy("invalid");
-            }
-
-            if (c->policy() == bess::POLICY_LEAF) {
-              status->set_tasks(
-                  reinterpret_cast<const bess::LeafTrafficClass*>(c)
-                      ->tasks()
-                      .size());
-            }
-
-            status->mutable_class_()->set_wid(arg_->wid);
-
-            if (c->policy() == bess::POLICY_RATE_LIMIT) {
-              const bess::RateLimitTrafficClass* rl =
-                  reinterpret_cast<const bess::RateLimitTrafficClass*>(c);
-              std::string resource = bess::ResourceName.at(rl->resource());
-              int64_t limit = rl->limit_arg();
-              int64_t max_burst = rl->max_burst_arg();
-              status->mutable_class_()->mutable_limit()->insert(
-                  {resource, limit});
-              status->mutable_class_()->mutable_max_burst()->insert(
-                  {resource, max_burst});
-            }
-          },
-          static_cast<void*>(&arg__));
+        if (args->parent_type() == bess::POLICY_WEIGHTED_FAIR) {
+          auto ca = static_cast<bess::WeightedFairChildArgs*>(args);
+          status->mutable_class_()->set_share(ca->share());
+        } else if (args->parent_type() == bess::POLICY_PRIORITY) {
+          auto ca = static_cast<bess::PriorityChildArgs*>(args);
+          status->mutable_class_()->set_priority(ca->priority());
+        }
+      });
     }
 
+    if (request->wid() < 0) {
+      std::list<std::pair<int, bess::TrafficClass*>> all = list_orphan_tcs();
+      for (auto c : all) {
+        ListTcsResponse_TrafficClassStatus* status =
+            response->add_classes_status();
+
+        collect_tc(c.second, -1, status);
+      }
+    }
+
+    return Status::OK;
+  }
+
+  Status CheckSchedulingConstraints(
+      ServerContext*, const EmptyRequest*,
+      CheckSchedulingConstraintsResponse* response) override {
+    // Start by attaching orphans -- this is essential to make sure we visit
+    // every TC.
+    if (!is_any_worker_running()) {
+      // If any worker is running (i.e., not everything is paused), then there
+      // is no point in attaching orphans.
+      attach_orphans();
+    }
+    propagate_active_worker();
+    LOG(INFO) << "Checking scheduling constraints";
+    // Check constraints around chains run by each worker. This checks that
+    // global constraints are met.
+    for (int i = 0; i < Worker::kMaxWorkers; i++) {
+      if (workers[i] == nullptr) {
+        continue;
+      }
+      int socket = 1ull << workers[i]->socket();
+      int core = workers[i]->core();
+      bess::TrafficClass* root = workers[i]->scheduler()->root();
+      if (root) {
+        root->Traverse([&response, i, socket, core](bess::TCChildArgs* args) {
+          bess::TrafficClass* c = args->child();
+          if (c->policy() == bess::POLICY_LEAF) {
+            auto leaf = static_cast<bess::LeafTrafficClass<Task>*>(c);
+            int constraints = leaf->Task().GetSocketConstraints();
+            if ((constraints & socket) == 0) {
+              LOG(WARNING) << "Scheduler constraints are violated for wid " << i
+                           << " socket " << socket << " constraint "
+                           << constraints;
+              auto violation = response->add_violations();
+              violation->set_name(c->name());
+              violation->set_constraint(constraints);
+              violation->set_assigned_node(workers[i]->socket());
+              violation->set_assigned_core(core);
+            } else {
+              LOG(WARNING) << "Scheduler constraints hold wid " << i
+                           << " socket " << socket << " constraint "
+                           << constraints;
+            }
+          }
+        });
+      }
+    }
+
+    // Check local constraints
+    for (const auto& pair : ModuleBuilder::all_modules()) {
+      const Module* m = pair.second;
+      auto ret = m->CheckModuleConstraints();
+      if (ret != CHECK_OK) {
+        LOG(WARNING) << "Module " << m->name() << " failed check " << ret;
+        auto module = response->add_modules();
+        module->set_name(m->name());
+        if (ret == CHECK_FATAL_ERROR) {
+          LOG(WARNING) << " --- FATAL CONSTRAINT FAILURE ---";
+          response->set_fatal(true);
+        }
+      }
+    }
     return Status::OK;
   }
 
@@ -557,31 +720,18 @@ class BESSControlImpl final : public BESSControl::Service {
     if (is_any_worker_running()) {
       return return_with_error(response, EBUSY, "There is a running worker");
     }
-    int wid;
 
     const char* tc_name = request->class_().name().c_str();
     if (request->class_().name().length() == 0) {
       return return_with_error(response, EINVAL, "Missing 'name' field");
+    } else if (tc_name[0] == '!') {
+      return return_with_error(response, EINVAL,
+                               "TC names starting with \'!\' are reserved");
     }
 
     if (TrafficClassBuilder::all_tcs().count(tc_name)) {
       return return_with_error(response, EINVAL, "Name '%s' already exists",
                                tc_name);
-    }
-
-    wid = request->class_().wid();
-    if (wid >= MAX_WORKERS) {
-      return return_with_error(
-          response, EINVAL, "'wid' must be between 0 and %d", MAX_WORKERS - 1);
-    }
-
-    if (!is_worker_active(wid)) {
-      if (num_workers == 0 && wid == 0) {
-        launch_worker(wid, FLAGS_c);
-      } else {
-        return return_with_error(response, EINVAL, "worker:%d does not exist",
-                                 wid);
-      }
     }
 
     const std::string& policy = request->class_().policy();
@@ -623,9 +773,9 @@ class BESSControlImpl final : public BESSControl::Service {
           TrafficClassBuilder::CreateTrafficClass<bess::RateLimitTrafficClass>(
               tc_name, bess::ResourceMap.at(resource), limit, max_burst));
     } else if (policy == bess::TrafficPolicyName[bess::POLICY_LEAF]) {
-      c = reinterpret_cast<bess::TrafficClass*>(
-          TrafficClassBuilder::CreateTrafficClass<bess::LeafTrafficClass>(
-              tc_name));
+      return return_with_error(response, EINVAL,
+                               "Cannot create leaf TC. Use "
+                               "UpdateTcParentRequest message");
     } else {
       return return_with_error(response, EINVAL, "Invalid traffic policy");
     }
@@ -634,80 +784,19 @@ class BESSControlImpl final : public BESSControl::Service {
       return return_with_error(response, ENOMEM, "CreateTrafficClass failed");
     }
 
-    bess::TrafficClass* root;
-    if (request->class_().parent().length() == 0) {
-      root = workers[wid]->scheduler()->root();
-    } else {
-      const auto& tcs = TrafficClassBuilder::all_tcs();
-      const auto& it = tcs.find(request->class_().parent());
-      if (it == tcs.end()) {
-        return return_with_error(response, ENOENT, "Parent TC '%s' not found",
-                                 tc_name);
-      }
-      root = it->second;
-    }
-
-    bool fail = false;
-    switch (root->policy()) {
-      case bess::POLICY_PRIORITY: {
-        if (request->class_().arg_case() != bess::pb::TrafficClass::kPriority) {
-          return return_with_error(response, EINVAL, "No priority specified");
-        }
-        priority_t pri = request->class_().priority();
-        if (pri == DEFAULT_PRIORITY) {
-          return return_with_error(response, EINVAL, "Priority %d is reserved",
-                                   DEFAULT_PRIORITY);
-        }
-        fail = !reinterpret_cast<bess::PriorityTrafficClass*>(root)->AddChild(
-            c, pri);
-        break;
-      }
-      case bess::POLICY_WEIGHTED_FAIR:
-        if (request->class_().arg_case() != bess::pb::TrafficClass::kShare) {
-          return return_with_error(response, EINVAL, "No share specified");
-        }
-        fail =
-            !reinterpret_cast<bess::WeightedFairTrafficClass*>(root)->AddChild(
-                c, request->class_().share());
-        break;
-      case bess::POLICY_ROUND_ROBIN:
-        fail =
-            !reinterpret_cast<bess::RoundRobinTrafficClass*>(root)->AddChild(c);
-        break;
-      case bess::POLICY_RATE_LIMIT:
-        fail =
-            !reinterpret_cast<bess::RateLimitTrafficClass*>(root)->AddChild(c);
-        break;
-      default:
-        return return_with_error(response, EPERM,
-                                 "Root tc doens't support children");
-    }
-    if (fail) {
-      return return_with_error(response, EINVAL, "AddChild() failed");
-    }
-
-    return Status::OK;
+    return AttachTc(c, request->class_(), response);
   }
 
-  Status UpdateTc(ServerContext*, const UpdateTcRequest* request,
-                  EmptyResponse* response) override {
+  Status UpdateTcParams(ServerContext*, const UpdateTcParamsRequest* request,
+                        EmptyResponse* response) override {
     if (is_any_worker_running()) {
       return return_with_error(response, EBUSY, "There is a running worker");
     }
 
-    const char* tc_name = request->class_().name().c_str();
-    if (request->class_().name().length() == 0) {
-      return return_with_error(response, EINVAL, "Missing 'name' field");
+    bess::TrafficClass* c = FindTc(request->class_(), response);
+    if (!c) {
+      return Status::OK;
     }
-
-    const auto all_tcs = TrafficClassBuilder::all_tcs();
-    auto it = all_tcs.find(tc_name);
-    if (it == all_tcs.end()) {
-      return return_with_error(response, ENOENT, "Name '%s' doesn't exist",
-                               tc_name);
-    }
-
-    bess::TrafficClass* c = it->second;
 
     if (c->policy() == bess::POLICY_RATE_LIMIT) {
       bess::RateLimitTrafficClass* tc =
@@ -725,13 +814,56 @@ class BESSControlImpl final : public BESSControl::Service {
       if (max_bursts.find(resource) != max_bursts.end()) {
         tc->set_max_burst(max_bursts.at(resource));
       }
+    } else if (c->policy() == bess::POLICY_WEIGHTED_FAIR) {
+      bess::WeightedFairTrafficClass* tc =
+          reinterpret_cast<bess::WeightedFairTrafficClass*>(c);
+      const std::string& resource = request->class_().resource();
+      if (bess::ResourceMap.count(resource) == 0) {
+        return return_with_error(response, EINVAL, "Invalid resource");
+      }
+      tc->set_resource(bess::ResourceMap.at(resource));
     } else {
       return return_with_error(response, EINVAL,
-                               "Can only update RateLimit "
-                               "TCs");
+                               "Only 'rate_limit' and"
+                               " 'weighted_fair' can be updated");
     }
 
     return Status::OK;
+  }
+
+  Status UpdateTcParent(ServerContext*, const UpdateTcParentRequest* request,
+                        EmptyResponse* response) override {
+    if (is_any_worker_running()) {
+      return return_with_error(response, EBUSY, "There is a running worker");
+    }
+
+    bess::TrafficClass* c = FindTc(request->class_(), response);
+    if (!c) {
+      return Status::OK;
+    }
+
+    if (c->policy() == bess::POLICY_LEAF) {
+      if (!detach_tc(c)) {
+        return return_with_error(response, EINVAL,
+                                 "Cannot detach '%s'"
+                                 " from parent",
+                                 request->class_().name().c_str());
+      }
+    }
+
+    // XXX Leaf nodes can always be moved, other nodes can be moved only if
+    // they're orphans. The scheduler maintains state which would need to be
+    // updated otherwise.
+    if (c->policy() != bess::POLICY_LEAF) {
+      if (!remove_tc_from_orphan(c)) {
+        return return_with_error(response, EINVAL,
+                                 "Cannot detach '%s'."
+                                 " while it is part of a worker",
+                                 request->class_().name().c_str());
+      }
+    }
+
+    return AttachTc(c, request->class_(), response);
   }
 
   Status GetTcStats(ServerContext*, const GetTcStatsRequest* request,
@@ -828,8 +960,8 @@ class BESSControlImpl final : public BESSControl::Service {
       port->set_name(p->name());
       port->set_driver(p->port_builder()->class_name());
 
-      bess::utils::EthHeader::Address mac_addr;
-      memcpy(mac_addr.bytes, p->mac_addr, ETH_ALEN);
+      bess::utils::Ethernet::Address mac_addr;
+      bess::utils::Copy(mac_addr.bytes, p->mac_addr, ETH_ALEN);
       port->set_mac_addr(mac_addr.ToString());
     }
 
@@ -868,8 +1000,8 @@ class BESSControlImpl final : public BESSControl::Service {
 
     response->set_name(port->name());
 
-    bess::utils::EthHeader::Address mac_addr;
-    memcpy(mac_addr.bytes, port->mac_addr, ETH_ALEN);
+    bess::utils::Ethernet::Address mac_addr;
+    bess::utils::Copy(mac_addr.bytes, port->mac_addr, ETH_ALEN);
     response->set_mac_addr(mac_addr.ToString());
 
     return Status::OK;
@@ -965,10 +1097,6 @@ class BESSControlImpl final : public BESSControl::Service {
 
   Status CreateModule(ServerContext*, const CreateModuleRequest* request,
                       CreateModuleResponse* response) override {
-    if (is_any_worker_running()) {
-      return return_with_error(response, EBUSY, "There is a running worker");
-    }
-
     VLOG(1) << "CreateModuleRequest from client:" << std::endl
             << request->DebugString();
 
@@ -1051,10 +1179,7 @@ class BESSControlImpl final : public BESSControl::Service {
 
     response->set_name(m->name());
     response->set_mclass(m->module_builder()->class_name());
-
     response->set_desc(m->GetDesc());
-
-    // TODO(clan): Dump!
 
     collect_igates(m, response);
     collect_ogates(m, response);
@@ -1065,10 +1190,6 @@ class BESSControlImpl final : public BESSControl::Service {
 
   Status ConnectModules(ServerContext*, const ConnectModulesRequest* request,
                         EmptyResponse* response) override {
-    if (is_any_worker_running()) {
-      return return_with_error(response, EBUSY, "There is a running worker");
-    }
-
     VLOG(1) << "ConnectModulesRequest from client:" << std::endl
             << request->DebugString();
 
@@ -1104,6 +1225,18 @@ class BESSControlImpl final : public BESSControl::Service {
                                m2_name);
     }
     m2 = it2->second;
+
+    if (is_any_worker_running()) {
+      propagate_active_worker();
+      if (m1->num_active_workers()) {
+        return return_with_error(response, EBUSY, "Module '%s' is in use",
+                                 m1_name);
+      }
+      if (m2->num_active_workers()) {
+        return return_with_error(response, EBUSY, "Module '%s' is in use",
+                                 m2_name);
+      }
+    }
 
     ret = m1->ConnectModules(ogate, m2, igate);
     if (ret < 0)
@@ -1145,223 +1278,67 @@ class BESSControlImpl final : public BESSControl::Service {
     return Status::OK;
   }
 
-  Status AttachTask(ServerContext*, const AttachTaskRequest* request,
-                    EmptyResponse* response) override {
+  Status ConfigureGateHook(ServerContext*,
+                           const ConfigureGateHookRequest* request,
+                           CommandResponse* response) override {
     if (is_any_worker_running()) {
       return return_with_error(response, EBUSY, "There is a running worker");
     }
 
-    if (!request->name().length()) {
-      return return_with_error(response, EINVAL, "Missing 'name' field");
-    }
+    bool use_gate = true;
+    gate_idx_t gate_idx = 0;
+    bool is_igate =
+        request->gate_case() == bess::pb::ConfigureGateHookRequest::kIgate;
 
-    const auto& it = ModuleBuilder::all_modules().find(request->name());
-    if (it == ModuleBuilder::all_modules().end()) {
-      return return_with_error(response, ENOENT, "No module '%s' found",
-                               request->name().c_str());
-    }
-    Module* m = it->second;
-
-    task_id_t tid = request->taskid();
-    if (tid >= MAX_TASKS_PER_MODULE) {
-      return return_with_error(response, EINVAL,
-                               "'taskid' must be between 0 and %d",
-                               MAX_TASKS_PER_MODULE - 1);
-    }
-
-    Task* t;
-    if (tid >= m->tasks().size() || (t = m->tasks()[tid]) == nullptr) {
-      return return_with_error(response, ENOENT, "Task %s:%hu does not exist",
-                               request->name().c_str(), tid);
-    }
-
-    if (request->identifier_case() == bess::pb::AttachTaskRequest::kTc) {
-      const auto& tcs = TrafficClassBuilder::all_tcs();
-      const auto& it2 = tcs.find(request->tc());
-      if (it2 == tcs.end()) {
-        return return_with_error(response, ENOENT, "No TC '%s' found",
-                                 request->tc().c_str());
-      }
-      bess::TrafficClass* c = it2->second;
-      if (c->policy() == bess::POLICY_LEAF) {
-        t->Attach(static_cast<bess::LeafTrafficClass*>(c));
-      } else {
-        return return_with_error(response, EINVAL, "TC must be a leaf class");
-      }
-    } else if (request->identifier_case() ==
-               bess::pb::AttachTaskRequest::kWid) {
-      int wid = request->wid(); /* TODO: worker_id_t */
-      if (wid >= MAX_WORKERS) {
-        return return_with_error(response, EINVAL,
-                                 "'wid' must be between 0 and %d",
-                                 MAX_WORKERS - 1);
-      }
-
-      if (!is_worker_active(wid)) {
-        return return_with_error(response, EINVAL, "Worker %d does not exist",
-                                 wid);
-      }
-
-      bess::LeafTrafficClass* tc =
-          workers[wid]->scheduler()->default_leaf_class();
-      if (!tc) {
-        return return_with_error(response, ENOENT,
-                                 "Worker %d has no default leaf tc", wid);
-      }
-      t->Attach(tc);
+    if (is_igate) {
+      gate_idx = request->igate();
+      use_gate = request->igate() >= 0;
     } else {
-      return return_with_error(response, EINVAL, "Both tc and wid are not set");
+      gate_idx = request->ogate();
+      use_gate = request->ogate() >= 0;
     }
 
-    return Status::OK;
-  }
-
-  Status EnableTcpdump(ServerContext*, const EnableTcpdumpRequest* request,
-                       EmptyResponse* response) override {
-    if (is_any_worker_running()) {
-      return return_with_error(response, EBUSY, "There is a running worker");
-    }
-    const char* m_name;
-    const char* fifo;
-    gate_idx_t gate;
-    bool is_igate;
-
-    int ret;
-
-    m_name = request->name().c_str();
-    gate = request->gate();
-    is_igate = request->is_igate();
-    fifo = request->fifo().c_str();
-
-    if (!request->name().length())
-      return return_with_error(response, EINVAL, "Missing 'name' field");
-
-    const auto& it = ModuleBuilder::all_modules().find(request->name());
-    if (it == ModuleBuilder::all_modules().end()) {
-      return return_with_error(response, ENOENT, "No module '%s' found",
-                               m_name);
-    }
-    Module* m = it->second;
-
-    if (!is_igate && gate >= m->ogates().size())
-      return return_with_error(response, EINVAL,
-                               "Output gate '%hu' does not exist", gate);
-
-    if (is_igate && gate >= m->igates().size())
-      return return_with_error(response, EINVAL,
-                               "Input gate '%hu' does not exist", gate);
-
-    // TODO(melvin): actually change protobufs when new bessctl arrives
-    ret = m->EnableTcpDump(fifo, is_igate, gate);
-
-    if (ret < 0) {
-      return return_with_error(response, -ret, "Enabling tcpdump %s:%d failed",
-                               m_name, gate);
+    const auto factory = bess::GateHookFactory::all_gate_hook_factories().find(
+        request->hook_name());
+    if (factory == bess::GateHookFactory::all_gate_hook_factories().end()) {
+      return return_with_error(response, ENOENT, "No such gate hook: %s",
+                               request->hook_name().c_str());
     }
 
-    return Status::OK;
-  }
-
-  Status DisableTcpdump(ServerContext*, const DisableTcpdumpRequest* request,
-                        EmptyResponse* response) override {
-    if (is_any_worker_running()) {
-      return return_with_error(response, EBUSY, "There is a running worker");
-    }
-    const char* m_name;
-    gate_idx_t gate;
-    bool is_igate;
-
-    int ret;
-
-    m_name = request->name().c_str();
-    gate = request->gate();
-    is_igate = request->is_igate();
-
-    if (!request->name().length()) {
-      return return_with_error(response, EINVAL, "Missing 'name' field");
-    }
-
-    const auto& it = ModuleBuilder::all_modules().find(request->name());
-    if (it == ModuleBuilder::all_modules().end()) {
-      return return_with_error(response, ENOENT, "No module '%s' found",
-                               m_name);
-    }
-
-    Module* m = it->second;
-    if (!is_igate && gate >= m->ogates().size())
-      return return_with_error(response, EINVAL,
-                               "Output gate '%hu' does not exist", gate);
-
-    if (is_igate && gate >= m->igates().size())
-      return return_with_error(response, EINVAL,
-                               "Input gate '%hu' does not exist", gate);
-
-    // TODO(melvin): actually change protobufs when new bessctl arrives
-    ret = m->DisableTcpDump(is_igate, gate);
-
-    if (ret < 0) {
-      return return_with_error(response, -ret, "Disabling tcpdump %s:%d failed",
-                               m_name, gate);
-    }
-    return Status::OK;
-  }
-
-  Status EnableTrack(ServerContext*, const EnableTrackRequest* request,
-                     EmptyResponse* response) override {
-    if (is_any_worker_running()) {
-      return return_with_error(response, EBUSY, "There is a running worker");
-    }
-    pb_error_t* error = response->mutable_error();
-    if (!request->name().length()) {
+    if (request->module_name().length() == 0) {
+      // Install this hook on all modules
       for (const auto& it : ModuleBuilder::all_modules()) {
-        *error =
-            enable_track_for_module(it.second, request->gate(),
-                                    request->is_igate(), request->use_gate());
-        if (error->err() != 0) {
+        if (request->enable()) {
+          *response =
+              enable_hook_for_module(it.second, gate_idx, is_igate, use_gate,
+                                     factory->second, request->arg());
+        } else {
+          *response = disable_hook_for_module(it.second, gate_idx, is_igate,
+                                              use_gate, request->hook_name());
+        }
+        if (response->error().code() != 0) {
           return Status::OK;
         }
       }
       return Status::OK;
-    } else {
-      const auto& it = ModuleBuilder::all_modules().find(request->name());
-      if (it == ModuleBuilder::all_modules().end()) {
-        *error =
-            pb_error(ENOENT, "No module '%s' found", request->name().c_str());
-      }
-      *error =
-          enable_track_for_module(it->second, request->gate(),
-                                  request->is_igate(), request->use_gate());
-      return Status::OK;
     }
-  }
 
-  Status DisableTrack(ServerContext*, const DisableTrackRequest* request,
-                      EmptyResponse* response) override {
-    if (is_any_worker_running()) {
-      return return_with_error(response, EBUSY, "There is a running worker");
+    // Install this hook on the specified module
+    const auto& it = ModuleBuilder::all_modules().find(request->module_name());
+    if (it == ModuleBuilder::all_modules().end()) {
+      *response = CommandFailure(ENOENT, "No module '%s' found",
+                                 request->module_name().c_str());
     }
-    pb_error_t* error = response->mutable_error();
-    if (!request->name().length()) {
-      for (const auto& it : ModuleBuilder::all_modules()) {
-        *error =
-            disable_track_for_module(it.second, request->gate(),
-                                     request->is_igate(), request->use_gate());
-        if (error->err() != 0) {
-          return Status::OK;
-        }
-      }
-      return Status::OK;
+    if (request->enable()) {
+      *response =
+          enable_hook_for_module(it->second, gate_idx, is_igate, use_gate,
+                                 factory->second, request->arg());
     } else {
-      const auto& it = ModuleBuilder::all_modules().find(request->name());
-      if (it == ModuleBuilder::all_modules().end()) {
-        *error =
-            pb_error(ENOENT, "No module '%s' found", request->name().c_str());
-      }
-      *error =
-          disable_track_for_module(it->second, request->gate(),
-                                   request->is_igate(), request->use_gate());
-      return Status::OK;
+      *response = disable_hook_for_module(it->second, gate_idx, is_igate,
+                                          use_gate, request->hook_name());
     }
+
+    return Status::OK;
   }
 
   Status KillBess(ServerContext*, const EmptyRequest*,
@@ -1370,17 +1347,52 @@ class BESSControlImpl final : public BESSControl::Service {
       return return_with_error(response, EBUSY, "There is a running worker");
     }
     LOG(WARNING) << "Halt requested by a client\n";
-    exit_requested.set_value();
+
+    CHECK(shutdown_func_ != nullptr);
+    std::thread shutdown_helper([this]() {
+      // Deadlock occurs when closing a gRPC server while processing a RPC.
+      // Instead, we defer calling gRPC::Server::Shutdown() to a temporary
+      // thread.
+      shutdown_func_();
+    });
+    shutdown_helper.detach();
 
     return Status::OK;
   }
 
-  Status ImportMclass(ServerContext*, const ImportMclassRequest* request,
+  Status ImportPlugin(ServerContext*, const ImportPluginRequest* request,
                       EmptyResponse* response) override {
-    VLOG(1) << "Loading module: " << request->path();
-    if (!bess::bessd::LoadModule(request->path())) {
-      return return_with_error(response, -1, "Failed loading module %s",
+    if (is_any_worker_running()) {
+      return return_with_error(response, EBUSY, "There is a running worker");
+    }
+
+    VLOG(1) << "Loading plugin: " << request->path();
+    if (!bess::bessd::LoadPlugin(request->path())) {
+      return return_with_error(response, -1, "Failed loading plugin %s",
                                request->path().c_str());
+    }
+    return Status::OK;
+  }
+
+  Status UnloadPlugin(ServerContext*, const UnloadPluginRequest* request,
+                      EmptyResponse* response) override {
+    if (is_any_worker_running()) {
+      return return_with_error(response, EBUSY, "There is a running worker");
+    }
+
+    VLOG(1) << "Unloading plugin: " << request->path();
+    if (!bess::bessd::UnloadPlugin(request->path())) {
+      return return_with_error(response, -1, "Failed unloading plugin %s",
+                               request->path().c_str());
+    }
+    return Status::OK;
+  }
+
+  Status ListPlugins(ServerContext*, const EmptyRequest*,
+                     ListPluginsResponse* response) override {
+    auto list = bess::bessd::ListPlugins();
+    for (auto& path : list) {
+      response->add_paths(path);
     }
     return Status::OK;
   }
@@ -1396,6 +1408,8 @@ class BESSControlImpl final : public BESSControl::Service {
 
   Status GetMclassInfo(ServerContext*, const GetMclassInfoRequest* request,
                        GetMclassInfoResponse* response) override {
+    VLOG(1) << "GetMclassInfo from client:" << std::endl
+            << request->DebugString();
     if (!request->name().length()) {
       return return_with_error(response, EINVAL,
                                "Argument must be a name in str");
@@ -1418,8 +1432,8 @@ class BESSControlImpl final : public BESSControl::Service {
     return Status::OK;
   }
 
-  Status ModuleCommand(ServerContext*, const ModuleCommandRequest* request,
-                       ModuleCommandResponse* response) override {
+  Status ModuleCommand(ServerContext*, const CommandRequest* request,
+                       CommandResponse* response) override {
     if (!request->name().length()) {
       return return_with_error(response, EINVAL,
                                "Missing module name field 'name'");
@@ -1437,38 +1451,193 @@ class BESSControlImpl final : public BESSControl::Service {
     *response = m->RunCommand(request->cmd(), request->arg());
     return Status::OK;
   }
-};
 
-// TODO: C++-ify
-static std::unique_ptr<Server> server;
-static BESSControlImpl service;
+ private:
+  Status AttachTc(bess::TrafficClass* c_, const bess::pb::TrafficClass& class_,
+                  EmptyResponse* response) {
+    std::unique_ptr<bess::TrafficClass> c(c_);
+    int wid = class_.wid();
 
-void SetupControl() {
-  ServerBuilder builder;
+    if (class_.parent().length() == 0) {
+      if (wid >= Worker::kMaxWorkers) {
+        return return_with_error(response, EINVAL,
+                                 "'wid' must be between -1 and %d",
+                                 Worker::kMaxWorkers - 1);
+      }
 
-  if (FLAGS_p) {
-    std::string server_address = bess::utils::Format("127.0.0.1:%d", FLAGS_p);
-    LOG(INFO) << "Server listening on " << server_address;
-    builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+      if ((wid != -1 && !is_worker_active(wid)) ||
+          (wid == -1 && num_workers == 0)) {
+        if (num_workers == 0 && (wid == 0 || wid == -1)) {
+          launch_worker(0, FLAGS_c);
+        } else {
+          return return_with_error(response, EINVAL, "worker:%d does not exist",
+                                   wid);
+        }
+      }
+
+      add_tc_to_orphan(c.release(), wid);
+      return Status::OK;
+    }
+
+    if (wid != -1) {
+      return return_with_error(response, EINVAL,
+                               "Both 'parent' and 'wid'"
+                               "have been specified");
+    }
+
+    bess::TrafficClass* parent;
+    const auto& tcs = TrafficClassBuilder::all_tcs();
+    const auto& it = tcs.find(class_.parent());
+    if (it == tcs.end()) {
+      return return_with_error(response, ENOENT, "Parent TC '%s' not found",
+                               class_.parent().c_str());
+    }
+    parent = it->second;
+
+    bool fail = false;
+    switch (parent->policy()) {
+      case bess::POLICY_PRIORITY: {
+        if (class_.arg_case() != bess::pb::TrafficClass::kPriority) {
+          return return_with_error(response, EINVAL, "No priority specified");
+        }
+        bess::priority_t pri = class_.priority();
+        if (pri == DEFAULT_PRIORITY) {
+          return return_with_error(response, EINVAL, "Priority %d is reserved",
+                                   DEFAULT_PRIORITY);
+        }
+        fail = !static_cast<bess::PriorityTrafficClass*>(parent)->AddChild(
+            c.get(), pri);
+        break;
+      }
+      case bess::POLICY_WEIGHTED_FAIR:
+        if (class_.arg_case() != bess::pb::TrafficClass::kShare) {
+          return return_with_error(response, EINVAL, "No share specified");
+        }
+        fail = !static_cast<bess::WeightedFairTrafficClass*>(parent)->AddChild(
+            c.get(), class_.share());
+        break;
+      case bess::POLICY_ROUND_ROBIN:
+        fail = !static_cast<bess::RoundRobinTrafficClass*>(parent)->AddChild(
+            c.get());
+        break;
+      case bess::POLICY_RATE_LIMIT:
+        fail = !static_cast<bess::RateLimitTrafficClass*>(parent)->AddChild(
+            c.get());
+        break;
+      default:
+        return return_with_error(response, EPERM,
+                                 "Parent tc doesn't support children");
+    }
+    if (fail) {
+      return return_with_error(response, EINVAL, "AddChild() failed");
+    }
+    c.release();
+    return Status::OK;
   }
 
-  builder.RegisterService(&service);
-  server = builder.BuildAndStart();
+  bess::TrafficClass* FindTc(const bess::pb::TrafficClass& class_,
+                             EmptyResponse* response) {
+    bess::TrafficClass* c = nullptr;
+
+    if (class_.name().length() != 0) {
+      const char* name = class_.name().c_str();
+      const auto all_tcs = TrafficClassBuilder::all_tcs();
+      auto it = all_tcs.find(name);
+      if (it == all_tcs.end()) {
+        return_with_error(response, ENOENT, "Tc '%s' doesn't exist", name);
+        return nullptr;
+      }
+
+      c = it->second;
+    } else if (class_.leaf_module_name().length() != 0) {
+      const std::string& module_name = class_.leaf_module_name();
+      const auto& it = ModuleBuilder::all_modules().find(module_name);
+      if (it == ModuleBuilder::all_modules().end()) {
+        return_with_error(response, ENOENT, "No module '%s' found",
+                          module_name.c_str());
+        return nullptr;
+      }
+      Module* m = it->second;
+
+      task_id_t tid = class_.leaf_module_taskid();
+      if (tid >= MAX_TASKS_PER_MODULE) {
+        return_with_error(response, EINVAL, "'taskid' must be between 0 and %d",
+                          MAX_TASKS_PER_MODULE - 1);
+        return nullptr;
+      }
+
+      if (tid >= m->tasks().size()) {
+        return_with_error(response, ENOENT, "Task %s:%hu does not exist",
+                          class_.leaf_module_name().c_str(), tid);
+        return nullptr;
+      }
+
+      c = m->tasks()[tid]->GetTC();
+    } else {
+      return_with_error(response, EINVAL,
+                        "One of 'name' or "
+                        "'leaf_module_name' must be specified");
+      return nullptr;
+    }
+
+    if (!c) {
+      return_with_error(response, ENOENT, "Error finding TC");
+    }
+
+    return c;
+  }
+
+  // function to call to close this gRPC service.
+  std::function<void()> shutdown_func_;
+};
+
+bool ApiServer::grpc_cb_set_ = false;
+
+void ApiServer::Listen(const std::string &host, int port) {
+  if (!builder_) {
+    builder_ = new grpc::ServerBuilder();
+  }
+
+  std::string addr = bess::utils::Format("%s:%d", host.c_str(), port);
+  LOG(INFO) << "Server listening on " << addr;
+
+  builder_->AddListeningPort(addr, grpc::InsecureServerCredentials());
 }
 
-void RunControl() {
-  auto serve_func = []() {
-    server->Wait();
-    LOG(INFO) << "Terminating gRPC server";
+void ApiServer::Run() {
+  class ServerCallbacks : public grpc::Server::GlobalCallbacks {
+   public:
+    ServerCallbacks() {}
+    void PreSynchronousRequest(ServerContext*) { mutex_.lock(); }
+    void PostSynchronousRequest(ServerContext*) { mutex_.unlock(); }
+
+   private:
+    std::mutex mutex_;
   };
 
-  std::thread grpc_server_thread(serve_func);
+  if (!builder_) {
+    // We are not listening on any sockets. There is nothing to do.
+    return;
+  }
 
-  auto f = exit_requested.get_future();
-  f.wait();
+  if (!grpc_cb_set_) {
+    // SetGlobalCallbacks() must be invoked only once.
+    grpc_cb_set_ = true;
+    // NOTE: Despite its documentation, SetGlobalCallbacks() does take the
+    // ownership of the object pointer. So we just "new" and forget about it.
+    grpc::Server::SetGlobalCallbacks(new ServerCallbacks());
+  }
 
-  server->Shutdown();
-  grpc_server_thread.join();
+  BESSControlImpl service;
+  builder_->RegisterService(&service);
+  builder_->SetSyncServerOption(grpc::ServerBuilder::MAX_POLLERS, 1);
 
-  delete server.release();
+  std::unique_ptr<grpc::Server> server = builder_->BuildAndStart();
+  if (server == nullptr) {
+    LOG(ERROR) << "ServerBuilder::BuildAndStart() failed";
+    return;
+  }
+
+  service.set_shutdown_func([&server]() { server->Shutdown(); });
+  server->Wait();
 }

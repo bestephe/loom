@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -10,26 +11,32 @@
 #include "message.h"
 #include "metadata.h"
 #include "packet.h"
-#include "task.h"
+#include "scheduler.h"
 
 using bess::gate_idx_t;
 
-static inline void set_cmd_response_error(pb_cmd_response_t *response,
-                                          const pb_error_t &error) {
-  response->mutable_error()->CopyFrom(error);
-}
-#define MODULE_NAME_LEN 128
+#define MAX_NUMA_NODE 16
+#define UNCONSTRAINED_SOCKET ((0x1ull << MAX_NUMA_NODE) - 1)
+
+struct task_result {
+  uint64_t packets;
+  uint64_t bits;
+};
+
+typedef uint16_t task_id_t;
+typedef uint64_t placement_constraint;
 
 #define MAX_TASKS_PER_MODULE 32
 #define INVALID_TASK_ID ((task_id_t)-1)
 
 using module_cmd_func_t =
-    pb_func_t<pb_cmd_response_t, Module, google::protobuf::Any>;
-using module_init_func_t = pb_func_t<pb_error_t, Module, google::protobuf::Any>;
+    pb_func_t<CommandResponse, Module, google::protobuf::Any>;
+using module_init_func_t =
+    pb_func_t<CommandResponse, Module, google::protobuf::Any>;
 
 template <typename T, typename M>
 static inline module_cmd_func_t MODULE_CMD_FUNC(
-    pb_cmd_response_t (M::*fn)(const T &)) {
+    CommandResponse (M::*fn)(const T &)) {
   return [fn](Module *m, const google::protobuf::Any &arg) {
     T arg_;
     arg.UnpackTo(&arg_);
@@ -40,7 +47,7 @@ static inline module_cmd_func_t MODULE_CMD_FUNC(
 
 template <typename T, typename M>
 static inline module_init_func_t MODULE_INIT_FUNC(
-    pb_error_t (M::*fn)(const T &)) {
+    CommandResponse (M::*fn)(const T &)) {
   return [fn](Module *m, const google::protobuf::Any &arg) {
     T arg_;
     arg.UnpackTo(&arg_);
@@ -50,8 +57,6 @@ static inline module_init_func_t MODULE_INIT_FUNC(
 }
 
 class Module;
-
-#define CALL_MEMBER_FN(obj, ptr_to_member_func) ((obj).*(ptr_to_member_func))
 
 struct Command {
   std::string cmd;
@@ -71,7 +76,7 @@ class ModuleBuilder {
       std::function<Module *()> module_generator, const std::string &class_name,
       const std::string &name_template, const std::string &help_text,
       const gate_idx_t igates, const gate_idx_t ogates, const Commands &cmds,
-      std::function<pb_error_t(Module *, const google::protobuf::Any &)>
+      std::function<CommandResponse(Module *, const google::protobuf::Any &)>
           init_func)
       : module_generator_(module_generator),
         num_igates_(igates),
@@ -103,12 +108,13 @@ class ModuleBuilder {
                                   const gate_idx_t ogates, const Commands &cmds,
                                   module_init_func_t init_func);
 
+  static bool DeregisterModuleClass(const std::string &class_name);
+
   static std::map<std::string, ModuleBuilder> &all_module_builders_holder(
       bool reset = false);
   static const std::map<std::string, ModuleBuilder> &all_module_builders();
 
   static const std::map<std::string, Module *> &all_modules();
-
   gate_idx_t NumIGates() const { return num_igates_; }
   gate_idx_t NumOGates() const { return num_ogates_; }
 
@@ -126,10 +132,10 @@ class ModuleBuilder {
   static std::string GenerateDefaultName(const std::string &class_name,
                                          const std::string &default_template);
 
-  pb_cmd_response_t RunCommand(Module *m, const std::string &user_cmd,
-                               const google::protobuf::Any &arg) const;
+  CommandResponse RunCommand(Module *m, const std::string &user_cmd,
+                             const google::protobuf::Any &arg) const;
 
-  pb_error_t RunInit(Module *m, const google::protobuf::Any &arg) const;
+  CommandResponse RunInit(Module *m, const google::protobuf::Any &arg) const;
 
  private:
   const std::function<Module *()> module_generator_;
@@ -146,6 +152,18 @@ class ModuleBuilder {
   const module_init_func_t init_func_;
 };
 
+class ModuleTask;
+
+/*!
+ * Results from checking for constraints. Failing constraints can indicate
+ * whether the failure is fatal or not.
+ */
+enum CheckConstraintResult {
+  CHECK_OK = 0,
+  CHECK_NONFATAL_ERROR = 1,
+  CHECK_FATAL_ERROR = 2
+};
+
 class Module {
   // overide this section to create a new module -----------------------------
  public:
@@ -157,10 +175,16 @@ class Module {
         attr_offsets_(),
         tasks_(),
         igates_(),
-        ogates_() {}
+        ogates_(),
+        active_workers_(Worker::kMaxWorkers, false),
+        visited_tasks_(),
+        node_constraints_(UNCONSTRAINED_SOCKET),
+        min_allowed_workers_(1),
+        max_allowed_workers_(1),
+        propagate_workers_(true) {}
   virtual ~Module() {}
 
-  pb_error_t Init(const bess::pb::EmptyArg &arg);
+  CommandResponse Init(const bess::pb::EmptyArg &arg);
 
   // NOTE: this function will be called even if Init() has failed.
   virtual void DeInit();
@@ -169,7 +193,6 @@ class Module {
   virtual void ProcessBatch(bess::PacketBatch *batch);
 
   virtual std::string GetDesc() const { return ""; }
-  virtual std::string GetDump() const { return ""; }
 
   static const gate_idx_t kNumIGates = 1;
   static const gate_idx_t kNumOGates = 1;
@@ -181,7 +204,7 @@ class Module {
  public:
   friend class ModuleBuilder;
 
-  pb_error_t InitWithGenericArg(const google::protobuf::Any &arg);
+  CommandResponse InitWithGenericArg(const google::protobuf::Any &arg);
 
   const ModuleBuilder *module_builder() const { return module_builder_; }
 
@@ -210,6 +233,7 @@ class Module {
   int DisconnectModulesUpstream(gate_idx_t igate_idx);
   int DisconnectModules(gate_idx_t ogate_idx);
 
+  // Register a task.
   task_id_t RegisterTask(void *arg);
 
   /* Modules should call this function to declare additional metadata
@@ -222,12 +246,8 @@ class Module {
   int AddMetadataAttr(const std::string &name, size_t size,
                       bess::metadata::Attribute::AccessMode mode);
 
-  int EnableTcpDump(const char *fifo, int is_igate, gate_idx_t gate_idx);
-
-  int DisableTcpDump(int is_igate, gate_idx_t gate_idx);
-
-  pb_cmd_response_t RunCommand(const std::string &cmd,
-                               const google::protobuf::Any &arg) {
+  CommandResponse RunCommand(const std::string &cmd,
+                             const google::protobuf::Any &arg) {
     return module_builder_->RunCommand(this, cmd, arg);
   }
 
@@ -235,9 +255,7 @@ class Module {
     return attrs_;
   }
 
-  const std::vector<Task *> tasks() const {
-    return tasks_;
-  }
+  const std::vector<ModuleTask *> &tasks() const { return tasks_; }
 
   void set_attr_offset(size_t idx, bess::metadata::mt_offset_t offset) {
     if (idx < bess::metadata::kMaxAttrsPerModule) {
@@ -254,13 +272,51 @@ class Module {
     return attr_offsets_;
   }
 
-  const std::vector<bess::IGate *> &igates() const {
-    return igates_;
-  };
+  const std::vector<bess::IGate *> &igates() const { return igates_; }
 
-  const std::vector<bess::OGate *> &ogates() const {
-    return ogates_;
-  };
+  const std::vector<bess::OGate *> &ogates() const { return ogates_; }
+
+  /*!
+   * Compute placement constraints based on the current module and all
+   * downstream modules (i.e., modules connected to out ports.
+   */
+  placement_constraint ComputePlacementConstraints(
+      std::unordered_set<const Module *> *visited) const;
+
+  /*!
+   * Reset the set of active workers.
+   */
+  void ResetActiveWorkerSet() {
+    std::fill(active_workers_.begin(), active_workers_.end(), false);
+    visited_tasks_.clear();
+  }
+
+  const std::vector<bool> &active_workers() const { return active_workers_; }
+
+  /*!
+   * Number of active workers attached to this module.
+   */
+  inline size_t num_active_workers() const {
+    return std::count_if(active_workers_.begin(), active_workers_.end(),
+                         [](bool b) { return b; });
+  }
+
+  /*!
+   * Check if we have already seen a task
+   */
+  inline bool HaveVisitedWorker(const ModuleTask *task) const {
+    return std::find(visited_tasks_.begin(), visited_tasks_.end(), task) !=
+           visited_tasks_.end();
+  }
+
+  /*!
+   * Number of tasks that access this module
+   */
+  inline size_t num_active_tasks() const { return visited_tasks_.size(); }
+
+  virtual void AddActiveWorker(int wid, const ModuleTask *task);
+
+  virtual CheckConstraintResult CheckModuleConstraints() const;
 
  private:
   void DestroyAllTasks();
@@ -283,11 +339,33 @@ class Module {
   std::vector<bess::metadata::Attribute> attrs_;
   bess::metadata::mt_offset_t attr_offsets_[bess::metadata::kMaxAttrsPerModule];
 
-  std::vector<Task *> tasks_;
+  std::vector<ModuleTask *> tasks_;
 
   std::vector<bess::IGate *> igates_;
   std::vector<bess::OGate *> ogates_;
+  // Set of active workers accessing this module.
+  std::vector<bool> active_workers_;
+  // Set of tasks we have already accounted for when propagating workers.
+  std::vector<const ModuleTask *> visited_tasks_;
 
+ protected:
+  // TODO[apanda]: Move to some constraint structure?
+  // Placement constraints for this module. We use this to update the task based
+  // on all upstream tasks.
+  placement_constraint node_constraints_;
+
+  // The minimum number of workers that should be using this module.
+  int min_allowed_workers_;
+
+  // The maximum number of workers allowed to access this module. Should be set
+  // to greater than 1 iff the module is thread safe.
+  int max_allowed_workers_;
+
+  // Should workers be propagated. Set this to false for cases, e.g., `Queue`
+  // where upstream and downstream modules are called by different workers.
+  // Note, one should override the `AddActiveWorker` method in more complex
+  // cases.
+  bool propagate_workers_;
   DISALLOW_COPY_AND_ASSIGN(Module);
 };
 
@@ -331,6 +409,88 @@ inline void Module::RunNextModule(bess::PacketBatch *batch) {
   RunChooseModule(0, batch);
 }
 
+class Task;
+
+namespace bess {
+template <typename CallableTask>
+class LeafTrafficClass;
+}  // namespace bess
+
+// Stores the arguments of a task created by a module.
+class ModuleTask {
+ public:
+  // Doesn't take ownership of 'arg' and 'c'.  'c' can be null and it
+  // can be changed later with SetTC()
+  ModuleTask(void *arg, bess::LeafTrafficClass<Task> *c) : arg_(arg), c_(c) {}
+
+  ~ModuleTask() {}
+
+  void *arg() { return arg_; }
+
+  void SetTC(bess::LeafTrafficClass<Task> *c) { c_ = c; }
+
+  bess::LeafTrafficClass<Task> *GetTC() { return c_; }
+
+ private:
+  void *arg_;  // Auxiliary value passed to Module::RunTask().
+  bess::LeafTrafficClass<Task> *c_;  // Leaf TC associated with this task.
+};
+
+// Functor used by a leaf in a Worker's Scheduler to run a task in a module.
+class Task {
+ public:
+  // When this task is scheduled it will execute 'm' with 'arg'.
+  // When the associated leaf is created/destroyed, 't' will be updated.
+  Task(Module *m, void *arg, ModuleTask *t) : module_(m), arg_(arg), t_(t) {}
+
+  // Called when the leaf that owns this task is destroyed.
+  void Detach() {
+    if (t_) {
+      t_->SetTC(nullptr);
+    }
+  }
+
+  // Called when the leaf that owns this task is created.
+  void Attach(bess::LeafTrafficClass<Task> *c) {
+    if (t_) {
+      t_->SetTC(c);
+    }
+  }
+
+  struct task_result operator()(void) {
+    return module_->RunTask(arg_);
+  }
+
+  /*!
+   * Compute constraints for the pipeline starting at this task.
+   */
+  placement_constraint GetSocketConstraints() const {
+    if (module_) {
+      std::unordered_set<const Module *> visited;
+      return module_->ComputePlacementConstraints(&visited);
+    } else {
+      return UNCONSTRAINED_SOCKET;
+    }
+  }
+
+  /*!
+   * Add a worker to the set of workers that call this task.
+   */
+  void AddActiveWorker(int wid) {
+    if (module_) {
+      module_->AddActiveWorker(wid, t_);
+    }
+  }
+
+ private:
+  // Used by operator().
+  Module *module_;
+  void *arg_;
+
+  // Used to notify a module that a leaf is being created/destroyed.
+  ModuleTask *t_;
+};
+
 /* run all per-thread initializers */
 void init_module_worker(void);
 
@@ -352,28 +512,28 @@ static inline int is_active_gate(const std::vector<T *> &gates,
 
 // Unsafe, but faster version. for offset use Attribute_offset().
 template <typename T>
-inline T *_ptr_attr_with_offset(bess::metadata::mt_offset_t offset,
-                                bess::Packet *pkt) {
+static inline T *_ptr_attr_with_offset(bess::metadata::mt_offset_t offset,
+                                       const bess::Packet *pkt) {
   promise(offset >= 0);
-  uintptr_t addr = reinterpret_cast<uintptr_t>(pkt->metadata()) + offset;
+  uintptr_t addr = pkt->metadata<uintptr_t>() + offset;
   return reinterpret_cast<T *>(addr);
 }
 
 template <typename T>
-inline T _get_attr_with_offset(bess::metadata::mt_offset_t offset,
-                               bess::Packet *pkt) {
+static inline T _get_attr_with_offset(bess::metadata::mt_offset_t offset,
+                                      const bess::Packet *pkt) {
   return *_ptr_attr_with_offset<T>(offset, pkt);
 }
 
 template <typename T>
-inline void _set_attr_with_offset(bess::metadata::mt_offset_t offset,
-                                  bess::Packet *pkt, T val) {
+static inline void _set_attr_with_offset(bess::metadata::mt_offset_t offset,
+                                         bess::Packet *pkt, T val) {
   *(_ptr_attr_with_offset<T>(offset, pkt)) = val;
 }
 
 // Safe version.
 template <typename T>
-inline T *ptr_attr_with_offset(bess::metadata::mt_offset_t offset,
+static T *ptr_attr_with_offset(bess::metadata::mt_offset_t offset,
                                bess::Packet *pkt) {
   return bess::metadata::IsValidOffset(offset)
              ? _ptr_attr_with_offset<T>(offset, pkt)
@@ -381,16 +541,16 @@ inline T *ptr_attr_with_offset(bess::metadata::mt_offset_t offset,
 }
 
 template <typename T>
-inline T get_attr_with_offset(bess::metadata::mt_offset_t offset,
-                              bess::Packet *pkt) {
+static T get_attr_with_offset(bess::metadata::mt_offset_t offset,
+                              const bess::Packet *pkt) {
   return bess::metadata::IsValidOffset(offset)
              ? _get_attr_with_offset<T>(offset, pkt)
              : T();
 }
 
 template <typename T>
-inline void set_attr_with_offset(bess::metadata::mt_offset_t offset,
-                                 bess::Packet *pkt, T val) {
+static inline void set_attr_with_offset(bess::metadata::mt_offset_t offset,
+                                        bess::Packet *pkt, T val) {
   if (bess::metadata::IsValidOffset(offset)) {
     _set_attr_with_offset<T>(offset, pkt, val);
   }
@@ -399,48 +559,39 @@ inline void set_attr_with_offset(bess::metadata::mt_offset_t offset,
 // Slowest but easiest.
 // TODO(melvin): These ought to be members of Module
 template <typename T>
-inline T *ptr_attr(Module *m, int attr_id, bess::Packet *pkt) {
+static inline T *ptr_attr(Module *m, int attr_id, bess::Packet *pkt) {
   return ptr_attr_with_offset<T>(m->attr_offset(attr_id), pkt);
 }
 
 template <typename T>
-inline T get_attr(Module *m, int attr_id, bess::Packet *pkt) {
+static inline T get_attr(Module *m, int attr_id, const bess::Packet *pkt) {
   return get_attr_with_offset<T>(m->attr_offset(attr_id), pkt);
 }
 
 template <typename T>
-inline void set_attr(Module *m, int attr_id, bess::Packet *pkt, T val) {
+static inline void set_attr(Module *m, int attr_id, bess::Packet *pkt, T val) {
   set_attr_with_offset(m->attr_offset(attr_id), pkt, val);
 }
 
-// Define some common versions of the above functions
-#define INSTANTIATE_MT_FOR_TYPE(type)                                        \
-  template type *_ptr_attr_with_offset(bess::metadata::mt_offset_t offset,   \
-                                       bess::Packet *pkt);                   \
-  template type _get_attr_with_offset(bess::metadata::mt_offset_t offset,    \
-                                      bess::Packet *pkt);                    \
-  template void _set_attr_with_offset(bess::metadata::mt_offset_t offset,    \
-                                      bess::Packet *pkt, type val);          \
-  template type *ptr_attr_with_offset(bess::metadata::mt_offset_t offset,    \
-                                      bess::Packet *pkt);                    \
-  template type get_attr_with_offset(bess::metadata::mt_offset_t offset,     \
-                                     bess::Packet *pkt);                     \
-  template void set_attr_with_offset(bess::metadata::mt_offset_t offset,     \
-                                     bess::Packet *pkt, type val);           \
-  template type *ptr_attr<type>(Module * m, int attr_id, bess::Packet *pkt); \
-  template type get_attr<type>(Module * m, int attr_id, bess::Packet *pkt);  \
-  template void set_attr<>(Module * m, int attr_id, bess::Packet *pkt,       \
-                           type val);
+/*!
+ * Update information about what workers are accessing what module.
+ */
+void propagate_active_worker();
 
-INSTANTIATE_MT_FOR_TYPE(uint8_t)
-INSTANTIATE_MT_FOR_TYPE(uint16_t)
-INSTANTIATE_MT_FOR_TYPE(uint32_t)
-INSTANTIATE_MT_FOR_TYPE(uint64_t)
+#define DEF_MODULE(_MOD, _NAME_TEMPLATE, _HELP)                          \
+  class _MOD##_class {                                                   \
+   public:                                                               \
+    _MOD##_class() {                                                     \
+      ModuleBuilder::RegisterModuleClass(                                \
+          std::function<Module *()>([]() { return new _MOD(); }), #_MOD, \
+          _NAME_TEMPLATE, _HELP, _MOD::kNumIGates, _MOD::kNumOGates,     \
+          _MOD::cmds, MODULE_INIT_FUNC(&_MOD::Init));                    \
+    }                                                                    \
+    ~_MOD##_class() { ModuleBuilder::DeregisterModuleClass(#_MOD); }     \
+  };
 
-#define ADD_MODULE(_MOD, _NAME_TEMPLATE, _HELP)                              \
-  bool __module__##_MOD = ModuleBuilder::RegisterModuleClass(                \
-      std::function<Module *()>([]() { return new _MOD(); }), #_MOD,         \
-      _NAME_TEMPLATE, _HELP, _MOD::kNumIGates, _MOD::kNumOGates, _MOD::cmds, \
-      MODULE_INIT_FUNC(&_MOD::Init));
+#define ADD_MODULE(_MOD, _NAME_TEMPLATE, _HELP) \
+  DEF_MODULE(_MOD, _NAME_TEMPLATE, _HELP);      \
+  static _MOD##_class _MOD##_singleton;
 
 #endif  // BESS_MODULE_H_

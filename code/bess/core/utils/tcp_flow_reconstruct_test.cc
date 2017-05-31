@@ -32,7 +32,7 @@ class TcpFlowReconstructTest : public ::testing::TestWithParam<const char *> {
           << "Didn't capture the full packet.";
       Packet *p = new Packet();
       p->set_buffer(p->data());
-      memcpy(p->data(), pcap_pkt, pcap_hdr.caplen);
+      bess::utils::Copy(p->data(), pcap_pkt, pcap_hdr.caplen);
       p->set_data_len(pcap_hdr.caplen);
       p->set_total_len(pcap_hdr.caplen);
       pkts_.push_back(p);
@@ -86,7 +86,7 @@ TEST_F(TcpFlowReconstructTest, ReorderedReconstruction) {
 
   std::vector<Packet *> pkt_rotation;
   for (size_t i = 1; i < pkts_.size(); ++i) {
-    int ack_size = sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader);
+    int ack_size = sizeof(Ethernet) + sizeof(Ipv4) + sizeof(Tcp);
     // Skip pure ACK packets for the permutations
     if (pkts_[i]->head_len() > ack_size) {
       pkt_rotation.push_back(pkts_[i]);

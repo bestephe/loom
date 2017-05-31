@@ -98,7 +98,7 @@ void PortBuilder::InitDrivers() {
 bool PortBuilder::RegisterPortClass(
     std::function<Port *()> port_generator, const std::string &class_name,
     const std::string &name_template, const std::string &help_text,
-    std::function<pb_error_t(Port *, const google::protobuf::Any &)>
+    std::function<CommandResponse(Port *, const google::protobuf::Any &)>
         init_func) {
   all_port_builders_holder().emplace(
       std::piecewise_construct, std::forward_as_tuple(class_name),
@@ -130,22 +130,8 @@ const std::map<std::string, Port *> &PortBuilder::all_ports() {
 
 void Port::CollectStats(bool) {}
 
-pb_error_t Port::InitWithGenericArg(const google::protobuf::Any &arg) {
+CommandResponse Port::InitWithGenericArg(const google::protobuf::Any &arg) {
   return port_builder_->RunInit(this, arg);
-}
-
-pb_error_t Port::Init(const bess::pb::EmptyArg &) {
-  return pb_errno(0);
-}
-
-void Port::DeInit() {}
-
-int Port::RecvPackets(queue_t, bess::Packet **, int) {
-  return 0;
-}
-
-int Port::SendPackets(queue_t, bess::Packet **, int) {
-  return 0;
 }
 
 Port::PortStats Port::GetPortStats() {
@@ -253,9 +239,3 @@ void Port::ReleaseQueues(const struct module *m, packet_dir_t dir,
       users[dir][qid] = nullptr;
   }
 }
-
-/* XXX: Do we need this? Currently not being used anywhere */
-// void get_queue_stats(Port *p, packet_dir_t dir, queue_t qid,
-//                      struct packet_stats *stats) {
-//   memcpy(stats, &p->queue_stats[dir][qid], sizeof(*stats));
-// }

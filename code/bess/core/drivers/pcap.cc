@@ -1,24 +1,27 @@
 #include "pcap.h"
 
+#include <algorithm>
+#include <string>
+
 #include "../utils/pcap.h"
 
-pb_error_t PCAPPort::Init(const bess::pb::PCAPPortArg& arg) {
+CommandResponse PCAPPort::Init(const bess::pb::PCAPPortArg& arg) {
   if (pcap_handle_.is_initialized()) {
-    return pb_error(EINVAL, "Device already initialized.");
+    return CommandFailure(EINVAL, "Device already initialized.");
   }
 
   const std::string dev = arg.dev();
   pcap_handle_ = PcapHandle(dev);
 
   if (!pcap_handle_.is_initialized()) {
-    return pb_error(EINVAL, "Error initializing device.");
+    return CommandFailure(EINVAL, "Error initializing device.");
   }
 
   if (pcap_handle_.SetBlocking(false)) {
-    return pb_error(EINVAL, "Error initializing device.");
+    return CommandFailure(EINVAL, "Error initializing device.");
   }
 
-  return pb_errno(0);
+  return CommandSuccess();
 }
 
 void PCAPPort::DeInit() {
@@ -47,29 +50,31 @@ int PCAPPort::RecvPackets(queue_t qid, bess::Packet** pkts, int cnt) {
       break;
     }
 
-    if (caplen <= SNBUF_DATA) {
-      // pcap packet will fit in the mbuf, go ahead and copy.
-      rte_memcpy(sbuf->append(caplen), packet, caplen);
-    } else {
-/* FIXME: no support for chained mbuf for now */
-#if 0
-      /* Try read jumbo frame into multi mbufs. */
-      if (unlikely(pcap_rx_jumbo(sbuf->mbuf.pool,
-              &sbuf->mbuf,
-              packet,
-              caplen) == -1)) {
-        //drop all the mbufs.
-        bess::Packet::Free(sbuf);
-        break;
-      }
-#else
-      RTE_LOG(ERR, PMD, "Dropping PCAP packet: Size (%d) > max size (%d).\n",
-              sbuf->total_len(), SNBUF_DATA);
-      bess::Packet::Free(sbuf);
-      break;
-#endif
-    }
+    int copy_len = std::min(caplen, static_cast<int>(sbuf->tailroom()));
+    bess::utils::CopyInlined(sbuf->append(copy_len), packet, copy_len, true);
 
+    packet += copy_len;
+    caplen -= copy_len;
+    bess::Packet* m = sbuf;
+
+    int nb_segs = 1;
+    while (caplen > 0) {
+      m->set_next(bess::Packet::Alloc());
+      m = m->next();
+      nb_segs++;
+
+      // no headroom needed in chained mbufs
+      m->prepend(m->headroom());
+      m->set_data_len(0);
+      m->set_buffer(0);
+
+      copy_len = std::min(caplen, static_cast<int>(m->tailroom()));
+      bess::utils::Copy(m->append(copy_len), packet, copy_len, true);
+
+      packet += copy_len;
+      caplen -= copy_len;
+    }
+    sbuf->set_nb_segs(nb_segs);
     pkts[recv_cnt] = sbuf;
     recv_cnt++;
   }
@@ -79,7 +84,7 @@ int PCAPPort::RecvPackets(queue_t qid, bess::Packet** pkts, int cnt) {
 
 int PCAPPort::SendPackets(queue_t, bess::Packet** pkts, int cnt) {
   if (!pcap_handle_.is_initialized()) {
-    return 0;  // TODO: Would like to raise an error here...
+    CHECK(0);  // raise an error
   }
 
   int sent = 0;
@@ -105,7 +110,7 @@ int PCAPPort::SendPackets(queue_t, bess::Packet** pkts, int cnt) {
 
 void PCAPPort::GatherData(unsigned char* data, bess::Packet* pkt) {
   while (pkt) {
-    rte_memcpy(data, pkt->head_data(), pkt->head_len());
+    bess::utils::CopyInlined(data, pkt->head_data(), pkt->head_len());
 
     data += pkt->head_len();
     pkt = reinterpret_cast<bess::Packet*>(pkt->next());
