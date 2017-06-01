@@ -528,6 +528,10 @@ static void sn_set_tx_metadata(struct sk_buff *skb,
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		tx_meta->csum_start = skb_checksum_start_offset(skb);
 		tx_meta->csum_dest = tx_meta->csum_start + skb->csum_offset;
+
+                /* LOOM: DEBUG: */
+                /* TODO: ftrace instead? */
+                //log_info("CHECKSUM_PARTIAL: setting tx_meta\n");
 	} else  {
 		tx_meta->csum_start = SN_TX_CSUM_DONT;
 		tx_meta->csum_dest = SN_TX_CSUM_DONT;
@@ -562,6 +566,9 @@ static inline int sn_send_tx_queue(struct sn_queue *queue,
 	}
 #endif
 
+        /* LOOM: TODO: I don't feel like orphaning the skb is necessary here.
+	 * In particular, I feel like this breaks BQL (although so does
+	 * tricking Linux into not using Qdisc). */
 	skb_orphan(skb);
 
 	sn_set_tx_metadata(skb, &tx_meta);
@@ -593,6 +600,7 @@ skip_send:
 
 /* As a soft device without qdisc,
  * this function returns NET_XMIT_* instead of NETDEV_TX_* */
+/* TODO: LOOM: I want qdisc, so I should probably change the return value. */
 static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct sn_device *dev = netdev_priv(netdev);
@@ -697,9 +705,16 @@ extern const struct ethtool_ops sn_ethtool_ops;
 
 static void sn_set_offloads(struct net_device *netdev)
 {
-	netif_set_gso_max_size(netdev, SNBUF_DATA);
+	/* LOOM: DEBUG */
+	//netif_set_gso_max_size(netdev, SNBUF_DATA);
+	netif_set_gso_max_size(netdev, 2048);
 
-#if 0
+#ifdef LOOM
+	netdev->hw_features = NETIF_F_SG |
+			      NETIF_F_IP_CSUM |
+			      NETIF_F_TSO |
+			      NETIF_F_TSO_ECN;
+#elif 0
 	netdev->hw_features = NETIF_F_SG |
 			      NETIF_F_IP_CSUM |
 			      NETIF_F_RXCSUM |
@@ -817,7 +832,7 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 	/* This will disable the default qdisc (mq or pfifo_fast) on the
 	 * interface. We don't need qdisc since BESS already has its own.
 	 * Also see attach_default_qdiscs() in sch_generic.c */
-	netdev->tx_queue_len = 0;
+	//netdev->tx_queue_len = 0;
 
 	netdev->destructor = sn_netdev_destructor;
 

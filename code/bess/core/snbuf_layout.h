@@ -19,6 +19,9 @@
  *  * When packets are newly allocated, the data should be filled from _data.
  *  * The packet data may reside in the _headroom + _data areas,
  *    but its size must not exceed 1536 (SNBUF_DATA) when passed to a port.
+ *      * LOOM: This invariant has probably changed in someway to support TSO.
+ *        TODO.
+ *          * Queues becoming packet generators?
  */
 #define SNBUF_MBUF 128
 #define SNBUF_IMMUTABLE 64
@@ -26,7 +29,17 @@
 #define SNBUF_SCRATCHPAD 64
 #define SNBUF_RESERVE (SNBUF_IMMUTABLE + SNBUF_METADATA + SNBUF_SCRATCHPAD)
 #define SNBUF_HEADROOM 128
-#define SNBUF_DATA 2048
+
+/* LOOM change.  As a first step, just make the buffers larger.
+ *  TODO: Larger by some small amount?
+ * More long term, memory should be copied on demand to generate packets from
+ * queues. */
+//#define SNBUF_DATA 2048
+
+/* Note: pool_priv.mbuf_data_room_size is a unit16_t, and so this cannot be
+ * larger than 64KB if it is currently allocated with rte_* */
+//#define SNBUF_DATA 65536
+#define SNBUF_DATA 32768
 
 #define SNBUF_MBUF_OFF 0
 

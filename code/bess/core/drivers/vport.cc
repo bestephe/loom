@@ -11,9 +11,29 @@
 
 #include <rte_config.h>
 #include <rte_malloc.h>
+#include <rte_ether.h>
+#include <rte_ip.h>
+#include <rte_tcp.h>
 
 #include "../message.h"
 #include "../utils/format.h"
+
+#include "utils/checksum.h"
+#include "utils/ether.h"
+#include "utils/format.h"
+#include "utils/ip.h"
+//#include "utils/tcp.h"
+#include "utils/udp.h"
+
+using bess::utils::Ethernet;
+using bess::utils::Ipv4;
+using bess::utils::Udp;
+using bess::utils::Tcp;
+
+/* LOOM: TODO: this include and using the asserts it defines is probably not
+ * best practice coding style for this application. */
+//#include <gtest/gtest.h>
+#include <cassert>
 
 /* TODO: Unify vport and vport_native */
 
@@ -535,6 +555,84 @@ fail:
   return err;
 }
 
+#if 0
+static int do_ip_csum(struct bess::Packet *pkt, uint16_t csum_start,
+                    uint16_t csum_dest) {
+  uint16_t csum;
+
+  /* LOOM: TODO: Better error checking. */
+  assert(csum_dest != SN_TX_CSUM_DONT);
+
+  /* LOOM:XXX: This argument should be used and rte_raw_cksum should be used
+   * instead of rte_ipv4_cksum. */
+  csum_dest = csum_dest;
+
+  /* LOOM: DEBUG */
+  PLOG(INFO) << " performing SN_TX_CSUM offloading!";
+  PLOG(INFO) << "   csum_start:" << csum_start << ", csum_dest:" << csum_dest;
+
+  /* LOOM: IP header approach to checksumming */
+  //struct ipv4_hdr *ip;
+  //ip = pkt->head_data<struct ipv4_hdr *>(csum_start);
+  //csum = rte_ipv4_cksum(ip);
+  /* TODO: What byte order should this be in? */
+  //ip->hdr_checksum = rte_cpu_to_be_16(csum);
+  //ip->hdr_checksum = csum;
+  //PLOG(INFO) << "   original csum: " << ip->hdr_checksum << " (" << std::hex <<
+  //  ip->hdr_checksum << ")";
+
+  void *buf = pkt->head_data<void *>(csum_start);
+  csum = rte_raw_cksum(buf, csum_dest - csum_start);
+  uint16_t *pkt_csum = pkt->head_data<uint16_t *>(csum_dest);
+  PLOG(INFO) << "   original csum: " << *pkt_csum << " (0x" << std::hex <<
+    *pkt_csum << ")";
+  //*pkt_csum = csum;
+
+
+  /* LOOM: DEBUG */
+  PLOG(INFO) << "   new csum: " << csum << " (0x" << std::hex << csum << ")";
+  PLOG(INFO) << pkt->Dump();
+
+
+  return 0;
+}
+#endif
+
+/* LOOM: UGLY: */
+/* Rather than listening to the OS, just do what we know is correct. */
+static int do_ip_tcp_csum(struct bess::Packet *pkt) {
+#if 0
+  struct ether_hdr *eth = pkt->head_data<struct ether_hdr *>();
+  struct ipv4_hdr *ip = reinterpret_cast<struct ipv4_hdr *>(eth + 1);
+  struct tcp_hdr *tcp = reinterpret_cast<struct tcp_hdr *>(ip + 1);
+
+  /* LOOM: TODO: This could use utils/checksum.h (e.g.,
+   * CalculateIpv4TcpChecksum) */
+  ip->hdr_checksum = 0;
+  ip->hdr_checksum = rte_ipv4_cksum(ip);
+  tcp->cksum = 0;
+  tcp->cksum = rte_ipv4_udptcp_cksum(ip, tcp);
+
+  /* LOOM: DEBUG */
+  //PLOG(INFO) << " do_ip_tcp_csum: ip csum: " << std::hex << ip->hdr_checksum << ", tcp csum: " << std::hex << tcp->cksum;
+  //PLOG(INFO) << "   inverse tcp csum: " << std::hex << ~tcp->cksum;
+#else
+  struct Ethernet *eth = pkt->head_data<struct Ethernet *>();
+  struct Ipv4 *ip = reinterpret_cast<struct Ipv4 *>(eth + 1);
+  size_t ip_bytes = (ip->header_length) << 2;
+  void *l4 = reinterpret_cast<uint8_t *>(ip) + ip_bytes;
+  struct Tcp *tcp = reinterpret_cast<struct Tcp *>(l4);
+
+  ip->checksum = CalculateIpv4NoOptChecksum(*ip);
+  tcp->checksum = CalculateIpv4TcpChecksum(*ip, *tcp);
+
+  /* LOOM: DEBUG */
+  //PLOG(INFO) << " do_ip_tcp_csum: ip csum: " << std::hex << ip->checksum << ", tcp csum: " << std::hex << tcp->checksum;
+#endif
+
+  return 0;
+}
+
 int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   struct queue *tx_queue = &inc_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
@@ -551,18 +649,28 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   for (i = 0; i < cnt; i++) {
     bess::Packet *pkt;
     struct sn_tx_desc *tx_desc;
+    struct sn_tx_metadata *tx_meta;
     uint16_t len;
 
     pkt = pkts[i] = bess::Packet::from_paddr(paddr[i]);
 
     tx_desc = pkt->scratchpad<struct sn_tx_desc *>();
     len = tx_desc->total_len;
+    tx_meta = &tx_desc->meta;
 
     pkt->set_data_off(SNBUF_HEADROOM);
     pkt->set_total_len(len);
     pkt->set_data_len(len);
 
     /* TODO: process sn_tx_metadata */
+
+    /* Metadata: Process checksumming */
+    if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
+      //do_ip_csum(pkt, tx_meta->csum_start, tx_meta->csum_dest);
+      do_ip_tcp_csum(pkt);
+    }
+
+    /* LOOM: TODO: What additional information should be added to metadata? */
   }
 
   return cnt;

@@ -46,6 +46,9 @@
 	printk(KERN_ERR "%s - %s():%d " pr_fmt(fmt), MODULE_NAME, __func__,    \
 	       __LINE__, ##__VA_ARGS__)
 
+/* Used to enable Loom specific changes. */
+#define LOOM
+
 #define MAX_QUEUES 128
 
 #define MAX_BATCH 32
