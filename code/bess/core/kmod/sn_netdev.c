@@ -711,9 +711,9 @@ static void sn_set_offloads(struct net_device *netdev)
 
 #ifdef LOOM
 	netdev->hw_features = NETIF_F_SG |
-			      NETIF_F_IP_CSUM |
-			      NETIF_F_TSO |
-			      NETIF_F_TSO_ECN;
+			      NETIF_F_IP_CSUM;// |
+			      //NETIF_F_TSO |
+			      //NETIF_F_TSO_ECN;
 #elif 0
 	netdev->hw_features = NETIF_F_SG |
 			      NETIF_F_IP_CSUM |

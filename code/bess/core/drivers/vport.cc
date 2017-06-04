@@ -216,6 +216,9 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
 
   int i;
 
+  /* LOOM */
+  struct txq_private *txq_priv;
+
   bytes_per_llring = llring_bytes_with_slots(SLOTS_PER_LLRING);
 
   total_bytes = ROUND_TO_64(sizeof(struct sn_conf_space));
@@ -282,6 +285,15 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
                 SINGLE_P, SINGLE_C);
     out_qs_[i].sn_to_drv = reinterpret_cast<struct llring *>(ptr);
     ptr += ROUND_TO_64(bytes_per_llring);
+  }
+
+  for (i = 0; i < conf->num_txq; i++) {
+    /* LOOM: Initialize txq private data for TSO/Lookback/etc.
+     *  This could be done in its own function, but this function would need to
+     *  be a private member o the class as things are currently defined.  */
+    txq_priv = &inc_qs_[i].txq_priv;
+    txq_priv->seg_cnt = 0;
+    txq_priv->cur_seg = 0;
   }
 
   return bar;
@@ -601,26 +613,11 @@ static int do_ip_csum(struct bess::Packet *pkt, uint16_t csum_start,
 /* LOOM: UGLY: */
 /* Rather than listening to the OS, just do what we know is correct. */
 static int do_ip_tcp_csum(struct bess::Packet *pkt) {
-#if 0
-  struct ether_hdr *eth = pkt->head_data<struct ether_hdr *>();
-  struct ipv4_hdr *ip = reinterpret_cast<struct ipv4_hdr *>(eth + 1);
-  struct tcp_hdr *tcp = reinterpret_cast<struct tcp_hdr *>(ip + 1);
-
-  /* LOOM: TODO: This could use utils/checksum.h (e.g.,
-   * CalculateIpv4TcpChecksum) */
-  ip->hdr_checksum = 0;
-  ip->hdr_checksum = rte_ipv4_cksum(ip);
-  tcp->cksum = 0;
-  tcp->cksum = rte_ipv4_udptcp_cksum(ip, tcp);
-
-  /* LOOM: DEBUG */
-  //PLOG(INFO) << " do_ip_tcp_csum: ip csum: " << std::hex << ip->hdr_checksum << ", tcp csum: " << std::hex << tcp->cksum;
-  //PLOG(INFO) << "   inverse tcp csum: " << std::hex << ~tcp->cksum;
-#else
   struct Ethernet *eth = pkt->head_data<struct Ethernet *>();
   struct Ipv4 *ip = reinterpret_cast<struct Ipv4 *>(eth + 1);
   size_t ip_bytes = (ip->header_length) << 2;
   void *l4 = reinterpret_cast<uint8_t *>(ip) + ip_bytes;
+  /* XXX: BUG: Need to check to make sure the packet is TCP! */
   struct Tcp *tcp = reinterpret_cast<struct Tcp *>(l4);
 
   ip->checksum = CalculateIpv4NoOptChecksum(*ip);
@@ -628,11 +625,108 @@ static int do_ip_tcp_csum(struct bess::Packet *pkt) {
 
   /* LOOM: DEBUG */
   //PLOG(INFO) << " do_ip_tcp_csum: ip csum: " << std::hex << ip->checksum << ", tcp csum: " << std::hex << tcp->checksum;
-#endif
 
   return 0;
 }
 
+
+/* LOOM: TODO: at some point, I'd like to make segs from the kernel and packets
+ * inside of BESS different to reduce memory pressure. */
+/* Currently copy+pasta from the old RecvPackets. */
+int VPort::RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt) {
+  struct queue *tx_queue = &inc_qs_[qid];
+  phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
+  int cnt;
+  int i;
+
+  if (static_cast<size_t>(max_cnt) > bess::PacketBatch::kMaxBurst) {
+    max_cnt = bess::PacketBatch::kMaxBurst;
+  }
+  cnt = llring_sc_dequeue_burst(tx_queue->drv_to_sn, paddr, max_cnt);
+
+  refill_tx_bufs(tx_queue->sn_to_drv);
+
+  for (i = 0; i < cnt; i++) {
+    bess::Packet *seg;
+
+    struct sn_tx_desc *tx_desc;
+    //struct sn_tx_metadata *tx_meta;
+    uint16_t len;
+
+    seg = segs[i] = bess::Packet::from_paddr(paddr[i]);
+
+    /* This extra work is likely unnecessary */
+    tx_desc = seg->scratchpad<struct sn_tx_desc *>();
+    len = tx_desc->total_len;
+    //tx_meta = &tx_desc->meta;
+
+    seg->set_data_off(SNBUF_HEADROOM);
+    seg->set_total_len(len);
+    seg->set_data_len(len);
+  }
+
+  return cnt;
+}
+
+bess::Packet *VPort::SegPkt(queue_t qid) {
+  bess::Packet *pkt;
+  //struct queue *tx_queue = &inc_qs_[qid];
+  struct txq_private *txq_priv = &inc_qs_[qid].txq_priv;
+  struct sn_tx_desc *tx_desc;
+  struct sn_tx_metadata *tx_meta;
+
+  assert((txq_priv->cur_seg < txq_priv->seg_cnt) || (txq_priv->seg_cnt == 0));
+
+  if (txq_priv->seg_cnt == 0) {
+    return nullptr;
+  }
+
+  /* Just do passthrough for now. */
+  pkt = txq_priv->segs[txq_priv->cur_seg];
+  txq_priv->cur_seg++;
+
+  /* Do checksumming if needed. */
+  tx_desc = pkt->scratchpad<struct sn_tx_desc *>();
+  tx_meta = &tx_desc->meta;
+  if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
+    do_ip_tcp_csum(pkt);
+  }
+
+  /* Cleanup.  Should this be elsewhere? */
+  if (txq_priv->cur_seg >= txq_priv->seg_cnt) {
+    txq_priv->seg_cnt = 0;
+    txq_priv->cur_seg = 0;
+  }
+
+  return pkt;
+}
+
+
+int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
+  //struct queue *tx_queue = &inc_qs_[qid];
+  struct txq_private *txq_priv = &inc_qs_[qid].txq_priv;
+  bess::Packet *pkt;
+  int cnt = 0;
+
+  if (txq_priv->seg_cnt == 0) {
+    txq_priv->seg_cnt = this->RefillSegs(qid, txq_priv->segs, bess::PacketBatch::kMaxBurst);
+    txq_priv->cur_seg = 0;
+  }
+
+  pkt = this->SegPkt(qid);
+  while (cnt < max_cnt && pkt != nullptr) {
+    pkts[cnt] = pkt; 
+    cnt++;
+
+    pkt = this->SegPkt(qid);
+  }
+
+  return cnt;
+}
+
+/* LOOM: Just here to be a reference until the new TSO version is written. The
+ * old function should be deleted. */
+#if 0
 int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   struct queue *tx_queue = &inc_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
@@ -675,6 +769,7 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
 
   return cnt;
 }
+#endif
 
 int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   struct queue *rx_queue = &out_qs_[qid];

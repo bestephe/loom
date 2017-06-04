@@ -16,10 +16,21 @@ class VPort final : public Port {
   int SendPackets(queue_t qid, bess::Packet **pkts, int cnt) override;
 
  private:
+  /* Loom. Currently used to save TSO state. Maybe more in the future. */
+  struct txq_private {
+    int seg_cnt;
+    int cur_seg;
+    /* tso offset. */
+    bess::Packet *segs[bess::PacketBatch::kMaxBurst];
+  };
+
   struct queue {
     union {
       struct sn_rxq_registers *rx_regs;
     };
+
+    /* Loom. Probably in the wrong place? */
+    struct txq_private txq_priv;
 
     struct llring *drv_to_sn;
     struct llring *sn_to_drv;
@@ -30,6 +41,10 @@ class VPort final : public Port {
                  struct rx_queue_opts *rxq_opts);
   int SetIPAddrSingle(const std::string &ip_addr);
   CommandResponse SetIPAddr(const bess::pb::VPortArg &arg);
+
+  /* LOOM: Apologies for putting things in the wrong places. */
+  int RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt);
+  bess::Packet *SegPkt(queue_t qid);
 
   int fd_;
 
