@@ -18,10 +18,21 @@ class VPort final : public Port {
  private:
   /* Loom. Currently used to save TSO state. Maybe more in the future. */
   struct txq_private {
+    /* Current batch of segments. */
     int seg_cnt;
     int cur_seg;
-    /* tso offset. */
     bess::Packet *segs[bess::PacketBatch::kMaxBurst];
+    /* TODO: bess::Segment instead of bess::Packet. */
+
+    /* Pool of packets to allocate segments to. */
+    struct llring* segpktpool;
+
+    /* TSO state. */
+    uint16_t ip_offset;
+    uint16_t tcp_offset;
+    uint16_t tcp_hdrlen;
+    uint16_t payload_offset;
+    uint32_t seq;
   };
 
   struct queue {

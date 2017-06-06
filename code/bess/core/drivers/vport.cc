@@ -35,12 +35,16 @@ using bess::utils::Tcp;
 //#include <gtest/gtest.h>
 #include <cassert>
 
+/* LOOM: Used for segmentation. */
+#define FRAME_SIZE	1514		/* TODO: check pport MTU */
+
 /* TODO: Unify vport and vport_native */
 
 #define SLOTS_PER_LLRING 256
 
 #define REFILL_LOW 16
-#define REFILL_HIGH 32
+/* TODO: LOOM: Should this be bigger for segmentation offloading? */
+#define REFILL_HIGH 64
 
 /* This watermark is to detect congestion and cache bouncing due to
  * head-eating-tail (needs at least 8 slots less then the total ring slots).
@@ -85,6 +89,37 @@ static void refill_tx_bufs(struct llring *r) {
   DCHECK_EQ(ret, 0);
 }
 
+/* LOOM: UGLY.  I didn't want to uncessarily pay for getting a packet from its
+ * paddr though. */
+static void refill_segpktpool(struct llring *r) {
+  bess::Packet *pkts[REFILL_HIGH];
+  //phys_addr_t objs[REFILL_HIGH];
+
+  int deficit;
+  int ret;
+
+  int curr_cnt = llring_count(r);
+
+  if (curr_cnt >= REFILL_LOW)
+    return;
+
+  deficit = REFILL_HIGH - curr_cnt;
+
+  ret = bess::Packet::Alloc((bess::Packet **)pkts, deficit, 0);
+  if (ret == 0)
+    return;
+
+  //for (int i = 0; i < ret; i++) {
+  //  /* LOOM: This next line is pkts[i], not pkts[i]->paddr().  This is the only
+  //   * difference between refill_segpktpool and refill_tx_bufs. */
+  //  objs[i] = reinterpret_cast<phys_addr_t >(pkts[i]);
+  //}
+
+  //ret = llring_mp_enqueue_bulk(r, objs, ret);
+  ret = llring_mp_enqueue_bulk(r, reinterpret_cast<llring_addr_t*>(pkts), ret);
+  DCHECK_EQ(ret, 0);
+}
+
 static void drain_sn_to_drv_q(struct llring *q) {
   /* sn_to_drv queues contain physical address of packet buffers */
   for (;;) {
@@ -118,6 +153,22 @@ static void drain_drv_to_sn_q(struct llring *q) {
 
     bess::Packet::Free(bess::Packet::from_paddr(paddr));
   }
+}
+
+static void drain_and_free_segpktpool(struct llring *q) {
+  for (;;) {
+    bess::Packet *pkt;
+    int ret;
+
+    /* TODO: Should this use the phys_addr_t aproach taken in SegPkt as well? */
+    ret = llring_mc_dequeue(q, reinterpret_cast<llring_addr_t*>(&pkt));
+    if (ret)
+      break;
+
+    bess::Packet::Free(pkt);
+  }
+
+  std::free(q);
 }
 
 static void reclaim_packets(struct llring *ring) {
@@ -195,12 +246,17 @@ void VPort::FreeBar() {
   for (i = 0; i < conf->num_txq; i++) {
     drain_drv_to_sn_q(inc_qs_[i].drv_to_sn);
     drain_sn_to_drv_q(inc_qs_[i].sn_to_drv);
+
+    /* LOOM. Ugly. */
+    drain_and_free_segpktpool(inc_qs_[i].txq_priv.segpktpool);
+    inc_qs_[i].txq_priv.segpktpool = nullptr; /* Not necessary. */
   }
 
   for (i = 0; i < conf->num_rxq; i++) {
     drain_drv_to_sn_q(inc_qs_[i].drv_to_sn);
     drain_sn_to_drv_q(inc_qs_[i].sn_to_drv);
   }
+
 
   rte_free(bar_);
 }
@@ -290,10 +346,23 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   for (i = 0; i < conf->num_txq; i++) {
     /* LOOM: Initialize txq private data for TSO/Lookback/etc.
      *  This could be done in its own function, but this function would need to
-     *  be a private member o the class as things are currently defined.  */
+     *  be a private member of the class as things are currently defined.  */
+
+    size_t ring_sz = 0;
+    int ret;
+
     txq_priv = &inc_qs_[i].txq_priv;
-    txq_priv->seg_cnt = 0;
-    txq_priv->cur_seg = 0;
+    memset(txq_priv, 0, sizeof(*txq_priv));
+
+    /* I'm not sure using an llring as a pool of packets is the best idea here.
+     * */
+    ring_sz = llring_bytes_with_slots(SLOTS_PER_LLRING);
+    txq_priv->segpktpool = reinterpret_cast<struct llring*>(
+        aligned_alloc(alignof(llring), ring_sz));
+    CHECK(txq_priv->segpktpool);
+    ret = llring_init(txq_priv->segpktpool, SLOTS_PER_LLRING, SINGLE_P, SINGLE_C);
+    DCHECK_EQ(ret, 0);
+    refill_segpktpool(txq_priv->segpktpool);
   }
 
   return bar;
@@ -611,7 +680,9 @@ static int do_ip_csum(struct bess::Packet *pkt, uint16_t csum_start,
 #endif
 
 /* LOOM: UGLY: */
-/* Rather than listening to the OS, just do what we know is correct. */
+/* The OS (sn driver) provides csum_start and csum_dest.  However, following
+ * these wasn't working for me.  Rather than listening to the OS, just do what
+ * we know is correct. */
 static int do_ip_tcp_csum(struct bess::Packet *pkt) {
   struct Ethernet *eth = pkt->head_data<struct Ethernet *>();
   struct Ipv4 *ip = reinterpret_cast<struct Ipv4 *>(eth + 1);
@@ -668,8 +739,9 @@ int VPort::RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt) {
   return cnt;
 }
 
+/* LOOM. */
 bess::Packet *VPort::SegPkt(queue_t qid) {
-  bess::Packet *pkt;
+  bess::Packet *pkt, *seg;
   //struct queue *tx_queue = &inc_qs_[qid];
   struct txq_private *txq_priv = &inc_qs_[qid].txq_priv;
   struct sn_tx_desc *tx_desc;
@@ -681,15 +753,62 @@ bess::Packet *VPort::SegPkt(queue_t qid) {
     return nullptr;
   }
 
-  /* Just do passthrough for now. */
-  pkt = txq_priv->segs[txq_priv->cur_seg];
-  txq_priv->cur_seg++;
+  seg = txq_priv->segs[txq_priv->cur_seg];
 
-  /* Do checksumming if needed. */
-  tx_desc = pkt->scratchpad<struct sn_tx_desc *>();
-  tx_meta = &tx_desc->meta;
-  if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
-    do_ip_tcp_csum(pkt);
+  /* LOOM: I'd like to get rid of the need for this assert at some point. */
+  assert(seg->is_linear());
+
+  /* Just do passthrough if the segment is small enough. */
+  //if (seg->total_len() <= FRAME_SIZE) {
+  if (0) {
+    pkt = seg;
+
+    /* Do checksumming if needed. */
+    tx_desc = pkt->scratchpad<struct sn_tx_desc *>();
+    tx_meta = &tx_desc->meta;
+    if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
+      do_ip_tcp_csum(pkt);
+    }
+
+    /* Move on to the next segment. */
+    /* TODO: Unify this with the code in the else statement below? */
+    txq_priv->cur_seg++;
+  } else {
+
+    /* Just copy the segment for now. */
+
+    /* Get the new packet. */
+    int ret;
+    ret = llring_mc_dequeue(txq_priv->segpktpool, reinterpret_cast<llring_addr_t*>(&pkt));
+    if (ret) {
+      return nullptr;
+    }
+
+    /* LOOM: TODO: It seems better to use a pool Avoid allocating for every packet in a segment in the future. */
+    //if (!(pkt = bess::Packet::Alloc())) {
+    //  return nullptr;
+    //}
+
+    /* Initialize the new packet. */
+    /* Copy the segment into the new packet. */
+    pkt->set_data_off(SNBUF_HEADROOM);
+    bess::utils::CopyInlined(pkt->append(seg->total_len()), seg->head_data(),
+                             seg->total_len(), true);
+
+    /* Do checksumming if needed. */
+    tx_desc = seg->scratchpad<struct sn_tx_desc *>();
+    tx_meta = &tx_desc->meta;
+    if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
+      do_ip_tcp_csum(pkt);
+    }
+
+    /* Move on to the next segment. */
+    bess::Packet::Free(seg);
+    txq_priv->segs[txq_priv->cur_seg] = nullptr;
+    txq_priv->cur_seg++;
+
+    /* LOOM: DEBUG */
+    //PLOG(INFO) << "VPort::SegPkt: ignoring large segment for now.";
   }
 
   /* Cleanup.  Should this be elsewhere? */
@@ -712,6 +831,11 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
     txq_priv->seg_cnt = this->RefillSegs(qid, txq_priv->segs, bess::PacketBatch::kMaxBurst);
     txq_priv->cur_seg = 0;
   }
+
+  /* Is this slow? Should this be done somewhere else? */
+  /* LOOM: Note: internally, refill_tx_bufs does nothing unless the number of
+   * free packets are below a low water mark. */
+  refill_segpktpool(txq_priv->segpktpool);
 
   pkt = this->SegPkt(qid);
   while (cnt < max_cnt && pkt != nullptr) {
@@ -823,6 +947,8 @@ int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 
       rx_desc->next = seg_snb->paddr();
       rx_desc = next_desc;
+      /* LOOM: This line of code concerns me.  Shouldn't it be seg->next()
+       * instead of snb->next()? */
       seg = reinterpret_cast<bess::Packet *>(snb->next());
     }
   }
