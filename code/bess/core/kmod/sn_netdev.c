@@ -705,15 +705,18 @@ extern const struct ethtool_ops sn_ethtool_ops;
 
 static void sn_set_offloads(struct net_device *netdev)
 {
+#ifdef LOOM
 	/* LOOM: DEBUG */
 	//netif_set_gso_max_size(netdev, SNBUF_DATA);
-	netif_set_gso_max_size(netdev, 2048);
+	netif_set_gso_max_size(netdev, 65536);
+	//netif_set_gso_max_size(netdev, 16384);
 
-#ifdef LOOM
+	//netdev->hw_features = NETIF_F_SG |
+	//		      NETIF_F_IP_CSUM |
+	//		      NETIF_F_TSO |
+	//		      NETIF_F_TSO_ECN;
 	netdev->hw_features = NETIF_F_SG |
-			      NETIF_F_IP_CSUM;// |
-			      //NETIF_F_TSO |
-			      //NETIF_F_TSO_ECN;
+			      NETIF_F_IP_CSUM;
 #elif 0
 	netdev->hw_features = NETIF_F_SG |
 			      NETIF_F_IP_CSUM |

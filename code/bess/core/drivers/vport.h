@@ -28,11 +28,11 @@ class VPort final : public Port {
     struct llring* segpktpool;
 
     /* TSO state. */
-    uint16_t ip_offset;
-    uint16_t tcp_offset;
-    uint16_t tcp_hdrlen;
+    //uint16_t ip_offset;
+    //uint16_t tcp_offset;
+    //uint16_t tcp_hdrlen;
     uint16_t payload_offset;
-    uint32_t seq;
+    uint32_t seqoffset;
   };
 
   struct queue {

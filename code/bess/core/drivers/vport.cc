@@ -29,6 +29,8 @@ using bess::utils::Ethernet;
 using bess::utils::Ipv4;
 using bess::utils::Udp;
 using bess::utils::Tcp;
+using bess::utils::be16_t;
+using bess::utils::be32_t;
 
 /* LOOM: TODO: this include and using the asserts it defines is probably not
  * best practice coding style for this application. */
@@ -40,11 +42,11 @@ using bess::utils::Tcp;
 
 /* TODO: Unify vport and vport_native */
 
-#define SLOTS_PER_LLRING 256
+#define SLOTS_PER_LLRING 512
 
-#define REFILL_LOW 16
+#define REFILL_LOW 64
 /* TODO: LOOM: Should this be bigger for segmentation offloading? */
-#define REFILL_HIGH 64
+#define REFILL_HIGH 256
 
 /* This watermark is to detect congestion and cache bouncing due to
  * head-eating-tail (needs at least 8 slots less then the total ring slots).
@@ -248,6 +250,17 @@ void VPort::FreeBar() {
     drain_sn_to_drv_q(inc_qs_[i].sn_to_drv);
 
     /* LOOM. Ugly. */
+    /* TODO: Currently TSO is disabled GSO provides good enough performance, so
+     * this cleanup code is not needed. */
+    struct txq_private *txq_priv = &inc_qs_[i].txq_priv;
+    while (txq_priv->cur_seg < txq_priv->seg_cnt) {
+      bess::Packet::Free(txq_priv->segs[txq_priv->cur_seg]);
+      txq_priv->segs[txq_priv->cur_seg] = nullptr;
+      txq_priv->cur_seg++;
+    }
+    txq_priv->cur_seg = 0;
+    txq_priv->seg_cnt = 0;
+
     drain_and_free_segpktpool(inc_qs_[i].txq_priv.segpktpool);
     inc_qs_[i].txq_priv.segpktpool = nullptr; /* Not necessary. */
   }
@@ -343,6 +356,8 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
     ptr += ROUND_TO_64(bytes_per_llring);
   }
 
+  /* TODO: Currently TSO is disabled GSO provides good enough performance, so
+   * this initialization code is not needed. */
   for (i = 0; i < conf->num_txq; i++) {
     /* LOOM: Initialize txq private data for TSO/Lookback/etc.
      *  This could be done in its own function, but this function would need to
@@ -683,7 +698,7 @@ static int do_ip_csum(struct bess::Packet *pkt, uint16_t csum_start,
 /* The OS (sn driver) provides csum_start and csum_dest.  However, following
  * these wasn't working for me.  Rather than listening to the OS, just do what
  * we know is correct. */
-static int do_ip_tcp_csum(struct bess::Packet *pkt) {
+static int do_ip_tcp_csum(bess::Packet *pkt) {
   struct Ethernet *eth = pkt->head_data<struct Ethernet *>();
   struct Ipv4 *ip = reinterpret_cast<struct Ipv4 *>(eth + 1);
   size_t ip_bytes = (ip->header_length) << 2;
@@ -698,6 +713,55 @@ static int do_ip_tcp_csum(struct bess::Packet *pkt) {
   //PLOG(INFO) << " do_ip_tcp_csum: ip csum: " << std::hex << ip->checksum << ", tcp csum: " << std::hex << tcp->checksum;
 
   return 0;
+}
+
+static uint16_t get_payload_offset(bess::Packet *pkt) {
+  struct Ethernet *eth = pkt->head_data<struct Ethernet *>();
+  struct Ipv4 *ip = reinterpret_cast<struct Ipv4 *>(eth + 1);
+  size_t ip_bytes = (ip->header_length) << 2;
+  void *l4 = reinterpret_cast<uint8_t *>(ip) + ip_bytes;
+  /* XXX: BUG: Need to check to make sure the packet is TCP! */
+  struct Tcp *tcp = reinterpret_cast<struct Tcp *>(l4);
+
+  int org_frame_len = pkt->total_len();
+  uint16_t tcp_hdrlen = (tcp->offset * 4);
+  const char *datastart = ((const char *)tcp) + tcp_hdrlen;
+  uint16_t payload_offset = (uint16_t)(datastart - pkt->head_data<char *>());
+
+  if (payload_offset > org_frame_len) {
+    payload_offset = org_frame_len;
+  }
+
+  return payload_offset;
+}
+
+static void do_tso(bess::Packet *pkt, uint32_t seqoffset, int first, int last) {
+  /* LOOM: TODO: These could be saved instead of parsed for each packet. */
+  struct Ethernet *eth = pkt->head_data<struct Ethernet *>();
+  struct Ipv4 *ip = reinterpret_cast<struct Ipv4 *>(eth + 1);
+  size_t ip_bytes = (ip->header_length) << 2;
+  void *l4 = reinterpret_cast<uint8_t *>(ip) + ip_bytes;
+  /* XXX: BUG: Need to check to make sure the packet is TCP! */
+  struct Tcp *tcp = reinterpret_cast<struct Tcp *>(l4);
+
+  uint32_t seq = tcp->seq_num.value();
+  uint16_t new_ip_total_len = pkt->total_len() -
+    (reinterpret_cast<uint8_t *>(ip) - pkt->head_data<uint8_t *>()); /* Check. */
+
+  /* Update the IP header. */
+  ip->length = be16_t(new_ip_total_len);
+  
+  /* Update the TCP Header. */
+  tcp->seq_num = be32_t(seq + seqoffset);
+  if (!first) /* CWR only for the first packet */
+    tcp->flags &= 0x7f;	
+  if (!last) /* PSH and FIN only for the last packet */
+    tcp->flags &= 0xf6;
+
+  /* LOOM: TODO: Check the packet type.  Also, VXLAN. */
+
+  /* Just assume checksumming is needed. */
+  do_ip_tcp_csum(pkt);
 }
 
 
@@ -734,6 +798,9 @@ int VPort::RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt) {
     seg->set_data_off(SNBUF_HEADROOM);
     seg->set_total_len(len);
     seg->set_data_len(len);
+
+    /* LOOM: DEBUG */
+    //PLOG(INFO) << "VPort::RefillSegs: received a segment of size: " << len;
   }
 
   return cnt;
@@ -754,13 +821,19 @@ bess::Packet *VPort::SegPkt(queue_t qid) {
   }
 
   seg = txq_priv->segs[txq_priv->cur_seg];
+  if (txq_priv->payload_offset == 0) {
+    txq_priv->payload_offset = get_payload_offset(seg);
+    assert(txq_priv->seqoffset == 0);
+  }
+  assert(txq_priv->payload_offset > 0);
+  assert(txq_priv->payload_offset <= seg->total_len());
 
-  /* LOOM: I'd like to get rid of the need for this assert at some point. */
+  /* LOOM: TODO: I'd like to get rid of the need for this assert at some point. */
   assert(seg->is_linear());
 
   /* Just do passthrough if the segment is small enough. */
-  //if (seg->total_len() <= FRAME_SIZE) {
-  if (0) {
+  /* LOOM: TODO: Check an mtu? */
+  if (seg->total_len() <= FRAME_SIZE) {
     pkt = seg;
 
     /* Do checksumming if needed. */
@@ -773,54 +846,76 @@ bess::Packet *VPort::SegPkt(queue_t qid) {
     /* Move on to the next segment. */
     /* TODO: Unify this with the code in the else statement below? */
     txq_priv->cur_seg++;
-  } else {
 
-    /* Just copy the segment for now. */
+  /* Slice of a packet from the current segment. */
+  } else {
+    int org_frame_len = seg->total_len();
+    int max_seg_size = FRAME_SIZE - txq_priv->payload_offset;
+    int seg_size = std::min(max_seg_size,
+      org_frame_len - (int) txq_priv->payload_offset - (int) txq_priv->seqoffset);
+
+    int ret;
+    int first, last;
+
+    /* LOOM: DEBUG */
+    //PLOG(INFO) << "VPort::SegPkt: segmenting a large packet of size: " << org_frame_len;
 
     /* Get the new packet. */
-    int ret;
     ret = llring_mc_dequeue(txq_priv->segpktpool, reinterpret_cast<llring_addr_t*>(&pkt));
     if (ret) {
       return nullptr;
     }
-
-    /* LOOM: TODO: It seems better to use a pool Avoid allocating for every packet in a segment in the future. */
+    /* LOOM: TODO: It seems better to use a pool to avoid allocating for every
+     * packet in a segment in the future. */
     //if (!(pkt = bess::Packet::Alloc())) {
     //  return nullptr;
     //}
 
-    /* Initialize the new packet. */
-    /* Copy the segment into the new packet. */
+    /* Initialize the new packet and copy both the headers and payload. */
     pkt->set_data_off(SNBUF_HEADROOM);
-    bess::utils::CopyInlined(pkt->append(seg->total_len()), seg->head_data(),
-                             seg->total_len(), true);
+    bess::utils::CopyInlined(pkt->append(txq_priv->payload_offset), seg->head_data(),
+                             txq_priv->payload_offset, true);
+    bess::utils::CopyInlined(pkt->append(seg_size), seg->head_data<char*>() +
+                             txq_priv->payload_offset + txq_priv->seqoffset,
+                             seg_size, true);
 
-    /* Do checksumming if needed. */
-    tx_desc = seg->scratchpad<struct sn_tx_desc *>();
-    tx_meta = &tx_desc->meta;
-    if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
-      do_ip_tcp_csum(pkt);
-    }
+    /* Do the TSO IP/TCP header updates. */
+    first = (txq_priv->seqoffset == 0);
+    last = ((int) txq_priv->payload_offset + (int) txq_priv->seqoffset + 
+      max_seg_size >= org_frame_len);
+    do_tso(pkt, txq_priv->seqoffset, first, last);
+
+    /* Update the seqoffset. */
+    txq_priv->seqoffset += seg_size; //or max_seg_size?
 
     /* Move on to the next segment. */
-    bess::Packet::Free(seg);
-    txq_priv->segs[txq_priv->cur_seg] = nullptr;
-    txq_priv->cur_seg++;
-
-    /* LOOM: DEBUG */
-    //PLOG(INFO) << "VPort::SegPkt: ignoring large segment for now.";
+    if ((int) txq_priv->payload_offset + (int) txq_priv->seqoffset >=
+        org_frame_len) {
+      bess::Packet::Free(seg);
+      txq_priv->segs[txq_priv->cur_seg] = nullptr;
+      txq_priv->cur_seg++;
+      txq_priv->payload_offset = 0;
+      txq_priv->seqoffset = 0;
+    }
   }
 
   /* Cleanup.  Should this be elsewhere? */
   if (txq_priv->cur_seg >= txq_priv->seg_cnt) {
     txq_priv->seg_cnt = 0;
     txq_priv->cur_seg = 0;
+    txq_priv->payload_offset = 0;
+    txq_priv->seqoffset = 0;
   }
 
   return pkt;
 }
 
 
+/* LOOM: This code is left over from a *partially* working implementation of
+ * TSO.  For now, the TSO implementation is being abandoned because GSO is good
+ * enough.  This is just here to be a reference or fallback for now.  It may be
+ * useful in getting BQL and TCP Small Queues. */
+#if 0
 int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   //struct queue *tx_queue = &inc_qs_[qid];
   struct txq_private *txq_priv = &inc_qs_[qid].txq_priv;
@@ -833,7 +928,7 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   }
 
   /* Is this slow? Should this be done somewhere else? */
-  /* LOOM: Note: internally, refill_tx_bufs does nothing unless the number of
+  /* LOOM: Note: internally, refill_segpktpool does nothing unless the number of
    * free packets are below a low water mark. */
   refill_segpktpool(txq_priv->segpktpool);
 
@@ -845,12 +940,15 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
     pkt = this->SegPkt(qid);
   }
 
+  /* LOOM: DEBUG */
+  //if (cnt > 0) {
+  //  PLOG(INFO) << "VPort::RecvPackets: returning a batch of size: " << cnt;
+  //}
+
   return cnt;
 }
+#endif
 
-/* LOOM: Just here to be a reference until the new TSO version is written. The
- * old function should be deleted. */
-#if 0
 int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   struct queue *tx_queue = &inc_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
@@ -893,7 +991,6 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
 
   return cnt;
 }
-#endif
 
 int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   struct queue *rx_queue = &out_qs_[qid];
