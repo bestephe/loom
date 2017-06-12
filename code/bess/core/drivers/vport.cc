@@ -291,7 +291,7 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   bytes_per_llring = llring_bytes_with_slots(SLOTS_PER_LLRING);
 
   total_bytes = ROUND_TO_64(sizeof(struct sn_conf_space));
-  total_bytes += num_queues[PACKET_DIR_INC] * 2 * ROUND_TO_64(bytes_per_llring);
+  total_bytes += num_queues[PACKET_DIR_INC] * 3 * ROUND_TO_64(bytes_per_llring);
   total_bytes += num_queues[PACKET_DIR_OUT] *
                  (ROUND_TO_64(sizeof(struct sn_rxq_registers)) +
                   2 * ROUND_TO_64(bytes_per_llring));
@@ -335,6 +335,12 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
                 SINGLE_P, SINGLE_C);
     refill_tx_bufs(reinterpret_cast<struct llring *>(ptr));
     inc_qs_[i].sn_to_drv = reinterpret_cast<struct llring *>(ptr);
+    ptr += ROUND_TO_64(bytes_per_llring);
+
+    /* Pkt Pool */
+    /* Ignore. Used only internally by the driver. */
+    llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
+                SINGLE_P, SINGLE_C);
     ptr += ROUND_TO_64(bytes_per_llring);
   }
 

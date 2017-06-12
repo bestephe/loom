@@ -65,6 +65,7 @@ struct sn_queue {
 
 	struct llring *drv_to_sn;
 	struct llring *sn_to_drv;
+        struct llring *pktpool;
 
 	union {
 		struct {

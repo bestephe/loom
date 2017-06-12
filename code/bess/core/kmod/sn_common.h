@@ -119,6 +119,8 @@ struct sn_tx_metadata {
 	 * if no checksumming is wanted (csum_dest is undefined).*/
 	uint16_t csum_start;
 	uint16_t csum_dest;
+
+        uint64_t skb_opaque;
 };
 
 struct sn_tx_desc {
@@ -161,8 +163,10 @@ struct sn_rx_desc {
  * struct sn_conf_space (set by BESS and currently read-only)
  * TX queue 0 llring (drv -> sn)
  * TX queue 0 llring (sn -> drv)
+ * TX queue 0 llring (pkt pool)
  * TX queue 1 llring (drv -> sn)
  * TX queue 1 llring (sn -> drv)
+ * TX queue 1 llring (pkt pool)
  * ...
  * RX queue 0 registers
  * RX queue 0 llring (drv -> sn)
@@ -172,6 +176,8 @@ struct sn_rx_desc {
  * RX queue 1 llring (sn -> drv)
  * ...
  */
+/* LOOM Change: to implement BQL and avoid breaking TCP Small Queues, a third
+ * llring for use by the driver is used. */
 
 /* TX:
  * BESS feeds buffers to the driver via the sn_to_drv llring, in this order:
@@ -193,5 +199,15 @@ struct sn_rx_desc {
  * and writeback the cookie via the drv_to_sn.
  *   1. Cookie
  */
+
+/* LOOM: BQL and TCP Small Queues (TSQ) rely on the fact that BQL counters
+ * and skb's are freed only after the NIC has finished transmitting the skb
+ * on the wire.  Currently, the implementation of SoftNIC breaks this.
+ * Ideally, the SoftNIC driver would only update BQL and free skb's after
+ * sending packets to the wire (DPDK).  As a first step, I am modifying SN
+ * so that the driver -> BESS passes an opaque pointer to an skb.  Once
+ * BESS has at least touched the packet and sent it further down the
+ * pipeline will BESS -> driver return the opaque skb pointer so that the
+ * driver can then free it and update BQL. */
 
 #endif

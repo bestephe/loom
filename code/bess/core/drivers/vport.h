@@ -45,6 +45,8 @@ class VPort final : public Port {
 
     struct llring *drv_to_sn;
     struct llring *sn_to_drv;
+    /* Third tx queue ignored by the driver for now. */
+    /* struct llring *pktpool; */ 
   };
 
   void FreeBar();

@@ -139,6 +139,9 @@ static int sn_alloc_queues(struct sn_device *dev,
 		queue->sn_to_drv = (struct llring *)p;
 		p += llring_bytes(queue->sn_to_drv);
 
+		queue->pktpool = (struct llring *)p;
+		p += llring_bytes(queue->pktpool);
+
 		queue++;
 	}
 
@@ -567,8 +570,8 @@ static inline int sn_send_tx_queue(struct sn_queue *queue,
 #endif
 
         /* LOOM: TODO: I don't feel like orphaning the skb is necessary here.
-	 * In particular, I feel like this breaks BQL (although so does
-	 * tricking Linux into not using Qdisc). */
+	 * In particular, I feel like this breaks TCP Small Queues (although so
+	 * does tricking Linux into not using Qdisc). */
 	skb_orphan(skb);
 
 	sn_set_tx_metadata(skb, &tx_meta);
