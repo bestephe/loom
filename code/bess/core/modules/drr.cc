@@ -31,7 +31,9 @@ DRR::DRR()
       max_queue_size_(kFlowQueueMax),
       max_number_flows_(kDefaultNumFlows),
       flow_ring_(nullptr),
-      current_flow_(nullptr) {}
+      current_flow_(nullptr) {
+        is_task_ = true;
+      }
 
 DRR::~DRR() {
   for (auto it = flows_.begin(); it != flows_.end();) {
@@ -115,8 +117,15 @@ void DRR::ProcessBatch(bess::PacketBatch* batch) {
 }
 
 struct task_result DRR::RunTask(void*) {
+  if (children_overload_ > 0) {
+    return {
+      .block = true,
+      .packets = 0,
+      .bits = 0,
+    };
+  }
+
   bess::PacketBatch batch;
-  struct task_result ret;
   int err = 0;
   batch.clear();
   uint32_t total_bytes = 0;
@@ -130,11 +139,9 @@ struct task_result DRR::RunTask(void*) {
   }
 
   // the number of bits inserted into the packet batch
-  uint64_t cnt = batch.cnt();
+  uint32_t cnt = batch.cnt();
   uint64_t bits_retrieved = (total_bytes + cnt * kPacketOverhead) * 8;
-  ret = (struct task_result){.packets = cnt, .bits = bits_retrieved};
-
-  return ret;
+  return {.block = (cnt == 0), .packets = cnt, .bits = bits_retrieved};
 }
 
 uint32_t DRR::GetNextBatch(bess::PacketBatch* batch, int* err) {

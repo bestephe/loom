@@ -1,7 +1,3 @@
-import sugar
-from module import *
-from port import *
-
 ## CRASH TESTS ##
 rd0 = RandomDrop(drop_rate=0)
 CRASH_TEST_INPUTS.append([rd0, 1, 1])
@@ -23,14 +19,14 @@ def create_drop_test(rate):
         src = Source()
         rd2 = RandomDrop(drop_rate=rate)
         rwtemp = [
-            gen_packet(
+            bytes(gen_packet(
                 scapy.UDP,
                 "172.12.0.3",
-                "127.12.0.4"),
-            gen_packet(
+                "127.12.0.4")),
+            bytes(gen_packet(
                 scapy.TCP,
                 "192.168.32.4",
-                "1.2.3.4")]
+                "1.2.3.4"))]
         a = Measure()
         b = Measure()
         src -> b -> Rewrite(templates=rwtemp) -> rd2 -> a -> Sink()

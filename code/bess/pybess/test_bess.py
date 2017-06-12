@@ -1,10 +1,12 @@
+from __future__ import absolute_import
 import unittest
-import bess_msg_pb2 as bess_msg
-import service_pb2
 import grpc
-import bess
 import time
 from concurrent import futures
+
+from . import bess
+from . import bess_msg_pb2 as bess_msg
+from . import service_pb2
 
 
 class TestServiceImpl(service_pb2.BESSControlServicer):
@@ -30,13 +32,16 @@ class TestServiceImpl(service_pb2.BESSControlServicer):
 
 
 class TestBESS(unittest.TestCase):
+    # Do not use BESS.DEF_PORT (== 10514), as it might be being used by
+    # a real bessd process.
+    PORT = 19876
 
     def setUp(self):
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
         service_pb2.add_BESSControlServicer_to_server(
             TestServiceImpl(),
             self.server)
-        self.server.add_insecure_port('[::]:%d' % bess.BESS.DEF_PORT)
+        self.server.add_insecure_port('[::]:%d' % self.PORT)
         self.server.start()
 
     def tearDown(self):
@@ -44,31 +49,31 @@ class TestBESS(unittest.TestCase):
 
     def test_connect(self):
         client = bess.BESS()
-        client.connect()
-        time.sleep(1)
+        client.connect(port=self.PORT)
+        time.sleep(0.1)
         self.assertEqual(True, client.is_connected())
 
         client.disconnect()
-        time.sleep(1)
+        time.sleep(0.1)
         self.assertEqual(False, client.is_connected())
 
     def test_kill(self):
         client = bess.BESS()
-        client.connect()
+        client.connect(port=self.PORT)
 
         response = client.kill(block=False)
         self.assertEqual(0, response.error.code)
 
     def test_list_modules(self):
         client = bess.BESS()
-        client.connect()
+        client.connect(port=self.PORT)
 
         response = client.list_modules()
         self.assertEqual(0, response.error.code)
 
     def test_create_port(self):
         client = bess.BESS()
-        client.connect()
+        client.connect(port=self.PORT)
 
         response = client.create_port('PCAPPort', 'p0', {'dev': 'rnd'})
         self.assertEqual(0, response.error.code)
@@ -100,11 +105,11 @@ class TestBESS(unittest.TestCase):
 
     def test_run_module_command(self):
         client = bess.BESS()
-        client.connect()
+        client.connect(port=self.PORT)
 
         response = client.run_module_command('m1',
                                              'add',
                                              'ExactMatchCommandAddArg',
                                              {'gate': 0,
-                                              'fields': ['\x11', '\x22']})
+                                              'fields': [b'\x11', b'\x22']})
         self.assertEqual(0, response.error.code)
