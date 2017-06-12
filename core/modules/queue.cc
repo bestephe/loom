@@ -47,6 +47,10 @@ int Queue::Resize(int slots) {
 
   queue_ = new_queue;
 
+  if (backpressure_) {
+    AdjustWaterLevels();
+  }
+
   return 0;
 }
 
@@ -61,12 +65,18 @@ CommandResponse Queue::Init(const bess::pb::QueueArg &arg) {
 
   burst_ = bess::PacketBatch::kMaxBurst;
 
+  if (arg.backpressure()) {
+    LOG(INFO) << "Backpressure enabled";
+    backpressure_ = true;
+  }
+
   if (arg.size() != 0) {
     err = SetSize(arg.size());
     if (err.error().code() != 0) {
       return err;
     }
   } else {
+    size_ = DEFAULT_QUEUE_SIZE;
     int ret = Resize(DEFAULT_QUEUE_SIZE);
     if (ret) {
       return CommandFailure(-ret);
@@ -101,6 +111,9 @@ std::string Queue::GetDesc() const {
 void Queue::ProcessBatch(bess::PacketBatch *batch) {
   int queued =
       llring_mp_enqueue_burst(queue_, (void **)batch->pkts(), batch->cnt());
+  if (backpressure_ && llring_count(queue_) > high_water_) {
+    SignalOverload();
+  }
 
   if (queued < batch->cnt()) {
     bess::Packet::Free(batch->pkts() + queued, batch->cnt() - queued);
@@ -109,36 +122,46 @@ void Queue::ProcessBatch(bess::PacketBatch *batch) {
 
 /* to downstream */
 struct task_result Queue::RunTask(void *) {
+  if (children_overload_ > 0) {
+    return {
+        .block = true, .packets = 0, .bits = 0,
+    };
+  }
+
   bess::PacketBatch batch;
-  struct task_result ret;
 
   const int burst = ACCESS_ONCE(burst_);
   const int pkt_overhead = 24;
 
   uint64_t total_bytes = 0;
 
-  uint64_t cnt = llring_sc_dequeue_burst(queue_, (void **)batch.pkts(), burst);
+  uint32_t cnt = llring_sc_dequeue_burst(queue_, (void **)batch.pkts(), burst);
 
-  if (cnt > 0) {
-    batch.set_cnt(cnt);
-    RunNextModule(&batch);
+  if (cnt == 0) {
+    return {.block = true, .packets = 0, .bits = 0};
+  }
+
+  batch.set_cnt(cnt);
+  RunNextModule(&batch);
+
+  if (backpressure_ && llring_count(queue_) < low_water_) {
+    SignalUnderload();
   }
 
   if (prefetch_) {
-    for (uint64_t i = 0; i < cnt; i++) {
+    for (uint32_t i = 0; i < cnt; i++) {
       total_bytes += batch.pkts()[i]->total_len();
       rte_prefetch0(batch.pkts()[i]->head_data());
     }
   } else {
-    for (uint64_t i = 0; i < cnt; i++)
+    for (uint32_t i = 0; i < cnt; i++) {
       total_bytes += batch.pkts()[i]->total_len();
+    }
   }
 
-  ret = (struct task_result){
-      .packets = cnt, .bits = (total_bytes + cnt * pkt_overhead) * 8,
-  };
-
-  return ret;
+  return {.block = false,
+          .packets = cnt,
+          .bits = (total_bytes + cnt * pkt_overhead) * 8};
 }
 
 CommandResponse Queue::CommandSetBurst(
@@ -167,12 +190,19 @@ CommandResponse Queue::SetSize(uint64_t size) {
   if (ret) {
     return CommandFailure(-ret);
   }
+  size_ = size;
+
   return CommandSuccess();
 }
 
 CommandResponse Queue::CommandSetSize(
     const bess::pb::QueueCommandSetSizeArg &arg) {
   return SetSize(arg.size());
+}
+
+void Queue::AdjustWaterLevels() {
+  high_water_ = static_cast<uint64_t>(size_ * kHighWaterRatio);
+  low_water_ = static_cast<uint64_t>(size_ * kLowWaterRatio);
 }
 
 CheckConstraintResult Queue::CheckModuleConstraints() const {

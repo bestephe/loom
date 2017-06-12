@@ -1,7 +1,3 @@
-import sugar
-from module import *
-from port import *
-
 ## CRASH TESTS ##
 # Create a module and specify how many input and output ports it has.
 # Test will generate a bunch of UDP packets and feed them in on all of the input ports,
@@ -82,17 +78,18 @@ def my_bonus_acl_test():
                       'drop': False}])
     src = Source()
     rwtemp = [
-        gen_packet(
+        bytes(gen_packet(
             scapy.UDP,
             "172.12.0.3",
-            "127.12.0.4"),
-        gen_packet(
+            "127.12.0.4")),
+        bytes(gen_packet(
             scapy.TCP,
             "192.168.32.4",
-            "1.2.3.4")]
+            "1.2.3.4"))]
     src -> Rewrite(templates=rwtemp) -> fw5 -> Sink()
     bess.resume_all()
     time.sleep(15)
     bess.pause_all()
+
 
 CUSTOM_TEST_FUNCTIONS.append(my_bonus_acl_test)
