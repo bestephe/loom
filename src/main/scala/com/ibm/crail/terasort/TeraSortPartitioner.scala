@@ -55,23 +55,22 @@ object TeraSortPartitioner {
 case class TeraSortPartitionerInt(numPartitions: Int) extends Partitioner{
 
   import TeraSortPartitionerInt._
+  require (numPartitions < (1 << 24))
 
-  val rem = diffInt % numPartitions
-  val rangePerPartInt =
-  if(rem == 0)
-    diffInt/numPartitions
-  else
-    (diffInt + (numPartitions - rem))/numPartitions
+  val rangePerPartInt = diffInt.toDouble / numPartitions
 
   override def getPartition(key: Any): Int = {
     val b = key.asInstanceOf[Array[Byte]]
     val prefix = Ints.fromBytes(0, b(0), b(1), b(2))
-    prefix / rangePerPartInt
+    (prefix / rangePerPartInt).toInt
   }
 }
 
 object TeraSortPartitionerInt {
   val minInt = Ints.fromBytes(0, 0, 0, 0)
   val maxInt = Ints.fromBytes(0, -1, -1, -1)  // 0xff = -1
-  val diffInt = maxInt - minInt
+  /* as far as remember, +1 is to ensure that one last bucket is not rounded off when divided in getPartition()
+  function. We need to think of a working example to demonstrate this. But for now, trust us.
+   */
+  val diffInt = (maxInt - minInt) + 1
 }
