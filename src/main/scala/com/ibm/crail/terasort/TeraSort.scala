@@ -61,6 +61,7 @@ object TeraSort {
         " ) needs to be a multiple of TeraSort record size " + TeraInputFormat.RECORD_LEN)
       System.exit(-1)
     }
+    val warnings = new StringBuilder
 
     println(" ##############################")
     println(options.getBanner)
@@ -133,9 +134,9 @@ object TeraSort {
           exe += " serializer : byte "
         }else if (options.isSerializerF22) {
           //TODO: printout warning to make sure
-          println("-------------------------------------------")
-          println("F22 can only be loaded by spark-default config")
-          println("-------------------------------------------")
+          warnings.append("-------------------------------------------\n")
+          warnings.append("F22 can only be loaded by conf/spark-defaults.conf file by setting spark.crail.serializer property\n")
+          warnings.append("-------------------------------------------\n")
           exe += " serializer : F22 (Warning: F22 can only be loaded by spark-default config) "
         } else {
           exe += " noSerializer + "
@@ -162,6 +163,8 @@ object TeraSort {
       println("-------------------------------------------")
       println("Execution time: %.3fsec".format((end-beg)/1000.0) + " partition size was: " + dataset.partitions.length)
       println("-------------------------------------------")
+      println("Warnings (if any)...")
+      println(warnings.mkString)
     }
     finally {
       if( scin.isEmpty ) {

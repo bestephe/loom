@@ -176,7 +176,7 @@ Using `f22` serializer requires you to set crail-terasort specific
 sorter as well. You must set 
 ```
 spark.crail.shuffle.sorter     com.ibm.crail.terasort.sorter.CrailShuffleNativeRadixSorter
-spark.crail.shuffle.serializer com.ibm.crail.terasort.serializer.F22Serializer
+spark.crail.serializer com.ibm.crail.terasort.serializer.F22Serializer
 ```
 in your `$SPARK_HOME/conf/spark-defaults.conf`.
 
