@@ -66,29 +66,33 @@ static inline int find_next_nonworker_cpu(int cpu) {
   return cpu;
 }
 
-static void refill_tx_bufs(struct llring *r) {
+static int refill_tx_bufs(struct llring *r) {
   bess::Packet *pkts[REFILL_HIGH];
   phys_addr_t objs[REFILL_HIGH];
 
   int deficit;
+  int cnt;
   int ret;
 
   int curr_cnt = llring_count(r);
 
-  if (curr_cnt >= REFILL_LOW)
-    return;
+  /* LOOM: Avoid tx hangs? */
+  //if (curr_cnt >= REFILL_LOW)
+  //  return 0;
 
   deficit = REFILL_HIGH - curr_cnt;
 
-  ret = bess::Packet::Alloc((bess::Packet **)pkts, deficit, 0);
-  if (ret == 0)
-    return;
+  cnt = bess::Packet::Alloc((bess::Packet **)pkts, deficit, 0);
+  if (cnt == 0)
+    return 0;
 
-  for (int i = 0; i < ret; i++)
+  for (int i = 0; i < cnt; i++)
     objs[i] = pkts[i]->paddr();
 
-  ret = llring_mp_enqueue_bulk(r, objs, ret);
+  ret = llring_mp_enqueue_bulk(r, objs, cnt);
   DCHECK_EQ(ret, 0);
+
+  return cnt;
 }
 
 /* LOOM: UGLY.  I didn't want to uncessarily pay for getting a packet from its
@@ -291,7 +295,11 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   bytes_per_llring = llring_bytes_with_slots(SLOTS_PER_LLRING);
 
   total_bytes = ROUND_TO_64(sizeof(struct sn_conf_space));
-  total_bytes += num_queues[PACKET_DIR_INC] * 3 * ROUND_TO_64(bytes_per_llring);
+  /* TODO: I changed this to be 3 queues for pktpool. This should be undone
+   * now. */
+  total_bytes += num_queues[PACKET_DIR_INC] * 
+                 (ROUND_TO_64(sizeof(struct sn_txq_registers)) +
+                  3 * ROUND_TO_64(bytes_per_llring));
   total_bytes += num_queues[PACKET_DIR_OUT] *
                  (ROUND_TO_64(sizeof(struct sn_rxq_registers)) +
                   2 * ROUND_TO_64(bytes_per_llring));
@@ -324,6 +332,10 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   /* See sn_common.h for the llring usage */
 
   for (i = 0; i < conf->num_txq; i++) {
+    /* TX queue registers */
+    inc_qs_[i].tx_regs = reinterpret_cast<struct sn_txq_registers *>(ptr);
+    ptr += ROUND_TO_64(sizeof(struct sn_txq_registers));
+
     /* Driver -> BESS */
     llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
                 SINGLE_P, SINGLE_C);
@@ -339,6 +351,7 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
 
     /* Pkt Pool */
     /* Ignore. Used only internally by the driver. */
+    /* LOOM: TODO: Remove pktpool. */
     llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
                 SINGLE_P, SINGLE_C);
     ptr += ROUND_TO_64(bytes_per_llring);
@@ -377,6 +390,8 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
 
     /* I'm not sure using an llring as a pool of packets is the best idea here.
      * */
+    /* LOOM: TODO: I think I've given up on TSO support in the kmod.
+     * segpktpool should probably be removed. */
     ring_sz = llring_bytes_with_slots(SLOTS_PER_LLRING);
     txq_priv->segpktpool = reinterpret_cast<struct llring*>(
         aligned_alloc(alignof(llring), ring_sz));
@@ -959,6 +974,7 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   struct queue *tx_queue = &inc_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
   int cnt;
+  int refill_cnt;
   int i;
 
   if (static_cast<size_t>(max_cnt) > bess::PacketBatch::kMaxBurst) {
@@ -966,7 +982,41 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   }
   cnt = llring_sc_dequeue_burst(tx_queue->drv_to_sn, paddr, max_cnt);
 
-  refill_tx_bufs(tx_queue->sn_to_drv);
+  refill_cnt = refill_tx_bufs(tx_queue->sn_to_drv);
+  refill_cnt = refill_cnt; /* XXX: avoid warnings. */
+
+  /* TODO: generic notification architecture */
+  /* TODO: Move triggering a tx interrupt to its own function? */
+  /* LOOM: TODO: the original concept was to cause a TX interrupt only when
+   * both additional buffers were refilled AND the kmod had not disabled
+   * interrupts. However, this has problems with race conditions.*/
+  //if (refill_cnt > 0) {
+  //}
+
+  /* If the driver is requesting a TX interrupt, generate one. */
+  if (__sync_bool_compare_and_swap(&tx_queue->tx_regs->irq_disabled, 0, 1)) {
+
+    /* TODO: trigger interrupts for specific queues.  The major question is on
+     * which cores should napi_schedule be called from. */
+    /* TODO: this would be better done with queues instead of cores.  However,
+     * the SN kmod should still then be responsible for kicking the interrupt
+     * on the appropriate core. */
+    /* TODO: In addition to a cpu_to_txq queue mapping, we should also maintain
+     * a txq_to_cpu mapping to make this part better. */
+    int cpu = 0;
+    int _cpui;
+    int ret;
+    for (_cpui = 0; _cpui < SN_MAX_CPU; _cpui++) {
+      if (map_.cpu_to_txq[_cpui] == qid) {
+        cpu = _cpui;
+        break;
+      }
+    }
+    ret = ioctl(fd_, SN_IOC_KICK_TX, 1 << cpu);
+    if (ret) {
+      PLOG(ERROR) << "ioctl(KICK_TX)";
+    }
+  }
 
   for (i = 0; i < cnt; i++) {
     bess::Packet *pkt;

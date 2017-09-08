@@ -1,0 +1,41 @@
+import scapy.all as scapy
+import os
+
+VPORT_NAME = 'loom_sq_simple'
+VPORT_ADDR = '10.10.1.1/24'
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Create a vport as an interface on the host
+#TODO: How are queues configured on the vport?
+v = VPort(ifname=VPORT_NAME, ip_addrs=[VPORT_ADDR])
+
+# Connect it to a PMD with 1-txq and 1-rxq
+p = PMDPort(port_id=0, num_inc_q=1, num_out_q=1)
+
+# Connect the ports
+#TODO: Configure queues instead of ports
+# input0::QueueInc(port=myport, qid=0) #This module will read from myport on queue 0
+# output0::QueueOut(port=myport, qid=0) #This module will write to myport on queue 0
+
+# p_src does not need to be rate limited because it is limited by the wire
+p_src = PortInc(port=p.name)
+p_src -> PortOut(port=v.name)
+
+# v_src needs to be rate limited to avoid overrunning the wire
+v_src = PortInc(port=v.name)
+v_src -> PortOut(port=p.name)
+
+# Configure a 10Gbps rate limit
+bess.add_tc('bit_limit',
+            policy='rate_limit',
+            resource='bit',
+            limit={'bit': int(10e9)})
+v_src.attach_task(parent='bit_limit')
+
+# DEBUG
+print('Two ports have been spliced: {} <-> {}'.format(p, v))

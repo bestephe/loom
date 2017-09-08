@@ -62,6 +62,7 @@ typedef uint64_t phys_addr_t;
 #define SN_IOC_RELEASE_HOSTNIC 0x8502
 #define SN_IOC_KICK_RX 0x8503
 #define SN_IOC_SET_QUEUE_MAPPING 0x8504
+#define SN_IOC_KICK_TX 0x8505
 
 struct sn_ioc_queue_mapping {
 	int cpu_to_txq[SN_MAX_CPU];
@@ -105,6 +106,11 @@ struct sn_rxq_registers {
 
 	/* Separate this from the shared cache line */
 	uint64_t dropped __attribute__((__aligned__(64)));
+} __attribute__((__aligned__(64)));
+
+struct sn_txq_registers {
+	/* Set by the kernel driver, to suppress bogus interrupts */
+	volatile uint32_t irq_disabled;
 } __attribute__((__aligned__(64)));
 
 /* Do not attempt to calculate checksum for this TX packet */

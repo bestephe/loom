@@ -1,0 +1,31 @@
+import scapy.all as scapy
+import os
+
+C1_NAME = 'loom_test1'
+VPORT_C1_NAME = 'loom1'
+VPORT_C1_ADDR = '10.10.1.1/24'
+
+C2_NAME = 'loom_test2'
+VPORT_C2_NAME = 'loom2'
+VPORT_C2_ADDR = '10.10.1.2/24'
+
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Create a vport as an interface on the host
+c1_v = VPort(ifname=VPORT_C1_NAME, docker=C1_NAME, ip_addrs=[VPORT_C1_ADDR])
+c2_v = VPort(ifname=VPORT_C2_NAME, docker=C2_NAME, ip_addrs=[VPORT_C2_ADDR])
+
+# Connect the ports
+#TODO: Configure queues instead of ports
+# input0::QueueInc(port=myport, qid=0) #This module will read from myport on queue 0
+# output0::QueueOut(port=myport, qid=0) #This module will write to myport on queue 0
+PortInc(port=c1_v.name) -> PortOut(port=c2_v.name)
+PortInc(port=c2_v.name) -> PortOut(port=c1_v.name)
+
+# DEBUG
+print('Two ports have been spliced: {} <-> {}'.format(c1_v, c2_v))

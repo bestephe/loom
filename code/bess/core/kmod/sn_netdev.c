@@ -57,7 +57,9 @@
 #include "../snbuf_layout.h"
 
 static int sn_poll(struct napi_struct *napi, int budget);
+static int sn_poll_tx(struct napi_struct *napi, int budget);
 static void sn_enable_interrupt(struct sn_queue *rx_queue);
+static void sn_enable_interrupt_tx(struct sn_queue *tx_queue);
 
 static void sn_test_cache_alignment(struct sn_device *dev)
 {
@@ -133,12 +135,19 @@ static int sn_alloc_queues(struct sn_device *dev,
 
 		queue->tx.netdev_txq = netdev_get_tx_queue(dev->netdev, i);
 
+		queue->tx.tx_regs = (struct sn_txq_registers *)p;
+		p += sizeof(struct sn_txq_registers);
+
 		queue->drv_to_sn = (struct llring *)p;
 		p += llring_bytes(queue->drv_to_sn);
 
 		queue->sn_to_drv = (struct llring *)p;
 		p += llring_bytes(queue->sn_to_drv);
 
+                /* LOOM: TODO: Currently, the pktpool is not used for anything.
+                 * I think I solved the problem the pktpool was supposed to
+                 * solve with TX interrupts.  I think the pktpool code should
+                 * be deleted now. */
 		queue->pktpool = (struct llring *)p;
 		p += llring_bytes(queue->pktpool);
 
@@ -182,6 +191,11 @@ static int sn_alloc_queues(struct sn_device *dev,
 		spin_lock_init(&dev->rx_queues[i]->rx.lock);
 	}
 
+	for (i = 0; i < dev->num_txq; i++) {
+		netif_napi_add(dev->netdev, &dev->tx_queues[i]->tx.napi,
+				sn_poll_tx, NAPI_POLL_WEIGHT);
+	}
+
 	sn_test_cache_alignment(dev);
 
 	return 0;
@@ -196,6 +210,11 @@ static void sn_free_queues(struct sn_device *dev)
 		napi_hash_del(&dev->rx_queues[i]->rx.napi);
 #endif
 		netif_napi_del(&dev->rx_queues[i]->rx.napi);
+	}
+
+
+	for (i = 0; i < dev->num_txq; i++) {
+		netif_napi_del(&dev->tx_queues[i]->tx.napi);
 	}
 
 	/* Queues are allocated in batch,
@@ -214,6 +233,11 @@ static int sn_open(struct net_device *netdev)
 	for (i = 0; i < dev->num_rxq; i++)
 		sn_enable_interrupt(dev->rx_queues[i]);
 
+	for (i = 0; i < dev->num_txq; i++)
+		napi_enable(&dev->tx_queues[i]->tx.napi);
+	for (i = 0; i < dev->num_txq; i++)
+		sn_enable_interrupt_tx(dev->tx_queues[i]);
+
 	return 0;
 }
 
@@ -225,6 +249,9 @@ static int sn_close(struct net_device *netdev)
 
 	for (i = 0; i < dev->num_rxq; i++)
 		napi_disable(&dev->rx_queues[i]->rx.napi);
+
+	for (i = 0; i < dev->num_txq; i++)
+		napi_disable(&dev->tx_queues[i]->tx.napi);
 
 	return 0;
 }
@@ -253,6 +280,34 @@ static void sn_enable_interrupt(struct sn_queue *rx_queue)
 	 */
 }
 
+static void sn_enable_interrupt_tx(struct sn_queue *tx_queue)
+{
+	/* LOOM: DEBUG */
+	//log_info("%s: sn_enable_interrupt_tx tx_queue=%d\n",
+	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
+
+	__sync_synchronize();
+	tx_queue->tx.tx_regs->irq_disabled = 0;
+	__sync_synchronize();
+
+	/* NOTE: make sure check again if the queue is really empty,
+	 * to avoid potential race conditions when you call this function:
+	 *
+	 * Driver:			BESS:
+	 * [IRQ is disabled]
+	 * [doing polling]
+	 * if (no pending packet)
+	 * 				push a packet
+	 * 				if (IRQ enabled)
+	 * 					inject IRQ <- not executed
+	 *     stop polling
+	 *     enable IRQ
+	 *
+	 * [at this point, IRQ is enabled but pending packets are never
+	 *  polled by the driver. So the driver needs to double check.]
+	 */
+}
+
 static void sn_disable_interrupt(struct sn_queue *rx_queue)
 {
 	/* the interrupt is usually disabled by BESS,
@@ -260,6 +315,15 @@ static void sn_disable_interrupt(struct sn_queue *rx_queue)
 	 * (e.g., for low latency socket polling) */
 
 	rx_queue->rx.rx_regs->irq_disabled = 1;
+}
+
+static void sn_disable_interrupt_tx(struct sn_queue *tx_queue)
+{
+	/* the interrupt is usually disabled by BESS,
+	 * but in some cases the driver itself may also want to disable IRQ
+	 * (e.g., for low latency socket polling) */
+
+	tx_queue->tx.tx_regs->irq_disabled = 1;
 }
 
 /* if non-zero, the caller should drop the packet */
@@ -299,8 +363,9 @@ static int sn_process_rx_metadata(struct sk_buff *skb,
 	return ret;
 }
 
-static inline int sn_send_tx_queue(struct sn_queue *queue,
-			            struct sn_device* dev, struct sk_buff* skb);
+static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
+					   struct sn_device* dev,
+					   struct sk_buff* skb);
 
 DEFINE_PER_CPU(int, in_batched_polling);
 
@@ -525,6 +590,104 @@ static int sn_poll(struct napi_struct *napi, int budget)
 	return ret;
 }
 
+int sn_maybe_stop_tx(struct sn_queue *queue)
+{
+	struct net_device *netdev = queue->dev->netdev;
+
+	int limit = 0;
+	//int limit = (MAX_BATCH);
+
+	/* LOOM: DEBUG */
+	//log_info("%s: sn_maybe_stop_tx. avail_snbs=%d, tx_queue=%d\n",
+	//	 queue->dev->netdev->name, sn_avail_snbs(queue),
+	//	 queue->queue_id);
+
+	/* TODO: assert that queue is a tx_queue */
+
+	if (sn_avail_snbs(queue) > limit) {
+		return 0;
+	}
+
+	/* LOOM: DEBUG */
+	//log_info("%s: sn_maybe_stop_tx stopping tx_queue=%d\n",
+	//	 queue->dev->netdev->name, queue->queue_id);
+
+	netif_stop_subqueue(netdev, queue->queue_id);
+	sn_enable_interrupt_tx(queue);
+
+	/* TODO: Which sync function? */
+	smp_mb();
+	//__sync_synchronize();
+
+	if (likely(sn_avail_snbs(queue) <= limit))
+		return -EBUSY;
+
+	/* A reprieve! (race condition. ixgbe inspired) */
+	/* Why is this netif_start_subqueue in ixgbe instead of
+	 * netif_wake_subqueue? */
+	netif_start_subqueue(netdev, queue->queue_id);
+	/* TODO: Disable the interrupt again? */
+	sn_disable_interrupt_tx(queue);
+
+	queue->tx.stats.restart_queue++;
+
+	return 0;
+}
+
+/* NAPI callback */
+/* The return value says how many packets are actually received */
+static int sn_poll_tx(struct napi_struct *napi, int budget)
+{
+	struct sn_queue *tx_queue;
+
+	int ret;
+
+	tx_queue = container_of(napi, struct sn_queue, tx.napi);
+
+	tx_queue->tx.stats.polls++;
+
+	/* LOOM: DEBUG */
+	//log_info("%s: sn_poll_tx on tx_queue %d\n",
+	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
+
+	/* This is supposed to be the number of buffers that have been
+	 * reclaimed.  Returning 0 should be fine for now given that we also
+	 * call napi_complete. */
+	ret = 0;
+
+        /* TODO: check the number of available snb's and restart TX if it was
+         * stopped. */
+	if (__netif_subqueue_stopped(tx_queue->dev->netdev, tx_queue->queue_id) &&
+	    sn_avail_snbs(tx_queue) > 0) {
+		netif_wake_subqueue(tx_queue->dev->netdev, tx_queue->queue_id);
+		tx_queue->tx.stats.restart_queue++;
+
+		napi_complete(napi);
+
+		/* LOOM: I think the interrupt should be disabled now until we
+		 * are starved for snb's again in sn_maybe_stop_tx. */
+		/* TODO: */
+		sn_disable_interrupt_tx(tx_queue);
+
+		/* LOOM: There is a race condition here where the queue could
+		 * be empty again and we would like to wait for interrupts
+		 * again. */
+		sn_maybe_stop_tx(tx_queue);
+	/* Why are we getting an interrupt if the queue is not stopped? */
+	} else if (!__netif_subqueue_stopped(tx_queue->dev->netdev, tx_queue->queue_id)) {
+
+		/* LOOM: DEBUG */
+		//log_info("%s: sn_poll_tx on tx_queue %d that is not stopped!?\n",
+		//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
+
+		napi_complete(napi);
+		sn_disable_interrupt_tx(tx_queue);
+		sn_maybe_stop_tx(tx_queue);
+	}
+
+	return ret;
+}
+
 static void sn_set_tx_metadata(struct sk_buff *skb,
 			       struct sn_tx_metadata *tx_meta)
 {
@@ -541,8 +704,9 @@ static void sn_set_tx_metadata(struct sk_buff *skb,
 	}
 }
 
-static inline int sn_send_tx_queue(struct sn_queue *queue,
-			            struct sn_device* dev, struct sk_buff* skb)
+static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
+					   struct sn_device* dev,
+					   struct sk_buff* skb)
 {
 	struct sn_tx_metadata tx_meta;
 	int ret = NET_XMIT_DROP;
@@ -572,6 +736,8 @@ static inline int sn_send_tx_queue(struct sn_queue *queue,
         /* LOOM: TODO: I don't feel like orphaning the skb is necessary here.
 	 * In particular, I feel like this breaks TCP Small Queues (although so
 	 * does tricking Linux into not using Qdisc). */
+	/* LOOM: Given the addition of NETDEV_TX_BUSY, this especially makes me
+	 * concerned given that the skb may not always be freed. */
 	skb_orphan(skb);
 
 	sn_set_tx_metadata(skb, &tx_meta);
@@ -583,18 +749,29 @@ skip_send:
 		queue->tx.stats.throttled++;
 		/* fall through */
 
-	case NET_XMIT_SUCCESS:
+	case NETDEV_TX_OK:
 		queue->tx.stats.packets++;
 		queue->tx.stats.bytes += skb->len;
 		break;
 
+	case NETDEV_TX_BUSY:
+		sn_maybe_stop_tx(queue);
+		queue->tx.stats.busy++;
+		/* should not free skb */
+		return NETDEV_TX_BUSY;
+
+	/* LOOM: This case is not possible anymore? */
 	case NET_XMIT_DROP:
+		/* LOOM: DEBUG. */
+		log_info("%s: dropped packet tx_queue=%d\n",
+			 queue->dev->netdev->name, queue->queue_id);
+
 		queue->tx.stats.dropped++;
 		break;
 
 	case SN_NET_XMIT_BUFFERED:
 		/* should not free skb */
-		return NET_XMIT_SUCCESS;
+		return NETDEV_TX_OK;
 	}
 
 	dev_kfree_skb(skb);
@@ -949,6 +1126,11 @@ void sn_release_netdev(struct sn_device *dev)
  *
  * For host mode, this function is invoked by sndrv_ioctl_kick_rx().
  * For guest mode, it should be called in the MSIX handler. */
+/* LOOM: This function should handle both RX and TX IRQs.  Also, this function
+ * should handle multiple queues being assigned to each core. */
+/* LOOM: I think this function call makes an implicit assumption that there is
+ * at most one queue per core. I do not think it is necessary for this
+ * assumption to always hold. */
 void sn_trigger_softirq(void *info)
 {
 	struct sn_device *dev = info;
@@ -959,6 +1141,8 @@ void sn_trigger_softirq(void *info)
 
 		rx_queue->rx.stats.interrupts++;
 		napi_schedule(&rx_queue->rx.napi);
+
+                /* LOOM: TX? */
 	} else {
 		/* One core can be mapped to multiple RX queues. Awake them all. */
 		int i = 0;
@@ -972,6 +1156,37 @@ void sn_trigger_softirq(void *info)
 
 			i++;
 		}
+
+                /* LOOM: TX? */
+	}
+}
+
+/* LOOM: In the future, it would be smart to trigger IRQs for individual txqs
+ * and cores.  For now, just trigger NAPI for all queues when any queue is
+ * refilled. */
+void sn_trigger_softirq_tx(void *info)
+{
+	struct sn_device *dev = info;
+	int cpu = raw_smp_processor_id();
+
+	/* LOOM: DEBUG */
+	//log_info("%s: sn_trigger_softirq_tx on cpu %d\n",
+	//	 dev->netdev->name, cpu);
+
+	if (unlikely(dev->cpu_to_txq[cpu] == -1)) {
+		struct sn_queue *tx_queue = dev->tx_queues[0];
+
+		tx_queue->tx.stats.interrupts++;
+		napi_schedule(&tx_queue->tx.napi);
+
+	} else {
+                /* LOOM: In the future, multiple TX queues may be mapped to one
+                 * core. Awake them all. */
+		int txq = dev->cpu_to_txq[cpu];
+		struct sn_queue *tx_queue = dev->tx_queues[txq];
+
+		tx_queue->tx.stats.interrupts++;
+		napi_schedule(&tx_queue->tx.napi);
 	}
 }
 
@@ -989,4 +1204,20 @@ void sn_trigger_softirq_with_qid(void *info, int rxq)
 
 	rx_queue->rx.stats.interrupts++;
 	napi_schedule(&rx_queue->rx.napi);
+}
+
+void sn_trigger_softirq_with_qid_tx(void *info, int txq)
+{
+	struct sn_device *dev = info;
+	struct sn_queue *tx_queue;
+
+	if (txq < 0 || txq >= dev->num_txq) {
+		log_err("invalid txq %d\n", txq);
+		return;
+	}
+
+	tx_queue = dev->tx_queues[txq];
+
+	tx_queue->tx.stats.interrupts++;
+	napi_schedule(&tx_queue->tx.napi);
 }

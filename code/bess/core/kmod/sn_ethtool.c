@@ -55,7 +55,7 @@ static void sn_ethtool_get_strings(struct net_device *netdev,
 	struct sn_device *dev = netdev_priv(netdev);
 	int i;
 
-	BUILD_BUG_ON(NUM_STATS_PER_TX_QUEUE != 5);
+	BUILD_BUG_ON(NUM_STATS_PER_TX_QUEUE != 9);
 	BUILD_BUG_ON(NUM_STATS_PER_RX_QUEUE != 6);
 
 	if (sset != ETH_SS_STATS)
@@ -74,6 +74,14 @@ static void sn_ethtool_get_strings(struct net_device *netdev,
 		sprintf(p, "tx_queue_%u_throttled", i);
 		p += ETH_GSTRING_LEN;
 		sprintf(p, "tx_queue_%u_descdropped", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_queue_%u_polls", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_queue_%u_interrupts", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_queue_%u_busy", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_queue_%u_restart_queue", i);
 		p += ETH_GSTRING_LEN;
 	}
 
@@ -100,7 +108,7 @@ static void sn_ethtool_get_ethtool_stats(struct net_device *netdev,
 	struct sn_device *dev = netdev_priv(netdev);
 	int i;
 
-	BUILD_BUG_ON(NUM_STATS_PER_TX_QUEUE != 5);
+	BUILD_BUG_ON(NUM_STATS_PER_TX_QUEUE != 9);
 	BUILD_BUG_ON(NUM_STATS_PER_RX_QUEUE != 6);
 
 	for (i = 0; i < dev->num_txq; i++) {
@@ -109,6 +117,10 @@ static void sn_ethtool_get_ethtool_stats(struct net_device *netdev,
 		data[2] = dev->tx_queues[i]->tx.stats.dropped;
 		data[3] = dev->tx_queues[i]->tx.stats.throttled;
 		data[4] = dev->tx_queues[i]->tx.stats.descriptor;
+		data[5] = dev->tx_queues[i]->tx.stats.polls;
+		data[6] = dev->tx_queues[i]->tx.stats.interrupts;
+		data[7] = dev->tx_queues[i]->tx.stats.busy;
+		data[8] = dev->tx_queues[i]->tx.stats.restart_queue;
 		data += NUM_STATS_PER_TX_QUEUE;
 	}
 

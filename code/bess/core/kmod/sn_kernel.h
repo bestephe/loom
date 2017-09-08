@@ -49,9 +49,9 @@
 /* Used to enable Loom specific changes. */
 #define LOOM
 
-#define MAX_QUEUES 128
+#define MAX_QUEUES (128)
 
-#define MAX_BATCH 32
+#define MAX_BATCH (32)
 
 DECLARE_PER_CPU(int, in_batched_polling);
 
@@ -65,6 +65,8 @@ struct sn_queue {
 
 	struct llring *drv_to_sn;
 	struct llring *sn_to_drv;
+        /* TODO: LOOM: I don't think I want a 3rd queue for a pktpool anymore.
+         * I should go and remove this. */
         struct llring *pktpool;
 
 	union {
@@ -75,8 +77,14 @@ struct sn_queue {
 				u64 dropped;
 				u64 throttled;
 				u64 descriptor;
+				u64 polls;
+				u64 interrupts;
+				u64 busy;
+				u64 restart_queue;
 			} stats;
 
+			struct sn_txq_registers *tx_regs;
+			struct napi_struct napi;
 			struct netdev_queue *netdev_txq;
 
 			struct tx_queue_opts opts;
@@ -149,7 +157,11 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret);
 int sn_register_netdev(void *bar, struct sn_device *dev);
 void sn_release_netdev(struct sn_device *dev);
 void sn_trigger_softirq(void *info); /* info is (struct sn_device *) */
+void sn_trigger_softirq_tx(void *info); /* info is (struct sn_device *) */
 void sn_trigger_softirq_with_qid(void *info, int rxq);
+void sn_trigger_softirq_with_qid_tx(void *info, int txq);
+int sn_avail_snbs(struct sn_queue *queue);
+int sn_maybe_stop_tx(struct sn_queue *queue);
 
 #endif
 

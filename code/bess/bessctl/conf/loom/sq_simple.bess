@@ -1,0 +1,28 @@
+import scapy.all as scapy
+import os
+
+VPORT_NAME = 'loom_sq_simple'
+VPORT_ADDR = '10.10.1.1/24'
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Create a vport as an interface on the host
+#TODO: How are queues configured on the vport?
+v = VPort(ifname=VPORT_NAME, ip_addrs=[VPORT_ADDR])
+
+# Connect it to a PMD with 1-txq and 1-rxq
+p = PMDPort(port_id=0, num_inc_q=1, num_out_q=1)
+
+# Connect the ports
+#TODO: Configure queues instead of ports
+# input0::QueueInc(port=myport, qid=0) #This module will read from myport on queue 0
+# output0::QueueOut(port=myport, qid=0) #This module will write to myport on queue 0
+PortInc(port=p.name) -> PortOut(port=v.name)
+PortInc(port=v.name) -> PortOut(port=p.name)
+
+# DEBUG
+print('Two ports have been spliced: {} <-> {}'.format(p, v))

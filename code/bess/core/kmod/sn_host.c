@@ -145,6 +145,34 @@ static void free_snb_bulk(struct sn_queue *queue, phys_addr_t paddr[], int cnt)
 	}
 }
 
+int sn_avail_snbs(struct sn_queue *queue)
+{
+	struct snb_cache *cache;
+	int cnt;
+	int bess_cnt;
+
+	/*
+	 * Available snb's
+	 */
+	cache = this_cpu_ptr(&snb_cache);
+
+        /* TODO: This function should be redfined so that it is possible to
+         * return here if there are snb's in the cache. */
+
+	cnt = cache->cnt + llring_count(queue->sn_to_drv);
+	/* TODO: the cache still leads to races where packets are dropped? */
+	//cnt = llring_count(queue->sn_to_drv);
+
+	/*
+	 * Available slots to BESS 
+	 */
+	bess_cnt = (int)llring_free_count(queue->drv_to_sn);
+
+	cnt = min(cnt, bess_cnt);
+
+	return cnt;
+}
+
 static int sn_host_do_tx_batch(struct sn_queue *queue,
 		struct sk_buff *skb_arr[],
 		struct sn_tx_metadata meta_arr[],
@@ -163,6 +191,17 @@ static int sn_host_do_tx_batch(struct sn_queue *queue,
 
 	cnt = alloc_snb_burst(queue, paddr_arr, cnt_to_send);
 	queue->tx.stats.descriptor += cnt_requested - cnt;
+
+	/* LOOM: DEBUG: */
+	if (cnt_requested - cnt > 0) {
+		log_info("%s: cnt_requested: %d, cnt_to_send: %d, "
+			 "MAX_BATCH: %d, cnt: %d, sn_avail_snbs: %d, "
+			 "sn_to_drv: %d, drv_to_sn: %d\n",
+			 queue->dev->netdev->name, cnt_requested,
+			 cnt_to_send, MAX_BATCH, cnt, sn_avail_snbs(queue),
+			 llring_count(queue->sn_to_drv),
+			 llring_free_count(queue->drv_to_sn));
+	}
 
 	if (cnt == 0)
 		return 0;
@@ -242,6 +281,14 @@ static void sn_host_flush_tx(void)
 		queue->tx.stats.packets += sent;
 		queue->tx.stats.dropped += buf_queue->cnt - sent;
 
+		/* LOOM: DEBUG. */
+		if ((buf_queue->cnt - sent) > 0) {
+			log_info("%s: dropped %d packets tx_queue=%d\n",
+				 queue->dev->netdev->name,
+				 (buf_queue->cnt - sent),
+				 queue->queue_id);
+		}
+
 		for (j = 0; j < buf_queue->cnt; j++) {
 			struct sk_buff *skb = buf_queue->skb_arr[j];
 
@@ -287,8 +334,16 @@ again:
 	buf_queue->meta_arr[buf_queue->cnt] = *tx_meta;
 	buf_queue->cnt++;
 
-	if (buf_queue->cnt == MAX_BATCH)
+	/* LOOM: DEBUG */
+	//log_info("%s: sn_host_buffer_tx: buf_queue->cnt=%d, sn_avail_snbs=%d, "
+	//	 "tx_queue=%d\n", queue->dev->netdev->name, buf_queue->cnt,
+	//	 sn_avail_snbs(queue), queue->queue_id);
+
+	if (buf_queue->cnt == MAX_BATCH ||
+	    buf_queue->cnt >= sn_avail_snbs(queue))
 		sn_host_flush_tx();
+
+	sn_maybe_stop_tx(queue);
 }
 
 static int sn_host_do_tx(struct sn_queue *queue, struct sk_buff *skb,
@@ -300,13 +355,20 @@ static int sn_host_do_tx(struct sn_queue *queue, struct sk_buff *skb,
 
 	polling = this_cpu_ptr(&in_batched_polling);
 
+	/* LOOM: why is tx disallowed when the RX side is polling?  They seem
+	 * orthogonal. */
 	if (*polling) {
 		sn_host_buffer_tx(queue, skb, tx_meta);
 		return SN_NET_XMIT_BUFFERED;
 	}
 
 	ret = sn_host_do_tx_batch(queue, &skb, tx_meta, 1);
-	return (ret == 1) ? NET_XMIT_SUCCESS : NET_XMIT_DROP;
+
+	/* LOOM: Check if the queue should be stopped because there are not any
+	 * snb's left. */
+	sn_maybe_stop_tx(queue);
+
+	return (ret == 1) ? NETDEV_TX_OK : NETDEV_TX_BUSY;
 }
 
 static int sn_host_do_rx_batch(struct sn_queue *queue,
@@ -499,6 +561,43 @@ static int sn_host_ioctl_kick_rx(struct sn_device *dev,
 	return 0;
 }
 
+static int sn_host_ioctl_kick_tx(struct sn_device *dev,
+				 unsigned long cpumask)
+{
+	cpumask_var_t mask;
+	int this_cpu;
+
+	preempt_disable();
+
+	/* smp_call_function_many does not consider the current CPU */
+	this_cpu = smp_processor_id();
+	if ((1 << this_cpu) & cpumask) {
+		sn_trigger_softirq_tx(dev);
+		cpumask &= ~(1 << this_cpu);
+	}
+
+	if (!cpumask) {
+		preempt_enable();
+		return 0;
+	}
+
+	/* this should be fast unless CONFIG_CPUMASK_OFFSTACK is on */
+	if (unlikely(!zalloc_cpumask_var(&mask, GFP_KERNEL))) {
+		preempt_enable();
+		return -ENOMEM;
+	}
+
+	*((unsigned long *) mask) = cpumask;
+
+	smp_call_function_many(mask, sn_trigger_softirq_tx, dev, 0);
+
+	free_cpumask_var(mask);
+
+	preempt_enable();
+
+	return 0;
+}
+
 static int sn_host_ioctl_set_queue_mapping(
 		struct sn_device *dev,
 		struct sn_ioc_queue_mapping __user *map_user)
@@ -587,6 +686,13 @@ sn_host_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case SN_IOC_KICK_RX:
 		if (dev)
 			ret = sn_host_ioctl_kick_rx(dev, arg);
+		else
+			ret = -ENODEV;
+		break;
+
+	case SN_IOC_KICK_TX:
+		if (dev)
+			ret = sn_host_ioctl_kick_tx(dev, arg);
 		else
 			ret = -ENODEV;
 		break;

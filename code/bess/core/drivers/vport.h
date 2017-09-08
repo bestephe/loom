@@ -25,6 +25,7 @@ class VPort final : public Port {
     /* TODO: bess::Segment instead of bess::Packet. */
 
     /* Pool of packets to allocate segments to. */
+    /* TODO: delete this? */
     struct llring* segpktpool;
 
     /* TSO state. */
@@ -38,6 +39,7 @@ class VPort final : public Port {
   struct queue {
     union {
       struct sn_rxq_registers *rx_regs;
+      struct sn_txq_registers *tx_regs;
     };
 
     /* Loom. Probably in the wrong place? */

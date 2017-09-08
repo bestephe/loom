@@ -1,0 +1,53 @@
+import scapy.all as scapy
+import os
+
+VPORT_NAME = 'loom_mq_pt'
+VPORT_ADDR = '10.10.1.1/24'
+
+NUM_QUEUES = int($SN_QUEUES!'16')
+NUM_WORKERS = int($SN_WORKERS!'2')
+
+assert (NUM_QUEUES % NUM_WORKERS == 0)
+assert (NUM_WORKERS <= NUM_QUEUES)
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Syntax: bind worker:<worker ID> => core:<core ID>
+# Bind a worker thread to the specified CPU core.
+# It creates a new worker thread if not already exists.
+for w in range(NUM_WORKERS):
+    bess.add_worker(w, w)
+
+# Create a vport as an interface on the host
+#TODO: How are queues configured on the vport?
+v = VPort(ifname=VPORT_NAME, ip_addrs=[VPORT_ADDR], num_inc_q=NUM_QUEUES, num_out_q=NUM_QUEUES)
+
+# Connect it to a PMD with 1-txq and 1-rxq
+p = PMDPort(port_id=0, num_inc_q=NUM_QUEUES, num_out_q=NUM_QUEUES)
+
+# Connect the ports
+for i in range(NUM_QUEUES):
+    v_qinc = QueueInc(port=v.name, qid=i)
+    v_qout = QueueOut(port=v.name, qid=i)
+    p_qinc = QueueInc(port=p.name, qid=i)
+    p_qout = QueueOut(port=p.name, qid=i)
+
+    #QueueInc(port=v.name, qid=i) -> QueueOut(port=p.name, qid=i)
+    #QueueInc(port=p.name, qid=i) -> QueueOut(port=v.name, qid=i)
+    v_qinc -> p_qout
+    p_qinc -> v_qout
+
+    # Assign worker threads
+    #TODO: doesn't work yet.
+    #w = i % NUM_WORKERS
+    #bess.attach_task("v_qinc", 0, wid=w)
+    ##bess.attach_task("v_qout", 0, wid=w)
+    #bess.attach_task("p_qinc", 0, wid=w)
+    ##bess.attach_task("p_qout", 0, wid=w)
+
+# DEBUG
+print 'Two ports have been spliced: {} <-> {}'.format(p, v)
