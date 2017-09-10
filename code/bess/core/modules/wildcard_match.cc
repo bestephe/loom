@@ -1,3 +1,33 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #include "wildcard_match.h"
 
 #include <string>
@@ -27,32 +57,33 @@ static inline int is_valid_gate(gate_idx_t gate) {
 
 const Commands WildcardMatch::cmds = {
     {"add", "WildcardMatchCommandAddArg",
-     MODULE_CMD_FUNC(&WildcardMatch::CommandAdd), 0},
+     MODULE_CMD_FUNC(&WildcardMatch::CommandAdd), Command::THREAD_UNSAFE},
     {"delete", "WildcardMatchCommandDeleteArg",
-     MODULE_CMD_FUNC(&WildcardMatch::CommandDelete), 0},
-    {"clear", "EmptyArg", MODULE_CMD_FUNC(&WildcardMatch::CommandClear), 0},
+     MODULE_CMD_FUNC(&WildcardMatch::CommandDelete), Command::THREAD_UNSAFE},
+    {"clear", "EmptyArg", MODULE_CMD_FUNC(&WildcardMatch::CommandClear),
+     Command::THREAD_UNSAFE},
     {"get_rules", "EmptyArg", MODULE_CMD_FUNC(&WildcardMatch::CommandGetRules),
-     0},
+     Command::THREAD_UNSAFE},
     {"set_default_gate", "WildcardMatchCommandSetDefaultGateArg",
-     MODULE_CMD_FUNC(&WildcardMatch::CommandSetDefaultGate), 1}};
+     MODULE_CMD_FUNC(&WildcardMatch::CommandSetDefaultGate),
+     Command::THREAD_SAFE}};
 
-CommandResponse WildcardMatch::AddFieldOne(
-    const bess::pb::WildcardMatchField &field, struct WmField *f) {
-  f->size = field.size();
+CommandResponse WildcardMatch::AddFieldOne(const bess::pb::Field &field,
+                                           struct WmField *f) {
+  f->size = field.num_bytes();
 
   if (f->size < 1 || f->size > MAX_FIELD_SIZE) {
     return CommandFailure(EINVAL, "'size' must be 1-%d", MAX_FIELD_SIZE);
   }
 
-  if (field.position_case() == bess::pb::WildcardMatchField::kOffset) {
+  if (field.position_case() == bess::pb::Field::kOffset) {
     f->attr_id = -1;
     f->offset = field.offset();
     if (f->offset < 0 || f->offset > 1024) {
       return CommandFailure(EINVAL, "too small 'offset'");
     }
-  } else if (field.position_case() ==
-             bess::pb::WildcardMatchField::kAttribute) {
-    const char *attr = field.attribute().c_str();
+  } else if (field.position_case() == bess::pb::Field::kAttrName) {
+    const char *attr = field.attr_name().c_str();
     f->attr_id = AddMetadataAttr(attr, f->size, Attribute::AccessMode::kRead);
     if (f->attr_id < 0) {
       return CommandFailure(-f->attr_id, "add_metadata_attr() failed");
@@ -198,17 +229,30 @@ CommandResponse WildcardMatch::ExtractKeyMask(const T &arg, wm_hkey_t *key,
     uint64_t v = 0;
     uint64_t m = 0;
 
-    bool force_be = (fields_[i].attr_id < 0);
+    bess::pb::FieldData valuedata = arg.values(i);
+    if (valuedata.encoding_case() == bess::pb::FieldData::kValueInt) {
+      if (!bess::utils::uint64_to_bin(&v, valuedata.value_int(), field_size,
+                                      true)) {
+        return CommandFailure(EINVAL, "idx %zu: not a correct %d-byte value", i,
+                              field_size);
+      }
+    } else if (valuedata.encoding_case() == bess::pb::FieldData::kValueBin) {
+      bess::utils::Copy(reinterpret_cast<uint8_t *>(&v),
+                        valuedata.value_bin().c_str(),
+                        valuedata.value_bin().size());
+    }
 
-    if (!bess::utils::uint64_to_bin(&v, arg.values(i), field_size,
-                                    force_be || bess::utils::is_be_system())) {
-      return CommandFailure(EINVAL, "idx %zu: not a correct %d-byte value", i,
-                            field_size);
-    } else if (!bess::utils::uint64_to_bin(
-                   &m, arg.masks(i), field_size,
-                   force_be || bess::utils::is_be_system())) {
-      return CommandFailure(EINVAL, "idx %zu: not a correct %d-byte mask", i,
-                            field_size);
+    bess::pb::FieldData maskdata = arg.masks(i);
+    if (maskdata.encoding_case() == bess::pb::FieldData::kValueInt) {
+      if (!bess::utils::uint64_to_bin(&m, maskdata.value_int(), field_size,
+                                      true)) {
+        return CommandFailure(EINVAL, "idx %zu: not a correct %d-byte mask", i,
+                              field_size);
+      }
+    } else if (maskdata.encoding_case() == bess::pb::FieldData::kValueBin) {
+      bess::utils::Copy(reinterpret_cast<uint8_t *>(&m),
+                        maskdata.value_bin().c_str(),
+                        maskdata.value_bin().size());
     }
 
     if (v & ~m) {
@@ -345,13 +389,13 @@ CommandResponse WildcardMatch::CommandGetRules(const bess::pb::EmptyArg &) {
   resp.set_default_gate(default_gate_);
 
   for (auto &field : fields_) {
-    bess::pb::WildcardMatchField *f = resp.add_fields();
+    bess::pb::Field *f = resp.add_fields();
     if (field.attr_id >= 0) {
-      f->set_attribute(all_attrs().at(field.attr_id).name);
+      f->set_attr_name(all_attrs().at(field.attr_id).name);
     } else {
       f->set_offset(field.offset);
     }
-    f->set_size(field.size);
+    f->set_num_bytes(field.size);
   }
 
   for (auto &tuple : tuples_) {
@@ -366,11 +410,11 @@ CommandResponse WildcardMatch::CommandGetRules(const bess::pb::EmptyArg &) {
       for (auto &field : fields_) {
         uint64_t data = 0;
         bess::utils::bin_to_uint64(&data, entry_data + field.pos, field.size,
-                                   1);
+                                   true);
         rule->add_values(data);
         uint64_t mask_data = 0;
         bess::utils::bin_to_uint64(&mask_data, entry_mask + field.pos,
-                                   field.size, 1);
+                                   field.size, true);
         rule->add_masks(mask_data);
       }
     }

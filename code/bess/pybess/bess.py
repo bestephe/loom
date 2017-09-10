@@ -1,3 +1,34 @@
+# Copyright (c) 2014-2017, The Regents of the University of California.
+# Copyright (c) 2016-2017, Nefeli Networks, Inc.
+# Copyright (c) 2017, Cloudigo.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# * Neither the names of the copyright holders nor the names of their
+# contributors may be used to endorse or promote products derived from this
+# software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
 from __future__ import print_function
 from __future__ import absolute_import
 
@@ -5,14 +36,70 @@ import errno
 import grpc
 import os
 import pprint
+import sys
 import time
 
-from . import service_pb2
 from . import protobuf_to_dict as pb_conv
 
-from . import module_msg
-from . import bess_msg_pb2 as bess_msg
-from . import port_msg_pb2 as port_msg
+# pseudo-module multi-importer, used to build module message types
+from . import pm_import as _pm
+
+# Ugh: builtin_pb must be on path, as protoc generates python code
+# that assumes it can import files in that directory.  With our
+# split of builtin and plugin pb files we do not want 'from . import'
+# either, so just add 'builtin_pb' to sys.path.
+bipath = os.path.abspath(os.path.join(__file__, '..', 'builtin_pb'))
+if bipath not in sys.path:
+    sys.path.insert(1, bipath)
+del bipath
+
+from .builtin_pb import service_pb2
+from .builtin_pb import bess_msg_pb2 as bess_msg
+from .builtin_pb import module_msg_pb2 as module_msg
+
+
+def _import_modules(name, subdir):
+    """Return a module instance retaining just the *Arg and *Response
+    names, built by importing most of the *_msg_pb2.py files in the
+    builtin_pb and plugin_pb directories, or a subdirectory of them.
+    We skip bess_msg_pb2 for historical reasons.
+
+    We detect any name collisions, e.g., if foo_msg_pb2.py defines
+    QuuxArg and bar_msg_pb2.py also defines QuuxArg, we catch that
+    error here."""
+    def protobufs(subdir):
+        "Yield modules (subdir=None) or port drivers (subdir='ports')."
+        self_path = os.path.dirname(os.path.relpath(__file__))
+        for directory in ('builtin_pb', 'plugin_pb'):
+            if subdir:
+                dirpath = os.path.join(self_path, directory, subdir)
+                prefix = '..{}.{}'.format(directory, subdir)
+            else:
+                dirpath = os.path.join(self_path, directory)
+                prefix = '..{}'.format(directory)
+            for filename in os.listdir(dirpath):
+                if not filename.endswith('_msg_pb2.py'):
+                    continue
+                import_name = '{}.{}'.format(prefix, filename[:-3])
+                if import_name != '..builtin_pb.bess_msg_pb2':
+                    yield import_name
+
+    def keep_name(name):
+        return name.endswith('Arg') or name.endswith('Response')
+
+    try:
+        mod = _pm.pm_import(name, protobufs(subdir),
+                            name_filter=keep_name,
+                            package=__name__)
+    except _pm.Collisions as err:
+        print('internal error:')
+        for key in err.collisions:
+            print('', key, 'is defined in', ' and '.join(err.collisions[key]))
+        raise SystemExit(1)
+    return mod
+
+module_pb = _import_modules('module_pb', None)
+port_msg = _import_modules('port_msg', 'ports')
 
 
 def _constraints_to_list(constraint):
@@ -89,8 +176,12 @@ class BESS(object):
             self.status = connectivity
 
     def connect(self, host='localhost', port=DEF_PORT):
+        if self.debug:
+            print('Connecting to %s:%d' % (host, port))
+
         if self.is_connected():
             raise self.APIError('Already connected')
+
         self.status = None
         self.peer = (host, port)
         self.channel = grpc.insecure_channel('%s:%d' % (host, port))
@@ -110,6 +201,8 @@ class BESS(object):
     def disconnect(self):
         try:
             if self.is_connected():
+                if self.debug:
+                    print('Disconnecting')
                 self.channel.unsubscribe(self._update_status)
         finally:
             self.status = None
@@ -263,7 +356,7 @@ class BESS(object):
         request.size_out_q = arg.pop('size_out_q', 0)
         request.mac_addr = arg.pop('mac_addr', '')
 
-        message_type = getattr(port_msg, driver + 'Arg', bess_msg.EmptyArg)
+        message_type = getattr(port_msg, driver + 'Arg', module_msg.EmptyArg)
         arg_msg = pb_conv.dict_to_protobuf(message_type, arg)
         request.arg.Pack(arg_msg)
 
@@ -318,7 +411,7 @@ class BESS(object):
         request.name = name or ''
         request.mclass = mclass
 
-        message_type = getattr(module_msg, mclass + 'Arg', bess_msg.EmptyArg)
+        message_type = getattr(module_pb, mclass + 'Arg', module_msg.EmptyArg)
         arg_msg = pb_conv.dict_to_protobuf(message_type, arg)
         request.arg.Pack(arg_msg)
 
@@ -354,7 +447,7 @@ class BESS(object):
         request.cmd = cmd
 
         try:
-            message_type = getattr(module_msg, arg_type)
+            message_type = getattr(module_pb, arg_type)
         except AttributeError as e:
             raise self.APIError('Unknown arg "%s"' % arg_type)
 
@@ -373,8 +466,8 @@ class BESS(object):
 
         if response.HasField('data'):
             response_type_str = response.data.type_url.split('.')[-1]
-            response_type = getattr(module_msg, response_type_str,
-                                    bess_msg.EmptyArg)
+            response_type = getattr(module_pb, response_type_str,
+                                    module_msg.EmptyArg)
             result = response_type()
             response.data.Unpack(result)
             return result
@@ -397,6 +490,8 @@ class BESS(object):
             request.igate = gate
         elif direction == 'out':
             request.ogate = gate
+        else:
+            raise self.APIError('direction must be either "out" or "in"')
         request.arg.Pack(arg)
         return self._request('ConfigureGateHook', request)
 
@@ -521,9 +616,14 @@ class BESS(object):
 
     # Deprecated alias for attach_task
     def attach_module(self, *args, **kwargs):
-        return self.attach_task(self, *args, **kwargs)
+        return self.attach_task(*args, **kwargs)
 
     def get_tc_stats(self, name):
         request = bess_msg.GetTcStatsRequest()
         request.name = name
         return self._request('GetTcStats', request)
+
+    def dump_mempool(self, socket=-1):
+        request = bess_msg.DumpMempoolRequest()
+        request.socket = socket
+        return self._request('DumpMempool', request)

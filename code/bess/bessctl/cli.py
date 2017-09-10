@@ -1,3 +1,33 @@
+# Copyright (c) 2014-2016, The Regents of the University of California.
+# Copyright (c) 2016-2017, Nefeli Networks, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# * Neither the names of the copyright holders nor the names of their
+# contributors may be used to endorse or promote products derived from this
+# software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
 import sys
 import os
 
@@ -19,8 +49,7 @@ class ColorizedOutput(object):  # for pretty printing
 
 class CLI(object):
 
-    # general command errors
-    class CommandError(Exception):
+    class CommandError(Exception):  # general command errors
         pass
 
     class HandledError(Exception):
@@ -180,8 +209,8 @@ class CLI(object):
             if '...' in syntax_token:
                 return 'full', candidates, syntax_token, score
             if new_token:
-                return 'full', [], '', score
-            return 'full', candidates, '', score
+                return 'full', ['\n'], '', score
+            return 'full', candidates, syntax_token, score
         return 'nonmatch', [], '', score
 
     # filters is a list of 'full', 'partial', 'nonmatch'
@@ -228,7 +257,7 @@ class CLI(object):
 
                 for candidate in sub_candidates:
                     if candidate.startswith(partial_word):
-                        if not candidate.endswith('/'):
+                        if not candidate.endswith('/') and candidate != '\n':
                             candidate += ' '
                         candidates.append(candidate)
 
@@ -246,8 +275,10 @@ class CLI(object):
             else:
                 common_prefix = s_min
 
-            if common_prefix and len(partial_word) < len(common_prefix):
-                if partial_word == common_prefix[:len(partial_word)]:
+            if (common_prefix and len(partial_word) < len(common_prefix) and
+                    partial_word == common_prefix[:len(partial_word)]):
+                candidates = [c for c in candidates if c.strip() != '']
+                if candidates:
                     return candidates
 
         buf = []
@@ -256,9 +287,9 @@ class CLI(object):
             syntax, desc, _ = cmd
 
             if match_type == 'full' and num_full_matches == 1:
-                buf.append('  %-50s%s\n' % (syntax + ' <enter>', desc))
+                buf.append('  %-50s %s\n' % (syntax + ' <enter>', desc))
             else:
-                buf.append('  %-50s%s\n' % (syntax, desc))
+                buf.append('  %-50s %s\n' % (syntax, desc))
 
             if syntax_token:
                 attrs = self.get_var_attrs(syntax_token, partial_word)

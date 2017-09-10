@@ -1,3 +1,32 @@
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 // Unit tests traffic class and scheduler routines.
 
 #include <gtest/gtest.h>
@@ -95,11 +124,11 @@ TEST(CreateTree, WeightedFairRootAndLeaf) {
       static_cast<WeightedFairTrafficClass *>(tree.get());
   ASSERT_NE(nullptr, c);
   EXPECT_EQ(RESOURCE_CYCLE, c->resource());
-  ASSERT_EQ(1, c->children().size());
+  ASSERT_EQ(1, c->runnable_children().size());
   ASSERT_EQ(0, c->blocked_children().size());
 
   LeafTrafficClass<Task> *leaf = static_cast<LeafTrafficClass<Task> *>(
-      c->children().container().front().c_);
+      c->runnable_children().container().front().c_);
   ASSERT_NE(nullptr, leaf);
   EXPECT_EQ(leaf->parent(), c);
 
@@ -128,11 +157,11 @@ TEST(CreateTree, RoundRobinRootAndLeaf) {
 
   RoundRobinTrafficClass *c = static_cast<RoundRobinTrafficClass *>(tree.get());
   ASSERT_NE(nullptr, c);
-  ASSERT_EQ(1, c->children().size());
+  ASSERT_EQ(1, c->runnable_children().size());
   ASSERT_EQ(0, c->blocked_children().size());
 
   LeafTrafficClass<Task> *leaf =
-      static_cast<LeafTrafficClass<Task> *>(c->children().front());
+      static_cast<LeafTrafficClass<Task> *>(c->runnable_children().front());
   ASSERT_NE(nullptr, leaf);
   EXPECT_EQ(leaf->parent(), c);
 
@@ -217,11 +246,11 @@ TEST(DefaultSchedulerNext, BasicTreeWeightedFair) {
   WeightedFairTrafficClass *c =
       static_cast<WeightedFairTrafficClass *>(s.root());
   ASSERT_NE(nullptr, c);
-  ASSERT_EQ(1, c->children().size());
+  ASSERT_EQ(1, c->runnable_children().size());
   ASSERT_EQ(0, c->blocked_children().size());
 
   LeafTrafficClass<Task> *leaf = static_cast<LeafTrafficClass<Task> *>(
-      c->children().container().front().c_);
+      c->runnable_children().container().front().c_);
   ASSERT_NE(nullptr, leaf);
   EXPECT_EQ(leaf->parent(), c);
 
@@ -248,7 +277,7 @@ TEST(DefaultSchedulerNext, BasicTreeRoundRobin) {
   ASSERT_EQ(0, c->blocked_children().size());
 
   LeafTrafficClass<Task> *leaf =
-      static_cast<LeafTrafficClass<Task> *>(c->children().front());
+      static_cast<LeafTrafficClass<Task> *>(c->runnable_children().front());
   ASSERT_NE(nullptr, leaf);
   EXPECT_EQ(leaf->parent(), c);
 
@@ -358,7 +387,7 @@ TEST(DefaultScheduleOnce, TwoLeavesWeightedFair) {
 
   WeightedFairTrafficClass *root =
       static_cast<WeightedFairTrafficClass *>(s.root());
-  ASSERT_EQ(2, root->children().size());
+  ASSERT_EQ(2, root->runnable_children().size());
 
   // There's no guarantee which will run first because they will tie, so this is
   // a guess based upon the heap's behavior.
@@ -450,7 +479,7 @@ TEST(DefaultScheduleOnce, TwoLeavesRoundRobin) {
 
   RoundRobinTrafficClass *root =
       static_cast<RoundRobinTrafficClass *>(s.root());
-  ASSERT_EQ(2, root->children().size());
+  ASSERT_EQ(2, root->runnable_children().size());
 
   ASSERT_EQ(leaf_1, s.Next(rdtsc()));
   s.ScheduleOnce();
@@ -493,13 +522,13 @@ TEST(DefaultScheduleOnce, LeavesWeightedFairAndRoundRobin) {
 
   WeightedFairTrafficClass *root =
       static_cast<WeightedFairTrafficClass *>(s.root());
-  ASSERT_EQ(2, root->children().size());
+  ASSERT_EQ(2, root->runnable_children().size());
   RoundRobinTrafficClass *rr_1 =
       static_cast<RoundRobinTrafficClass *>(TrafficClassBuilder::Find("rr_1"));
-  ASSERT_EQ(2, rr_1->children().size());
+  ASSERT_EQ(2, rr_1->runnable_children().size());
   RoundRobinTrafficClass *rr_2 =
       static_cast<RoundRobinTrafficClass *>(TrafficClassBuilder::Find("rr_2"));
-  ASSERT_EQ(2, rr_2->children().size());
+  ASSERT_EQ(2, rr_2->runnable_children().size());
 
   // There's no guarantee which will run first because they will tie, so this is
   // a guess based upon the heap's behavior.

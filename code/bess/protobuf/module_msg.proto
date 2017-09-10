@@ -1,6 +1,37 @@
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// Copyright (c) 2017, The Regents of the University of California.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 syntax = "proto3";
 
 package bess.pb;
+import "util_msg.proto";
 
 // Module-specific messages.
 // The header generated from this file should not be included in the BESS core
@@ -16,6 +47,8 @@ package bess.pb;
 /// is called on modules in bessd. This file lists all modules, their initialization parameters
 /// and any functions that may be called on them.
 
+message EmptyArg {
+}
 
 /**
  * The BPF module has a command `clear()` that takes no parameters.
@@ -35,7 +68,7 @@ message BPFCommandClearArg {
  */
 message ExactMatchCommandAddArg {
   uint64 gate = 1; /// The gate to forward out packets that mach this rule.
-  repeated bytes fields = 2; /// The exact match values to check for
+  repeated FieldData fields = 2; /// The exact match values to check for
 }
 
 /**
@@ -43,7 +76,7 @@ message ExactMatchCommandAddArg {
  * Example use: `delete(fields=[aton('12.3.4.5'), aton('5.4.3.2')])`
  */
 message ExactMatchCommandDeleteArg {
-  repeated bytes fields = 2; /// The field values for the rule to be deleted.
+  repeated FieldData fields = 2; /// The field values for the rule to be deleted.
 }
 
 /**
@@ -260,6 +293,22 @@ message QueueCommandSetSizeArg {
 }
 
 /**
+ * Modules that are queues or contain queues may contain functions
+ * `get_status()` that return QueueCommandGetStatusResponse.
+ */
+message QueueCommandGetStatusArg {}
+
+/**
+ * Modules that are queues or contain queues may contain functions
+ * `get_status()` that take no parameters and returns the queue occupancy and
+ * size.
+ */
+message QueueCommandGetStatusResponse {
+  uint64 count = 1; /// The number of packets currently in the queue.
+  uint64 size = 2;  /// The maximum number of packets the queue can contain.
+}
+
+/**
  * The function `clear()` for RandomUpdate takes no parameters and clears all
  * state in the module.
  */
@@ -288,16 +337,16 @@ message UpdateCommandClearArg {
 message WildcardMatchCommandAddArg {
   uint64 gate = 1; /// Traffic matching this new rule will be sent to this gate.
   int64 priority = 2; ///If a packet matches multiple rules, the rule with higher priority will be applied. If priorities are equal behavior is undefined.
-  repeated uint64 values = 3; /// The values to check for in each fieild.
-  repeated uint64 masks = 4; /// The bitmask for each field -- set 0x0 to ignore the field altogether.
+  repeated FieldData values = 3; /// The values to check for in each fieild.
+  repeated FieldData masks = 4; /// The bitmask for each field -- set 0x0 to ignore the field altogether.
 }
 
 /**
  * The module WildcardMatch has a command `delete(...)` which removes a rule -- simply specify the values and masks from the previously inserted rule to remove them.
  */
 message WildcardMatchCommandDeleteArg {
-  repeated uint64 values = 1; /// The values being checked for in the rule
-  repeated uint64 masks = 2; /// The bitmask from the rule.
+  repeated FieldData values = 1; /// The values being checked for in the rule
+  repeated FieldData masks = 2; /// The bitmask from the rule.
 }
 
 /**
@@ -326,23 +375,12 @@ message WildcardMatchRule {
 }
 
 /**
- * A field over which the WildcardMatch module should inspect.
- */
-message WildcardMatchField {
-  uint64 size = 1; /// The length in bytes of the field to inspect.
-  oneof position {
-    uint64 offset = 2; /// The field offset into the packet data, if the field lies in the packet itself.
-    string attribute = 3; /// The metadata attribute to inspect, if the field is a metadata attribute.
-  }
-}
-
-/**
  * The module WildcardMatch has a function `get_rules()` which
  * returns the current set of running rules.
  */
 message WildcardMatchCommandGetRulesResponse {
   uint64 default_gate = 1; /// The default gate
-  repeated WildcardMatchField fields = 2; /// The fields provided in initializing WCM
+  repeated Field fields = 2; /// The fields provided in initializing WCM
   repeated WildcardMatchRule rules = 3; /// All rules provided via calls to `WilcardMatch.add(...)`
 }
 
@@ -438,18 +476,8 @@ message EtherEncapArg {
  * __Output Gates__: many (configurable)
  */
 message ExactMatchArg {
-  /**
-   * An ExactMatch Field specifies a field over which to check for ExactMatch rules. Field may be in EITHER the packet's data OR it's metadata attributes.
-   */
-  message Field {
-    uint64 size = 1; /// The length, in bytes, of the field to inspect.
-    uint64 mask = 4; /// A bitmask over the field to specify which bits to inspect (default 0xff).
-    oneof position {
-      string attribute = 2; ///Metadata attribute name, if field resides in metadata.
-      int64 offset = 3; /// The offset, in bytes, from the start of the packet that the field resides in (if field resides in packet data)..
-    }
-  }
   repeated Field fields = 1; ///A list of ExactMatch Fields
+  repeated FieldData masks = 2; /// mask(i) corresponds to the mask for field(i)
 }
 
 /**
@@ -505,16 +533,16 @@ message GenericDecapArg {
  */
 message GenericEncapArg {
   /**
-   * A GenericEncap field represents one field in the new packet header.
+   * An EncapField represents one field in the new packet header.
    */
-  message Field {
+  message EncapField {
     uint64 size = 1; /// The length of the field.
     oneof insertion {
       string attribute = 2; /// The metadata attribute name to pull the field value from
-      uint64 value = 3; /// Or, the fixed value to insert into the packet (max 8 bytes).
+      FieldData value = 3; /// Or, the fixed value to insert into the packet.
     }
   }
-  repeated Field fields = 1;
+  repeated EncapField fields = 1;
 }
 
 /**
@@ -710,8 +738,8 @@ message RandomDropArg {
 }
 
 /**
- * The RandomUpdate module rewrites a random field in a packet with a random value
- * between a specified min and max values.
+ * The RandomUpdate module rewrites a specified field (`offset` and `size`) in a packet
+ * with a random value between a specified min and max values.
  *
  * __Input Gates__: 1
  * __Output Gates__: 1
@@ -800,6 +828,9 @@ message ReplicateCommandSetGatesArg {
 message SetMetadataArg {
   /**
    * SetMetadata Attribute describes a metadata attribute and value to attach to every packet.
+   * If copying data from a packet buffer, SetMetadata can also logically shift
+   * then mask the value before storing it as metadata, i.e.,
+   * metadata_value = (packet_value >> `rshift_bits`) & `mask`.
    */
   message Attribute {
     string name = 1; /// The metadata attribute name.
@@ -808,7 +839,9 @@ message SetMetadataArg {
       uint64 value_int = 3; /// An integer value to store in the packet (host-order).
       bytes value_bin = 4; /// A binary value to store in the packet (host-order).
     }
-    int64 offset = 5; /// An index in the packet data to store copy into the metadata attribute.
+    int32 offset = 5; /// An index in the packet data to store copy into the metadata attribute.
+    bytes mask = 6; /// An array of bit masks to apply to each of the bytes copied starting from `offset`. If empty, the mask [0xFF,....,0xFF] will be used.
+    int32 rshift_bits = 7; /// The number of bits to shift the value at `offset` by before masking. Must be a multiple of 8. Positive and negative values represent right and left shifts respectively.
   }
   repeated Attribute attrs = 1; /// A list of attributes to attach to the packet.
 }
@@ -971,7 +1004,7 @@ message VXLANEncapArg {
  * __Output Gates__: many (configurable)
  */
 message WildcardMatchArg {
-  repeated WildcardMatchField fields = 1; /// A list of WildcardMatch fields.
+  repeated Field fields = 1; /// A list of WildcardMatch fields.
 }
 
 /**
@@ -987,4 +1020,15 @@ message ArpResponderArg {
    */
    string ip = 1; // The IP
    string mac_addr = 2; /// The MAC address
+}
+
+/**
+ * The MPLS pop module removes MPLS labels
+ *
+ * __Input Gates__: 1
+ * __Output Gates__: 2
+ */
+message MplsPopArg {
+   bool remove_eth_header = 1; // Remove ETH header with the pop
+   uint32 next_eth_type = 2; /// The next ETH type to set
 }

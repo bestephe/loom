@@ -1,3 +1,34 @@
+# Copyright (c) 2014-2017, The Regents of the University of California.
+# Copyright (c) 2016-2017, Nefeli Networks, Inc.
+# Copyright (c) 2017, Cloudigo.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# * Neither the names of the copyright holders nor the names of their
+# contributors may be used to endorse or promote products derived from this
+# software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
 from __future__ import print_function
 from __future__ import absolute_import
 import os
@@ -63,41 +94,48 @@ def __bess_env__(key, default=None):
         if default is None:
             raise ConfError('Environment variable "%s" must be set.')
 
-        print('Environment variable "%s" is not set. \
-              Using default value "%s"' % (key, default))
+        print('Environment variable "%s" is not set. '
+              'Using default value "%s"' % (key, default), file=sys.stderr)
         return default
 
 
 def __bess_module__(module_names, mclass_name, *args, **kwargs):
-    caller_globals = inspect.stack()[1][0].f_globals
+    def make_modules(names):
+        result = []
+        for module in names:
+            if module in caller_globals:
+                raise ConfError("Module name %s already exists" % module)
+            if module in caller_locals:
+                raise ConfError("Module name %s shadowed by local variable" %
+                                module)
+        for module in names:
+            obj = mclass_obj(*args, name=module, **kwargs)
+            caller_globals[module] = obj
+            result.append(obj)
+        return result
+
+    caller_frame = inspect.stack()[1][0]
+    caller_globals = caller_frame.f_globals
+    caller_locals = caller_frame.f_locals
+    # If the locals *are* the globals, we are in the module of the
+    # caller and should look only at the globals.  If not, we are
+    # in a function defined in that module, and must check both.
+    if caller_locals is caller_globals:
+        caller_locals = {}
 
     if mclass_name not in caller_globals:
         raise ConfError("Module class %s does not exist" % mclass_name)
     mclass_obj = caller_globals[mclass_name]
 
+    # a::SomeMod()
     if isinstance(module_names, str):
-        if module_names in caller_globals:
-            raise ConfError("Module name %s already exists" % module_names)
-        obj = mclass_obj(*args, name=module_names, **kwargs)
-        caller_globals[module_names] = obj
-        return obj
+        return make_modules([module_names])[0]
 
     # a,b,c::SomeMod()
-    elif isinstance(module_names, tuple):
-        obj_list = []
+    if isinstance(module_names, tuple):
+        return make_modules(module_names)
 
-        for module in module_names:
-            if module in caller_globals:
-                raise ConfError("Module name %s already exists" % module)
-
-        for module in module_names:
-            obj = mclass_obj(*args, name=module, **kwargs)
-            caller_globals[module] = obj
-            obj_list.append(obj)
-        return obj_list
-
-    else:
-        assert False, 'Invalid argument %s' % type(module_names)
+    assert False, 'Invalid argument %s' % type(module_names)
 
 
 def is_allowed_filename(basename):
@@ -161,6 +199,9 @@ def get_var_attrs(cli, var_token, partial_word):
         elif var_token == 'CORE':
             var_type = 'int'
 
+        elif var_token == '[SOCKET]':
+            var_type = 'socket'
+
         elif var_token == 'WORKER_ID':
             var_type = 'int'
             try:
@@ -187,7 +228,7 @@ def get_var_attrs(cli, var_token, partial_word):
                 pass
 
         elif var_token == 'DRIVER...':
-            var_type = 'name'
+            var_type = 'name+'
             var_desc = 'one or more port driver names'
             try:
                 var_candidates = cli.bess.list_drivers().driver_names
@@ -302,14 +343,14 @@ def get_var_attrs(cli, var_token, partial_word):
             var_candidates = complete_filename(partial_word, suffix='.so',
                                                skip_suffix=True)
 
-        if var_token == '[DIRECTION]':
-            var_type = 'name'
+        elif var_token == '[DIRECTION]':
+            var_type = 'dir'
             var_desc = 'gate direction discriminator (default "out")'
             var_candidates = ['in', 'out']
 
         elif var_token == '[GATE]':
             var_type = 'gate'
-            var_desc = 'gate index (default all)'
+            var_desc = 'gate index of a module'
 
         elif var_token == '[OGATE]':
             var_type = 'gate'
@@ -345,7 +386,7 @@ def get_var_attrs(cli, var_token, partial_word):
             var_desc = 'bess daemon command-line options (see "bessd -h")'
 
         elif var_token == '[HOST]':
-            var_type = 'name'
+            var_type = 'host'
             var_desc = 'host address'
 
         elif var_token == '[TCP_PORT]':
@@ -377,8 +418,9 @@ def get_var_attrs(cli, var_token, partial_word):
 #   tail: the rest of input line
 # You can assume that 'line == head + tail'
 def split_var(cli, var_type, line):
-    if var_type in ['name', 'optional_name', 'gate', 'confname', 'filename',
-                    'endis', 'int', 'pause_workers']:
+    if var_type in [
+        'host', 'name', 'optional_name', 'gate', 'confname', 'filename',
+                    'endis', 'int', 'socket', 'pause_workers', 'dir']:
         pos = line.find(' ')
         if pos == -1:
             head = line
@@ -418,6 +460,14 @@ def bind_var(cli, var_type, line):
         else:
             raise cli.BindError('"endis" must be either "enable" or "disable"')
 
+    elif var_type == 'dir':
+        if 'in'.startswith(val):
+            val = 'in'
+        elif 'out'.startswith(val):
+            val = 'out'
+        else:
+            raise cli.BindError('"dir" must be either "in" or "out"')
+
     elif var_type == 'wid+':
         val = []
         for wid_str in head.split():
@@ -426,6 +476,13 @@ def bind_var(cli, var_type, line):
             else:
                 raise cli.BindError('"wid" must be a positive number')
         val = sorted(list(set(val)))
+
+    elif var_type == 'host':
+        dns = re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-.]*$', val)
+        ip = re.match(r'^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$', val)
+        if dns is None and ip is None:
+            raise cli.BindError(
+                '"host" must be a valid DNS name or IPv4 address')
 
     elif var_type == 'name':
         if re.match(r'^[_a-zA-Z][\w]*$', val) is None:
@@ -440,6 +497,12 @@ def bind_var(cli, var_type, line):
             val = int(head)
         else:
             raise cli.BindError('"gate" must be a positive number')
+
+    elif var_type == 'socket':
+        if head.isdigit():
+            val = int(head)
+        else:
+            raise cli.BindError('"socket" must be a positive number')
 
     elif var_type == 'name+':
         val = sorted(list(set(head.split())))  # collect unique items
@@ -580,8 +643,9 @@ def _do_start(cli, opts):
     if opts is None:
         opts = []
 
-    cmd = 'sudo %s/core/bessd -k %s' % (os.path.dirname(cli.this_dir),
-                                        ' '.join(opts))
+    # need -E to pass GCOV_* env variables through
+    cmd = 'sudo -E %s/core/bessd -k %s' % (os.path.dirname(cli.this_dir),
+                                           ' '.join(opts))
 
     cli.bess.disconnect()
 
@@ -671,13 +735,77 @@ def _clear_pipeline(cli):
     cli.bess.reset_all()
 
 
+def _get_bess_module_and_port_creators(cli, rsvd):
+    """
+    Return module instance creators and port instance creators.
+
+    A creator is, in effect, a class as if defined by:
+        class Foo(Module):
+            bess = bess
+            choose_arg = _choose_arg
+    (and similarly for a port creator but with Port as the base class).
+    The choose_arg function is internal, meant for use in the __init__
+    functions in the base classes; see class Module and class Port,
+    defined elsewhere.
+
+    The rsvd argument is a dictionary of reserved names (see below).
+    """
+    creators = {}
+
+    # TODO(torek) cache these for performance, rebuild when needed
+
+    class_names = [str(i) for i in cli.bess.list_mclasses().names]
+    driver_names = [str(i) for i in cli.bess.list_drivers().driver_names]
+
+    # Duplicates, if they exist, represent a fault in what's been
+    # loaded into BESS.  In particular, at least for the moment,
+    # we cannot have the same name as both a module *and* a port,
+    # nor may they use any of the reserved names.
+    #
+    # We can assume that the C++ code has already forbidden
+    # using the same name twice as-module class or port-driver.
+    # But the C++ code does not have the restriction on using
+    # Foo() as *both* module *and* port-driver.
+    counts = collections.Counter(rsvd.keys())
+    counts.update(class_names)
+    counts.update(driver_names)
+    dups = [k for k in counts if counts[k] > 1]
+
+    if dups:
+        errors = []
+        for name in dups:
+            if name in rsvd:
+                why = 'reserved name {} is used as '.format(name)
+            else:
+                why = 'name {} is used as '.format(name)
+            if name in class_names:
+                if name in driver_names:
+                    why += 'both a module class and a port driver'
+                else:
+                    why += 'a module class'
+            else:
+                why += 'a port driver'
+            errors.append(why)
+        errors = 'duplicate names found: {}'.format('; '.join(errors))
+        raise cli.InternalError(errors)
+
+    for name in class_names:
+        creators[name] = type(str(name), (Module,),
+                              {'bess': cli.bess, 'choose_arg': _choose_arg})
+    for name in driver_names:
+        creators[name] = type(str(name), (Port,),
+                              {'bess': cli.bess, 'choose_arg': _choose_arg})
+
+    return creators
+
+
 # NOTE: the name of this function is used below
 def _do_run_file(cli, conf_file):
-    if not os.path.exists(conf_file):
-        cli.err('Cannot open file "%s"' % conf_file)
-        return
-
-    xformed = sugar.xform_file(conf_file)
+    try:
+        xformed = sugar.xform_file(conf_file)
+    except (IOError, OSError):
+        cli.err('Cannot open file %s' % conf_file)
+        raise cli.HandledError()
 
     new_globals = {
         '__builtins__': __builtins__,
@@ -685,28 +813,25 @@ def _do_run_file(cli, conf_file):
         'ConfError': ConfError,
         '__bess_env__': __bess_env__,
         '__bess_module__': __bess_module__,
+        '__bess_creators__': None,   # will be replaced below
     }
 
-    class_names = cli.bess.list_mclasses().names
-    driver_names = cli.bess.list_drivers().driver_names
+    creators = _get_bess_module_and_port_creators(cli, new_globals)
 
-    # Add BESS port classes
-    for name in driver_names:
-        if name in new_globals:
-            raise cli.InternalError('Invalid driver name: %s' % name)
+    # Creator names are used globally in scripts, so export them
+    # globally.  We keep them in __bess_creators__ for use in the
+    # test code as well, which wants to create its own new set of
+    # globals.
+    new_globals['__bess_creators__'] = creators
+    for name in creators:
+        new_globals[name] = creators[name]
 
-        new_globals[name] = type(str(name), (Port,),
-                                 {'bess': cli.bess, 'choose_arg': _choose_arg})
-
-    # Add BESS module classes
-    for name in class_names:
-        if name in new_globals:
-            raise cli.InternalError('Invalid module class name: %s' % name)
-
-        new_globals[name] = type(str(name), (Module,),
-                                 {'bess': cli.bess, 'choose_arg': _choose_arg})
-
-    code = compile(xformed, conf_file, 'exec')
+    try:
+        code = compile(xformed, conf_file, 'exec')
+    except:
+        # TODO: Provide more information where and why fail to compile
+        cli.err('Fail to compile bess config file %s ' % conf_file)
+        raise cli.HandledError()
 
     if is_pipeline_empty(cli):
         cli.bess.pause_all()
@@ -1386,12 +1511,22 @@ def show_mclass_list(cli, cls_names):
 
 @cmd('import plugin PLUGIN_FILE', 'Import the specified plugin (*.so)')
 def import_plugin(cli, plugin):
-    cli.bess.import_plugin(plugin)
+    cli.bess.pause_all()
+    try:
+        cli.bess.import_plugin(plugin)
+    finally:
+        cli.bess.resume_all()
 
 
 @cmd('unload plugin PLUGIN_FILE', 'Unload the specified plugin (*.so)')
 def unload_plugin(cli, plugin):
-    cli.bess.unload_plugin(plugin)
+    # FIXME check whether the plugin is being used
+    # currently this command can crash the BESS daemon
+    cli.bess.pause_all()
+    try:
+        cli.bess.unload_plugin(plugin)
+    finally:
+        cli.bess.resume_all()
 
 
 @cmd('show plugin', 'Show all imported plugins')
@@ -1679,7 +1814,7 @@ def monitor_tc_all(cli, tcs):
 
 
 # tcpdump can write pcap files, so we don't need to support it separately
-@cmd('tcpdump MODULE [DIRECTION] [OGATE] [TCPDUMP_OPTS...]',
+@cmd('tcpdump MODULE [DIRECTION] [GATE] [TCPDUMP_OPTS...]',
      'Capture packets on a gate')
 def tcpdump_module(cli, module_name, direction, gate, opts):
     if gate is None:
@@ -1735,6 +1870,8 @@ def _track_module(cli, bits, flag, module_name, direction, gate):
         direction = 'out'
     if module_name in [None, '*']:
         module_name = ''
+    if gate is None:
+        gate = -1
 
     cli.bess.pause_all()
     try:
@@ -1747,13 +1884,13 @@ def _track_module(cli, bits, flag, module_name, direction, gate):
 
 
 @cmd('track ENABLE_DISABLE [MODULE] [DIRECTION] [GATE]',
-     'Count the packets and batches on a gate')
+     'Count the packets and batches on specified or all gates')
 def track_module(cli, flag, module_name, direction, gate):
     _track_module(cli, False, flag, module_name, direction, gate)
 
 
 @cmd('track bit ENABLE_DISABLE [MODULE] [DIRECTION] [GATE]',
-     'Count the packets, batches and bits on a gate')
+     'Count the packets, batches, and bits on specified or all gates')
 def track_module_bits(cli, flag, module_name, direction, gate):
     _track_module(cli, True, flag, module_name, direction, gate)
 
@@ -1775,3 +1912,26 @@ def interactive(cli):
     cli.fin = old_fin
     cli.fout = old_fout
     cli.interactive = False
+
+
+@cmd('show system packets [SOCKET]', 'Dump the mempool of one or more sockets')
+def show_system_packets(cli, socket):
+    if socket is None:
+        socket = -1
+    resp = cli.bess.dump_mempool(socket)
+    for dump in resp.dumps:
+        cli.fout.write('Socket {}\n'.format(dump.socket))
+        cli.fout.write('\tinitialized: {}\n'.format(dump.initialized))
+        if not dump.initialized:
+            continue
+        cli.fout.write('\tmp_size: {}\n'.format(dump.mp_size))
+        cli.fout.write('\tmp_cache_size: {}\n'.format(dump.mp_cache_size))
+        cli.fout.write('\tmp_element_size: {}\n'.format(dump.mp_element_size))
+        cli.fout.write('\tmp_populated_size: {}\n'.format(
+            dump.mp_populated_size))
+        cli.fout.write('\tmp_available_count: {}\n'.format(
+            dump.mp_available_count))
+        cli.fout.write('\tmp_in_use_count: {}\n'.format(dump.mp_in_use_count))
+        cli.fout.write('\tring_count: {}\n'.format(dump.ring_count))
+        cli.fout.write('\tring_free_count: {}\n'.format(dump.ring_free_count))
+        cli.fout.write('\tring_bytes: {}\n'.format(dump.ring_bytes))

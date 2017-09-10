@@ -1,3 +1,33 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #include "generic_encap.h"
 
 #include "../utils/endian.h"
@@ -12,14 +42,16 @@ static_assert(MAX_FIELD_SIZE <= sizeof(uint64_t),
 #endif
 
 CommandResponse GenericEncap::AddFieldOne(
-    const bess::pb::GenericEncapArg_Field &field, struct Field *f, int idx) {
+    const bess::pb::GenericEncapArg_EncapField &field, struct Field *f,
+    int idx) {
   f->size = field.size();
   if (f->size < 1 || f->size > MAX_FIELD_SIZE) {
     return CommandFailure(EINVAL, "idx %d: 'size' must be 1-%d", idx,
                           MAX_FIELD_SIZE);
   }
 
-  if (field.insertion_case() == bess::pb::GenericEncapArg_Field::kAttribute) {
+  if (field.insertion_case() ==
+      bess::pb::GenericEncapArg_EncapField::kAttribute) {
     const char *attr = field.attribute().c_str();
     f->attr_id = AddMetadataAttr(attr, f->size,
                                  bess::metadata::Attribute::AccessMode::kRead);
@@ -28,13 +60,25 @@ CommandResponse GenericEncap::AddFieldOne(
                             idx);
     }
   } else if (field.insertion_case() ==
-             bess::pb::GenericEncapArg_Field::kValue) {
+             bess::pb::GenericEncapArg_EncapField::kValue) {
     f->attr_id = -1;
-    if (!bess::utils::uint64_to_bin(&f->value, field.value(), f->size, 1)) {
-      return CommandFailure(EINVAL,
-                            "idx %d: "
-                            "not a correct %d-byte value",
-                            idx, f->size);
+    if (field.value().encoding_case() == bess::pb::FieldData::kValueInt) {
+      if (!bess::utils::uint64_to_bin(&f->value, field.value().value_int(),
+                                      f->size, 1)) {
+        return CommandFailure(EINVAL,
+                              "idx %d: "
+                              "not a correct %d-byte value",
+                              idx, f->size);
+      }
+    } else if (field.value().encoding_case() ==
+               bess::pb::FieldData::kValueBin) {
+      if (field.value().value_bin().size() != (size_t)f->size) {
+        return CommandFailure(EINVAL, "idx %d: not a correct %d-byte mask", idx,
+                              f->size);
+      }
+      bess::utils::Copy(reinterpret_cast<uint8_t *>(&(f->value)),
+                        field.value().value_bin().c_str(),
+                        field.value().value_bin().size());
     }
   } else {
     return CommandFailure(EINVAL, "idx %d: must specify 'value' or 'attribute'",
