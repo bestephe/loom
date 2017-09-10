@@ -1,3 +1,32 @@
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 // Unit tests for port and portbuilder routines.
 
 #include "port.h"
@@ -67,6 +96,16 @@ class PortTest : public ::testing::Test {
   }
 
   const PortBuilder *dummy_port_builder;
+};
+
+class PortBuilderTest : public ::testing::Test {
+ protected:
+  virtual void SetUp() {
+    PortBuilder::all_port_builders_holder(true);
+    ASSERT_TRUE(PortBuilder::all_port_builders().empty());
+  }
+
+  virtual void TearDown() { PortBuilder::all_port_builders_holder(true); }
 };
 
 // Checks that when we create a port via the established PortBuilder, the right
@@ -246,9 +285,7 @@ TEST_F(PortTest, InitDrivers) {
 
 // Checks that when we register a portclass, the global table of PortBuilders
 // contains it.
-TEST(PortBuilderTest, RegisterPortClassDirectCall) {
-  ASSERT_TRUE(PortBuilder::all_port_builders().empty());
-
+TEST_F(PortBuilderTest, RegisterPortClassDirectCall) {
   PortBuilder::RegisterPortClass([]() { return new DummyPort(); }, "DummyPort",
                                  "dummy_port", "dummy help",
                                  PORT_INIT_FUNC(&DummyPort::Init));
@@ -261,15 +298,11 @@ TEST(PortBuilderTest, RegisterPortClassDirectCall) {
   EXPECT_EQ("DummyPort", b.class_name());
   EXPECT_EQ("dummy_port", b.name_template());
   EXPECT_EQ("dummy help", b.help_text());
-
-  PortBuilder::all_port_builders_holder(true);
 }
 
 // Checks that when we register a portclass via the ADD_DRIVER macro, the global
 // table of PortBuilders contains it.
-TEST(PortBuilderTest, RegisterPortClassMacroCall) {
-  ASSERT_TRUE(PortBuilder::all_port_builders().empty());
-
+TEST_F(PortBuilderTest, RegisterPortClassMacroCall) {
   ADD_DRIVER(DummyPort, "dummy_port", "dummy help");
   ASSERT_TRUE(__driver__DummyPort);
 
@@ -281,12 +314,10 @@ TEST(PortBuilderTest, RegisterPortClassMacroCall) {
   EXPECT_EQ("DummyPort", b.class_name());
   EXPECT_EQ("dummy_port", b.name_template());
   EXPECT_EQ("dummy help", b.help_text());
-
-  PortBuilder::all_port_builders_holder(true);
 }
 
 // Checks that we can generate a proper port name given a template or not.
-TEST(PortBuilderTest, GenerateDefaultPortNameTemplate) {
+TEST_F(PortBuilderTest, GenerateDefaultPortNameTemplate) {
   std::string name1 = PortBuilder::GenerateDefaultPortName("FooPort", "foo");
   EXPECT_EQ("foo0", name1);
 

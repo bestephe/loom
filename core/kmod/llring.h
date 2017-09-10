@@ -1,3 +1,33 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 /*-
  * adopted from DPDK's rte_ring.h
  *
@@ -66,6 +96,16 @@
 #ifndef _LLRING_H_
 #define _LLRING_H_
 
+#if !defined(__cplusplus) // C
+#define FALLTHROUGH __attribute__((fallthrough))
+#elif __cplusplus <= 201402L && defined(__clang__) // C++14 or older, Clang
+#define FALLTHROUGH [[clang::fallthrough]]
+#elif __cplusplus <= 201402L && __GNUC__ < 7 // C++14 or older, pre-GCC 7
+#define FALLTHROUGH
+#else
+#define FALLTHROUGH [[fallthrough]]
+#endif
+
 /**
  * Note: the ring implementation is not preemptable. A producer must not
  * be interrupted by another producer that uses the same ring.
@@ -111,14 +151,14 @@ static inline void llring_pause(void) { _mm_pause(); }
 
 #endif
 
-/* llring can be used between execution contexts having different address widths.
- * In such circumstances, use phys_addr_t rather than void *, whose size would
- * be different in 32 bit versus 64 bit contexts.
+/* llring can be used between execution contexts having different address
+ * widths. In such circumstances, use phys_addr_t rather than void *, whose size
+ * would be different in 32 bit versus 64 bit contexts.
  */
 #ifdef __LLRING_USE_PHYS_ADDR__
 typedef phys_addr_t llring_addr_t;
 #else
-typedef void * llring_addr_t;
+typedef void *llring_addr_t;
 #endif
 
 /* dummy assembly operation to prevent compiler re-ordering of instructions */
@@ -210,10 +250,11 @@ struct llring {
 	/* it seems to help */
 	char _pad[LLRING_CACHELINE_SIZE];
 
-	llring_addr_t ring[0]
-	        __llring_cache_aligned; /**< Memory space of ring starts here.
-					 * not volatile so need to be careful
-					 * about compiler re-ordering */
+	llring_addr_t ring[0] __llring_cache_aligned; /**< Memory space of ring
+						       * starts here. not
+						       * volatile so need to be
+						       * careful about compiler
+						       * re-ordering */
 } __llring_cache_aligned;
 
 #define RING_QUOT_EXCEED (1 << 31)	  /**< Quota exceed for burst ops */
@@ -236,7 +277,9 @@ struct llring {
 		r->stats[__lcore_id].name##_bulk += 1;                         \
 	} while (0)
 #else
-#define __RING_STAT_ADD(r, name, n) do {} while(0)
+#define __RING_STAT_ADD(r, name, n)                                            \
+	do {                                                                   \
+	} while (0)
 #endif
 
 static inline int llring_bytes_with_slots(unsigned int slots)
@@ -324,8 +367,10 @@ static inline int llring_set_water_mark(struct llring *r, unsigned count)
 			switch (n & 0x3) {                                     \
 			case 3:                                                \
 				r->ring[idx++] = obj_table[i++];               \
+				FALLTHROUGH;                                   \
 			case 2:                                                \
 				r->ring[idx++] = obj_table[i++];               \
+				FALLTHROUGH;                                   \
 			case 1:                                                \
 				r->ring[idx++] = obj_table[i++];               \
 			}                                                      \
@@ -355,8 +400,10 @@ static inline int llring_set_water_mark(struct llring *r, unsigned count)
 			switch (n & 0x3) {                                     \
 			case 3:                                                \
 				obj_table[i++] = r->ring[idx++];               \
+				FALLTHROUGH;                                   \
 			case 2:                                                \
 				obj_table[i++] = r->ring[idx++];               \
+				FALLTHROUGH;                                   \
 			case 1:                                                \
 				obj_table[i++] = r->ring[idx++];               \
 			}                                                      \
@@ -395,8 +442,8 @@ static inline int llring_set_water_mark(struct llring *r, unsigned count)
  *   - n: Actual number of objects enqueued.
  */
 static inline int __attribute__((always_inline))
-__llring_mp_do_enqueue(struct llring *r, llring_addr_t const *obj_table, unsigned n,
-		       enum llring_queue_behavior behavior)
+__llring_mp_do_enqueue(struct llring *r, llring_addr_t const *obj_table,
+		       unsigned n, enum llring_queue_behavior behavior)
 {
 	uint32_t prod_head, prod_next;
 	uint32_t cons_tail, free_entries;
@@ -491,8 +538,8 @@ __llring_mp_do_enqueue(struct llring *r, llring_addr_t const *obj_table, unsigne
  *   - n: Actual number of objects enqueued.
  */
 static inline int __attribute__((always_inline))
-__llring_sp_do_enqueue(struct llring *r, llring_addr_t const *obj_table, unsigned n,
-		       enum llring_queue_behavior behavior)
+__llring_sp_do_enqueue(struct llring *r, llring_addr_t const *obj_table,
+		       unsigned n, enum llring_queue_behavior behavior)
 {
 	uint32_t prod_head, cons_tail;
 	uint32_t prod_next, free_entries;
@@ -723,19 +770,22 @@ __llring_sc_do_dequeue(struct llring *r, llring_addr_t *obj_table, unsigned n,
  * enqueued.
  */
 static inline int __attribute__((always_inline))
-llring_mp_enqueue_bulk(struct llring *r, llring_addr_t const *obj_table, unsigned n)
+llring_mp_enqueue_bulk(struct llring *r, llring_addr_t const *obj_table,
+		       unsigned n)
 {
 	return __llring_mp_do_enqueue(r, obj_table, n, LLRING_QUEUE_FIXED);
 }
 
 static inline int __attribute__((always_inline))
-llring_sp_enqueue_bulk(struct llring *r, llring_addr_t const *obj_table, unsigned n)
+llring_sp_enqueue_bulk(struct llring *r, llring_addr_t const *obj_table,
+		       unsigned n)
 {
 	return __llring_sp_do_enqueue(r, obj_table, n, LLRING_QUEUE_FIXED);
 }
 
 static inline int __attribute__((always_inline))
-llring_enqueue_bulk(struct llring *r, llring_addr_t const *obj_table, unsigned n)
+llring_enqueue_bulk(struct llring *r, llring_addr_t const *obj_table,
+		    unsigned n)
 {
 	if (r->common.sp_enqueue)
 		return llring_sp_enqueue_bulk(r, obj_table, n);
@@ -1057,7 +1107,8 @@ llring_sp_enqueue_burst(struct llring *r, llring_addr_t const *obj_table,
  *   - n: Actual number of objects enqueued.
  */
 static inline int __attribute__((always_inline))
-llring_enqueue_burst(struct llring *r, llring_addr_t const *obj_table, unsigned n)
+llring_enqueue_burst(struct llring *r, llring_addr_t const *obj_table,
+		     unsigned n)
 {
 	if (r->common.sp_enqueue)
 		return llring_sp_enqueue_burst(r, obj_table, n);

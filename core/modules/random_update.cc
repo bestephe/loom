@@ -1,10 +1,42 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #include "random_update.h"
 
 using bess::utils::be32_t;
 
 const Commands RandomUpdate::cmds = {
-    {"add", "RandomUpdateArg", MODULE_CMD_FUNC(&RandomUpdate::CommandAdd), 0},
-    {"clear", "EmptyArg", MODULE_CMD_FUNC(&RandomUpdate::CommandClear), 0},
+    {"add", "RandomUpdateArg", MODULE_CMD_FUNC(&RandomUpdate::CommandAdd),
+     Command::THREAD_UNSAFE},
+    {"clear", "EmptyArg", MODULE_CMD_FUNC(&RandomUpdate::CommandClear),
+     Command::THREAD_UNSAFE},
 };
 
 CommandResponse RandomUpdate::Init(const bess::pb::RandomUpdateArg &arg) {
@@ -12,10 +44,10 @@ CommandResponse RandomUpdate::Init(const bess::pb::RandomUpdateArg &arg) {
 }
 
 CommandResponse RandomUpdate::CommandAdd(const bess::pb::RandomUpdateArg &arg) {
-  int curr = num_vars_;
-  if (curr + arg.fields_size() > MAX_VARS) {
-    return CommandFailure(EINVAL, "max %d variables can be specified",
-                          MAX_VARS);
+  size_t curr = num_vars_;
+  if (curr + arg.fields_size() > kMaxVariable) {
+    return CommandFailure(EINVAL, "max %zu variables can be specified",
+                          kMaxVariable);
   }
 
   for (int i = 0; i < arg.fields_size(); i++) {
@@ -84,7 +116,7 @@ CommandResponse RandomUpdate::CommandClear(const bess::pb::EmptyArg &) {
 void RandomUpdate::ProcessBatch(bess::PacketBatch *batch) {
   int cnt = batch->cnt();
 
-  for (int i = 0; i < num_vars_; i++) {
+  for (size_t i = 0; i < num_vars_; i++) {
     const auto var = &vars_[i];
 
     be32_t mask = var->mask;

@@ -33,13 +33,13 @@
 
 #include "bpf.h"
 
-#include <pcap.h>
 #include <sys/mman.h>
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
+#ifdef __x86_64  // JIT compilation code only works in 64-bit
 /*
  * Registers
  */
@@ -1088,6 +1088,7 @@ static bpf_filter_func_t bpf_jit_compile(struct bpf_insn *prog, u_int nins,
 
   return (reinterpret_cast<bpf_filter_func_t>(stream.ibuf));
 }
+#endif
 
 /* -------------------------------------------------------------------------
  * Module code begins from here
@@ -1097,69 +1098,65 @@ static bpf_filter_func_t bpf_jit_compile(struct bpf_insn *prog, u_int nins,
 /* Note: unmatched packets are sent to gate 0 */
 #define SNAPLEN 0xffff
 
-static int compare_filter(const void *filter1, const void *filter2) {
-  struct filter *f1 = (struct filter *)filter1;
-  struct filter *f2 = (struct filter *)filter2;
-
-  if (f1->priority > f2->priority)
-    return -1;
-  else if (f1->priority < f2->priority)
-    return 1;
-  else
-    return 0;
-}
-
 const Commands BPF::cmds = {
-    {"add", "BPFArg", MODULE_CMD_FUNC(&BPF::CommandAdd), 0},
-    {"clear", "EmptyArg", MODULE_CMD_FUNC(&BPF::CommandClear), 0}};
+    {"add", "BPFArg", MODULE_CMD_FUNC(&BPF::CommandAdd),
+     Command::THREAD_UNSAFE},
+    {"clear", "EmptyArg", MODULE_CMD_FUNC(&BPF::CommandClear),
+     Command::THREAD_UNSAFE}};
 
 CommandResponse BPF::Init(const bess::pb::BPFArg &arg) {
   return CommandAdd(arg);
 }
 
 void BPF::DeInit() {
-  for (int i = 0; i < n_filters_; i++) {
-    munmap(reinterpret_cast<void *>(filters_[i].func), filters_[i].mmap_size);
-    free(filters_[i].exp);
+  for (auto &filter: filters_) {
+#ifdef __x86_64
+    munmap(reinterpret_cast<void *>(filter.func), filter.mmap_size);
+#else
+    pcap_freecode(&filter.il_code);
+#endif
   }
 
-  n_filters_ = 0;
+  filters_.clear();
 }
 
 CommandResponse BPF::CommandAdd(const bess::pb::BPFArg &arg) {
-  if (n_filters_ + arg.filters_size() > MAX_FILTERS) {
-    return CommandFailure(EINVAL, "Too many filters");
-  }
-
-  struct filter *filter = &filters_[n_filters_];
-  struct bpf_program il_code;
-
   for (const auto &f : arg.filters()) {
-    const char *exp = f.filter().c_str();
-    int64_t gate = f.gate();
-    if (gate < 0 || gate >= MAX_GATES) {
+    if (f.gate() < 0 || f.gate() >= MAX_GATES) {
       return CommandFailure(EINVAL, "Invalid gate");
     }
+
+    Filter filter;
+    filter.priority = f.priority();
+    filter.gate = f.gate();
+    filter.exp = f.filter();
+
+    struct bpf_program il;
     if (pcap_compile_nopcap(SNAPLEN, DLT_EN10MB,  // Ethernet
-                            &il_code, exp, 1,     // optimize (IL only)
+                            &il, filter.exp.c_str(),
+                            1,  // optimize (IL only)
                             PCAP_NETMASK_UNKNOWN) == -1) {
       return CommandFailure(EINVAL, "BPF compilation error");
     }
-    filter->priority = f.priority();
-    filter->gate = f.gate();
-    filter->exp = strdup(exp);
-    filter->func =
-        bpf_jit_compile(il_code.bf_insns, il_code.bf_len, &filter->mmap_size);
-    pcap_freecode(&il_code);
-    if (!filter->func) {
-      free(filter->exp);
+
+#ifdef __x86_64
+    filter.func = bpf_jit_compile(il.bf_insns, il.bf_len, &filter.mmap_size);
+    pcap_freecode(&il);
+    if (!filter.func) {
       return CommandFailure(ENOMEM, "BPF JIT compilation error");
     }
-    n_filters_++;
-    qsort(filters_, n_filters_, sizeof(struct filter), &compare_filter);
+#else
+    filter.il_code = il;
+#endif
 
-    filter++;
+    filters_.push_back(filter);
   }
+
+  std::sort(filters_.begin(), filters_.end(),
+            [](const Filter &a, const Filter &b) {
+              // descending order of priority number
+              return b.priority < a.priority;
+            });
 
   return CommandSuccess();
 }
@@ -1169,8 +1166,19 @@ CommandResponse BPF::CommandClear(const bess::pb::EmptyArg &) {
   return CommandSuccess();
 }
 
-inline void BPF::process_batch_1filter(bess::PacketBatch *batch) {
-  struct filter *filter = &filters_[0];
+inline bool BPF::Match(const Filter &filter, u_char *pkt, u_int wirelen,
+                  u_int buflen) {
+#ifdef __x86_64
+  int ret = filter.func(pkt, wirelen, buflen);
+#else
+  int ret = bpf_filter(filter.il_code.bf_insns, pkt, wirelen, buflen);
+#endif
+
+  return ret != 0;
+}
+
+void BPF::ProcessBatch1Filter(bess::PacketBatch *batch) {
+  const Filter &filter = filters_[0];
 
   bess::PacketBatch out_batches[2];
   bess::Packet **ptrs[2];
@@ -1182,58 +1190,47 @@ inline void BPF::process_batch_1filter(bess::PacketBatch *batch) {
 
   for (int i = 0; i < cnt; i++) {
     bess::Packet *pkt = batch->pkts()[i];
-    int ret;
-    int idx;
 
-    ret = filter->func(pkt->head_data<uint8_t *>(), pkt->total_len(),
-                       pkt->head_len());
-
-    idx = ret & 1;
-    *(ptrs[idx]++) = pkt;
+    if (Match(filter, pkt->head_data<u_char *>(), pkt->total_len(),
+              pkt->head_len())) {
+      *(ptrs[1]++) = pkt;
+    } else {
+      *(ptrs[0]++) = pkt;
+    }
   }
 
   out_batches[0].set_cnt(ptrs[0] - out_batches[0].pkts());
   out_batches[1].set_cnt(ptrs[1] - out_batches[1].pkts());
 
-  if (out_batches[0].cnt())
-    RunChooseModule(0, &out_batches[0]);
-
-  /* matched packets */
-  if (out_batches[1].cnt())
-    RunChooseModule(filter->gate, &out_batches[1]);
+  RunChooseModule(0, &out_batches[0]);
+  RunChooseModule(filter.gate, &out_batches[1]);  // matched packets
 }
 
 void BPF::ProcessBatch(bess::PacketBatch *batch) {
   gate_idx_t out_gates[bess::PacketBatch::kMaxBurst];
-  int n_filters = n_filters_;
-  int cnt;
+  int n_filters = filters_.size();
 
   if (n_filters == 0) {
     RunNextModule(batch);
     return;
-  }
-
-  if (n_filters == 1) {
-    process_batch_1filter(batch);
+  } else if (n_filters == 1) {
+    ProcessBatch1Filter(batch);
     return;
   }
 
-  cnt = batch->cnt();
-
-  /* slow version for general cases */
-  for (int i = 0; i < cnt; i++) {
+  // slow version for general cases
+  for (int i = 0; i < batch->cnt(); i++) {
+    gate_idx_t gate = 0;  // default gate for unmatched pkts
     bess::Packet *pkt = batch->pkts()[i];
-    struct filter *filter = &filters_[0];
-    gate_idx_t gate = 0; /* default gate for unmatched pkts */
 
-    for (int j = 0; j < n_filters; j++, filter++) {
-      if (filter->func(pkt->head_data<uint8_t *>(), pkt->total_len(),
-                       pkt->head_len()) != 0) {
-        gate = filter->gate;
+    // high priority filters are checked first
+    for (const Filter &filter : filters_) {
+      if (Match(filter, pkt->head_data<uint8_t *>(), pkt->total_len(),
+                pkt->head_len())) {
+        gate = filter.gate;
         break;
       }
     }
-
     out_gates[i] = gate;
   }
 

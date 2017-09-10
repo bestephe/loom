@@ -1,3 +1,33 @@
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// Copyright (c) 2017, Cloudigo.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #include "bessctl.h"
 
 #include <thread>
@@ -10,7 +40,7 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-#include "service.grpc.pb.h"
+#include "pb/service.grpc.pb.h"
 #pragma GCC diagnostic pop
 
 #include "bessd.h"
@@ -21,6 +51,7 @@
 #include "metadata.h"
 #include "module.h"
 #include "opts.h"
+#include "packet.h"
 #include "port.h"
 #include "scheduler.h"
 #include "traffic_class.h"
@@ -28,6 +59,9 @@
 #include "utils/format.h"
 #include "utils/time.h"
 #include "worker.h"
+
+#include <rte_mempool.h>
+#include <rte_ring.h>
 
 using grpc::Status;
 using grpc::ServerContext;
@@ -566,13 +600,12 @@ class BESSControlImpl final : public BESSControl::Service {
 
     bess::TrafficClass* root = workers[wid]->scheduler()->root();
     if (root) {
-      bool has_tasks = false;
-      root->Traverse([&has_tasks](bess::TCChildArgs* c) {
-        has_tasks |= c->child()->policy() == bess::POLICY_LEAF;
-      });
-      if (has_tasks) {
-        return return_with_error(response, EBUSY, "Worker %d has active tasks ",
-                                 wid);
+      for (const auto& it : bess::TrafficClassBuilder::all_tcs()) {
+        bess::TrafficClass* c = it.second;
+        if (c->policy() == bess::POLICY_LEAF && c->Root() == root) {
+          return return_with_error(response, EBUSY,
+                                   "Worker %d has active tasks ", wid);
+        }
       }
     }
 
@@ -595,57 +628,47 @@ class BESSControlImpl final : public BESSControl::Service {
 
   Status ListTcs(ServerContext*, const ListTcsRequest* request,
                  ListTcsResponse* response) override {
-    int wid_filter;
-    int i;
-
-    wid_filter = request->wid();
+    int wid_filter = request->wid();
     if (wid_filter >= Worker::kMaxWorkers) {
       return return_with_error(response, EINVAL,
                                "'wid' must be between 0 and %d",
                                Worker::kMaxWorkers - 1);
+    } else if (wid_filter < 0) {
+      wid_filter = Worker::kAnyWorker;
     }
 
-    if (wid_filter < 0) {
-      i = 0;
-      wid_filter = Worker::kMaxWorkers - 1;
-    } else {
-      i = wid_filter;
-    }
-
-    for (; i <= wid_filter; i++) {
-      if (workers[i] == nullptr) {
-        continue;
-      }
-      bess::TrafficClass* root = workers[i]->scheduler()->root();
-      if (!root) {
-        continue;
-      }
-
-      root->Traverse([&response, i](bess::TCChildArgs* args) {
-        bess::TrafficClass* c = args->child();
-
-        ListTcsResponse_TrafficClassStatus* status =
-            response->add_classes_status();
-
-        collect_tc(c, i, status);
-
-        if (args->parent_type() == bess::POLICY_WEIGHTED_FAIR) {
-          auto ca = static_cast<bess::WeightedFairChildArgs*>(args);
-          status->mutable_class_()->set_share(ca->share());
-        } else if (args->parent_type() == bess::POLICY_PRIORITY) {
-          auto ca = static_cast<bess::PriorityChildArgs*>(args);
-          status->mutable_class_()->set_priority(ca->priority());
+    for (const auto& tc_pair : bess::TrafficClassBuilder::all_tcs()) {
+      bess::TrafficClass* c = tc_pair.second;
+      int wid = c->WorkerId();
+      if (wid_filter == Worker::kAnyWorker || wid_filter == wid) {
+        // WRR and Priority TCs associate share/priority to each child
+        if (c->policy() == bess::POLICY_WEIGHTED_FAIR) {
+          const auto* wrr_parent =
+              static_cast<const bess::WeightedFairTrafficClass*>(c);
+          for (const auto& child_data : wrr_parent->children()) {
+            auto* status = response->add_classes_status();
+            collect_tc(child_data.first, wid, status);
+            status->mutable_class_()->set_share(child_data.second);
+          }
+        } else if (c->policy() == bess::POLICY_PRIORITY) {
+          const auto* prio_parent =
+              static_cast<const bess::PriorityTrafficClass*>(c);
+          for (const auto& child_data : prio_parent->children()) {
+            auto* status = response->add_classes_status();
+            collect_tc(child_data.c_, wid, status);
+            status->mutable_class_()->set_priority(child_data.priority_);
+          }
+        } else {
+          for (const auto* child : c->Children()) {
+            auto* status = response->add_classes_status();
+            collect_tc(child, wid, status);
+          }
         }
-      });
-    }
 
-    if (request->wid() < 0) {
-      std::list<std::pair<int, bess::TrafficClass*>> all = list_orphan_tcs();
-      for (auto c : all) {
-        ListTcsResponse_TrafficClassStatus* status =
-            response->add_classes_status();
-
-        collect_tc(c.second, -1, status);
+        if (!c->parent()) {
+          auto* status = response->add_classes_status();
+          collect_tc(c, wid, status);
+        }
       }
     }
 
@@ -673,28 +696,23 @@ class BESSControlImpl final : public BESSControl::Service {
       int socket = 1ull << workers[i]->socket();
       int core = workers[i]->core();
       bess::TrafficClass* root = workers[i]->scheduler()->root();
-      if (root) {
-        root->Traverse([&response, i, socket, core](bess::TCChildArgs* args) {
-          bess::TrafficClass* c = args->child();
-          if (c->policy() == bess::POLICY_LEAF) {
-            auto leaf = static_cast<bess::LeafTrafficClass<Task>*>(c);
-            int constraints = leaf->Task().GetSocketConstraints();
-            if ((constraints & socket) == 0) {
-              LOG(WARNING) << "Scheduler constraints are violated for wid " << i
-                           << " socket " << socket << " constraint "
-                           << constraints;
-              auto violation = response->add_violations();
-              violation->set_name(c->name());
-              violation->set_constraint(constraints);
-              violation->set_assigned_node(workers[i]->socket());
-              violation->set_assigned_core(core);
-            } else {
-              LOG(WARNING) << "Scheduler constraints hold wid " << i
-                           << " socket " << socket << " constraint "
-                           << constraints;
-            }
+
+      for (const auto& tc_pair : bess::TrafficClassBuilder::all_tcs()) {
+        bess::TrafficClass* c = tc_pair.second;
+        if (c->policy() == bess::POLICY_LEAF && root == c->Root()) {
+          auto leaf = static_cast<bess::LeafTrafficClass<Task>*>(c);
+          int constraints = leaf->Task().GetSocketConstraints();
+          if ((constraints & socket) == 0) {
+            LOG(WARNING) << "Scheduler constraints are violated for wid " << i
+                         << " socket " << socket << " constraint "
+                         << constraints;
+            auto violation = response->add_violations();
+            violation->set_name(c->name());
+            violation->set_constraint(constraints);
+            violation->set_assigned_node(workers[i]->socket());
+            violation->set_assigned_core(core);
           }
-        });
+        }
       }
     }
 
@@ -1278,6 +1296,36 @@ class BESSControlImpl final : public BESSControl::Service {
     return Status::OK;
   }
 
+  Status DumpMempool(ServerContext*,
+                           const DumpMempoolRequest* request,
+                           DumpMempoolResponse* response) override {
+    int socket_filter = request->socket();
+    socket_filter = (socket_filter == -1) ? (RTE_MAX_NUMA_NODES - 1) : socket_filter;
+    int socket = (request->socket() == -1) ? 0 : socket_filter;
+    for (; socket <= socket_filter; socket++) {
+      struct rte_mempool *mempool = bess::get_pframe_pool_socket(socket);
+      MempoolDump *dump = response->add_dumps();
+      dump->set_socket(socket);
+      dump->set_initialized(mempool != nullptr);
+      if (mempool == nullptr) {
+        continue;
+      }
+      struct rte_ring *ring = reinterpret_cast<struct rte_ring*>(mempool->pool_data);
+      dump->set_mp_size(mempool->size);
+      dump->set_mp_cache_size(mempool->cache_size);
+      dump->set_mp_element_size(mempool->elt_size);
+      dump->set_mp_populated_size(mempool->populated_size);
+      dump->set_mp_available_count(rte_mempool_avail_count(mempool));
+      dump->set_mp_in_use_count(rte_mempool_in_use_count(mempool));
+      uint32_t ring_count = rte_ring_count(ring);
+      uint32_t ring_free_count = rte_ring_free_count(ring);
+      dump->set_ring_count(ring_count);
+      dump->set_ring_free_count(ring_free_count);
+      dump->set_ring_bytes(rte_ring_get_memsize(ring_count + ring_free_count));
+    }
+    return Status::OK;
+  }
+
   Status ConfigureGateHook(ServerContext*,
                            const ConfigureGateHookRequest* request,
                            CommandResponse* response) override {
@@ -1458,16 +1506,17 @@ class BESSControlImpl final : public BESSControl::Service {
     std::unique_ptr<bess::TrafficClass> c(c_);
     int wid = class_.wid();
 
-    if (class_.parent().length() == 0) {
-      if (wid >= Worker::kMaxWorkers) {
+    if (class_.parent() == "") {
+      if (wid != Worker::kAnyWorker &&
+          (wid < 0 || wid >= Worker::kMaxWorkers)) {
         return return_with_error(response, EINVAL,
-                                 "'wid' must be between -1 and %d",
-                                 Worker::kMaxWorkers - 1);
+                                 "'wid' must be %d or between 0 and %d",
+                                 Worker::kAnyWorker, Worker::kMaxWorkers - 1);
       }
 
-      if ((wid != -1 && !is_worker_active(wid)) ||
-          (wid == -1 && num_workers == 0)) {
-        if (num_workers == 0 && (wid == 0 || wid == -1)) {
+      if ((wid != Worker::kAnyWorker && !is_worker_active(wid)) ||
+          (wid == Worker::kAnyWorker && num_workers == 0)) {
+        if (num_workers == 0 && (wid == 0 || wid == Worker::kAnyWorker)) {
           launch_worker(0, FLAGS_c);
         } else {
           return return_with_error(response, EINVAL, "worker:%d does not exist",
@@ -1479,7 +1528,7 @@ class BESSControlImpl final : public BESSControl::Service {
       return Status::OK;
     }
 
-    if (wid != -1) {
+    if (wid != Worker::kAnyWorker) {
       return return_with_error(response, EINVAL,
                                "Both 'parent' and 'wid'"
                                "have been specified");

@@ -1,3 +1,33 @@
+# Copyright (c) 2014-2016, The Regents of the University of California.
+# Copyright (c) 2016-2017, Nefeli Networks, Inc.
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+# list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+# this list of conditions and the following disclaimer in the documentation
+# and/or other materials provided with the distribution.
+#
+# * Neither the names of the copyright holders nor the names of their
+# contributors may be used to endorse or promote products derived from this
+# software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+# INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+# CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
 from __future__ import absolute_import
 import unittest
 import grpc
@@ -5,11 +35,11 @@ import time
 from concurrent import futures
 
 from . import bess
-from . import bess_msg_pb2 as bess_msg
-from . import service_pb2
+from .builtin_pb import bess_msg_pb2 as bess_msg
+from .builtin_pb import service_pb2
 
 
-class TestServiceImpl(service_pb2.BESSControlServicer):
+class DummyServiceImpl(service_pb2.BESSControlServicer):
 
     def __init__(self):
         pass
@@ -36,16 +66,20 @@ class TestBESS(unittest.TestCase):
     # a real bessd process.
     PORT = 19876
 
-    def setUp(self):
-        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+    @classmethod
+    def setUpClass(cls):
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
         service_pb2.add_BESSControlServicer_to_server(
-            TestServiceImpl(),
-            self.server)
-        self.server.add_insecure_port('[::]:%d' % self.PORT)
-        self.server.start()
+            DummyServiceImpl(),
+            server)
+        server.add_insecure_port('[::]:%d' % cls.PORT)
+        server.start()
+        cls.server = server
 
-    def tearDown(self):
-        self.server.stop(0)
+    @classmethod
+    def tearDownClass(cls):
+        future = cls.server.stop(0)
+        future.wait()
 
     def test_connect(self):
         client = bess.BESS()
@@ -111,5 +145,5 @@ class TestBESS(unittest.TestCase):
                                              'add',
                                              'ExactMatchCommandAddArg',
                                              {'gate': 0,
-                                              'fields': [b'\x11', b'\x22']})
+                                                 'fields': [{'value_bin': b'\x11'}, {'value_bin': b'\x22'}]})
         self.assertEqual(0, response.error.code)

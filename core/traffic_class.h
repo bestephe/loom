@@ -1,6 +1,36 @@
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #ifndef BESS_TRAFFIC_CLASS_H_
 #define BESS_TRAFFIC_CLASS_H_
 
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <list>
@@ -22,8 +52,6 @@ namespace bess {
 
 // A large default priority.
 #define DEFAULT_PRIORITY 0xFFFFFFFFu
-
-#define USAGE_AMPLIFIER_POW 32
 
 // Share is defined relatively, so 1024 should be large enough
 #define STRIDE1 (1 << 20)
@@ -143,37 +171,20 @@ class TrafficClass {
  public:
   virtual ~TrafficClass() {}
 
-  // Iterates through every traffic class in the tree, including 'this'.
-  void Traverse(std::function<void(TCChildArgs *)> f) {
-    TCChildArgs args(this);
-    f(&args);
-    TraverseChildrenRecursive(f);
-  }
-
-  // Iterates through every traffic class in the tree, excluding 'this'.
-  void TraverseChildrenRecursive(std::function<void(TCChildArgs *)> f) {
-    TraverseChildren([&f](TCChildArgs *args) {
-      f(args);
-      args->child()->TraverseChildrenRecursive(f);
-    });
-  }
-
-  // Iterates through every child.
-  virtual void TraverseChildren(std::function<void(TCChildArgs *)>) const = 0;
-
   // Returns the number of TCs in the TC subtree rooted at this, including
   // this TC.
-  size_t Size();
+  size_t Size() const;
+
+  virtual std::vector<TrafficClass *> Children() const = 0;
 
   // Returns the root of the tree this class belongs to.
   // Expensive in that it is recursive, so do not call from
   // performance-sensitive code.
-  TrafficClass *Root() {
-    if (!parent_) {
-      return this;
-    }
-    return parent_->Root();
-  }
+  const TrafficClass *Root() const { return parent_ ? parent_->Root() : this; }
+  TrafficClass *Root() { return parent_ ? parent_->Root() : this; }
+
+  // Returns its worker ID, or -1 (kAnyWorker) if not belongs to any worker yet
+  int WorkerId() const;
 
   // Returns true if 'child' was removed successfully, in which case
   // the caller owns it. Therefore, after a successful call, 'child'
@@ -296,6 +307,8 @@ class PriorityTrafficClass final : public TrafficClass {
 
   ~PriorityTrafficClass();
 
+  std::vector<TrafficClass *> Children() const override;
+
   // Returns true if child was added successfully.
   bool AddChild(TrafficClass *child, priority_t priority);
 
@@ -312,8 +325,6 @@ class PriorityTrafficClass final : public TrafficClass {
                                    uint64_t tsc) override;
 
   const std::vector<ChildData> &children() const { return children_; }
-
-  void TraverseChildren(std::function<void(TCChildArgs *)>) const override;
 
  private:
   size_t
@@ -338,11 +349,13 @@ class WeightedFairTrafficClass final : public TrafficClass {
   WeightedFairTrafficClass(const std::string &name, resource_t resource)
       : TrafficClass(name, POLICY_WEIGHTED_FAIR),
         resource_(resource),
-        children_(),
+        runnable_children_(),
         blocked_children_(),
         all_children_() {}
 
   ~WeightedFairTrafficClass();
+
+  std::vector<TrafficClass *> Children() const override;
 
   // Returns true if child was added successfully.
   bool AddChild(TrafficClass *child, resource_share_t share);
@@ -363,21 +376,24 @@ class WeightedFairTrafficClass final : public TrafficClass {
 
   void set_resource(resource_t res) { resource_ = res; }
 
-  const extended_priority_queue<ChildData> &children() const {
-    return children_;
+  const extended_priority_queue<ChildData> &runnable_children() const {
+    return runnable_children_;
   }
 
   const std::list<ChildData> &blocked_children() const {
     return blocked_children_;
   }
 
-  void TraverseChildren(std::function<void(TCChildArgs *)>) const override;
+  const std::vector<std::pair<TrafficClass *, resource_share_t>> &children()
+      const {
+    return all_children_;
+  }
 
  private:
   // The resource that we are sharing.
   resource_t resource_;
 
-  extended_priority_queue<ChildData> children_;
+  extended_priority_queue<ChildData> runnable_children_;
   std::list<ChildData> blocked_children_;
 
   // This is a copy of the pointers to (and shares of) all children. It can be
@@ -390,11 +406,15 @@ class RoundRobinTrafficClass final : public TrafficClass {
   explicit RoundRobinTrafficClass(const std::string &name)
       : TrafficClass(name, POLICY_ROUND_ROBIN),
         next_child_(),
-        children_(),
+        runnable_children_(),
         blocked_children_(),
         all_children_() {}
 
   ~RoundRobinTrafficClass();
+
+  std::vector<TrafficClass *> Children() const override {
+    return all_children_;
+  }
 
   // Returns true if child was added successfully.
   bool AddChild(TrafficClass *child);
@@ -411,18 +431,18 @@ class RoundRobinTrafficClass final : public TrafficClass {
                                    TrafficClass *child, resource_arr_t usage,
                                    uint64_t tsc) override;
 
-  const std::vector<TrafficClass *> &children() const { return children_; }
+  const std::vector<TrafficClass *> &runnable_children() const {
+    return runnable_children_;
+  }
 
   const std::list<TrafficClass *> &blocked_children() const {
     return blocked_children_;
   }
 
-  void TraverseChildren(std::function<void(TCChildArgs *)>) const override;
-
  private:
   size_t next_child_;
 
-  std::vector<TrafficClass *> children_;
+  std::vector<TrafficClass *> runnable_children_;
   std::list<TrafficClass *> blocked_children_;
 
   // This is a copy of the pointers to all children. It can be safely
@@ -451,6 +471,8 @@ class RateLimitTrafficClass final : public TrafficClass {
   }
 
   ~RateLimitTrafficClass();
+
+  std::vector<TrafficClass *> Children() const override;
 
   // Returns true if child was added successfully.
   bool AddChild(TrafficClass *child);
@@ -497,30 +519,34 @@ class RateLimitTrafficClass final : public TrafficClass {
 
   TrafficClass *child() const { return child_; }
 
-  void TraverseChildren(std::function<void(TCChildArgs *)>) const override;
-
-  // Convert resource units to work units per cycle
+  // Convert resource units to work units per cycle.
+  // Not meant to be used in the datapath: slow due to 128bit operations
   static uint64_t to_work_units_per_cycle(uint64_t x) {
-    return (x << (USAGE_AMPLIFIER_POW - 4)) / (tsc_hz >> 4);
+#if INTPTR_MAX == INT64_MAX
+    return (static_cast<unsigned __int128>(x) << kUsageAmplifierPow) / tsc_hz;
+#elif INTPTR_MAX == INT32_MAX
+    // On 32bit systems, __int128 is not available.
+    // Instead, we sacrfice the accuracy of tsc_hz to avoid overflow
+    return (x << (kUsageAmplifierPow - 10)) / (tsc_hz >> 10);
+#else
+#error Forgot to add #include <cstdint>?
+#endif
   }
 
   // Convert resource units to work units
-  static uint64_t to_work_units(uint64_t x) { return x << USAGE_AMPLIFIER_POW; }
+  static uint64_t to_work_units(uint64_t x) { return x << kUsageAmplifierPow; }
 
  private:
   template <typename CallableTask>
   friend class Scheduler;
 
+  static const int kUsageAmplifierPow = 32;
+
   // The resource that we are limiting.
   resource_t resource_;
 
-  // For per-resource token buckets:
-  // 1 work unit = 2 ^ USAGE_AMPLIFIER_POW resource usage.
+  // 1 work unit = 2 ^ kUsageAmplifierPow resource usage.
   // (for better precision without using floating point numbers)
-  //
-  // prof->limit < 2^36 (~64 Tbps)
-  // 2^24 < tsc_hz < 2^34 (16 Mhz - 16 GHz)
-  // tb->limit < 2^36
   uint64_t limit_;          // In work units per cycle (0 if unlimited).
   uint64_t limit_arg_;      // In resource units per second.
   uint64_t max_burst_;      // In work units.
@@ -547,7 +573,7 @@ class LeafTrafficClass final : public TrafficClass {
 
   ~LeafTrafficClass() override;
 
-  void TraverseChildren(std::function<void(TCChildArgs *)>) const override {}
+  std::vector<TrafficClass *> Children() const override { return {}; }
 
   // Returns true if child was removed successfully.
   bool RemoveChild(TrafficClass *) override { return false; }

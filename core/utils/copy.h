@@ -1,11 +1,39 @@
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #ifndef BESS_UTILS_COPY_H_
 #define BESS_UTILS_COPY_H_
 
-#include <cstring>
-
+#include <glog/logging.h>
 #include <x86intrin.h>
 
-#include <glog/logging.h>
+#include <cstring>
 
 #include "common.h"
 
@@ -34,7 +62,7 @@ static inline void Copy32(void *__restrict__ dst,
 // Copy exactly "bytes" (<= 64). Works best if size is a compile-time constant.
 static inline void CopySmall(void *__restrict__ dst,
                              const void *__restrict__ src, size_t bytes) {
-  DCHECK(bytes <= 64);
+  DCHECK_LE(bytes, 64);
 
   auto *d = reinterpret_cast<char *__restrict__>(dst);
   auto *s = reinterpret_cast<const char *__restrict__>(src);
@@ -79,6 +107,7 @@ static inline void CopySmall(void *__restrict__ dst,
       break;
     case 9:
       memcpy(d + 8, s + 8, 1);
+      FALLTHROUGH;
     case 8:
       memcpy(d, s, 8);
       break;
@@ -91,11 +120,13 @@ static inline void CopySmall(void *__restrict__ dst,
       break;
     case 5:
       memcpy(d + 4, s + 4, 1);
+      FALLTHROUGH;
     case 4:
       memcpy(d, s, 4);
       break;
     case 3:
       memcpy(d + 2, s + 2, 1);
+      FALLTHROUGH;
     case 2:
       memcpy(d, s, 2);
       break;
@@ -169,16 +200,22 @@ static inline void CopyInlined(void *__restrict__ dst,
   switch (leftover_blocks) {
     case 7:
       copy_block(d + 6, s + 6);
+      FALLTHROUGH;
     case 6:
       copy_block(d + 5, s + 5);
+      FALLTHROUGH;
     case 5:
       copy_block(d + 4, s + 4);
+      FALLTHROUGH;
     case 4:
       copy_block(d + 3, s + 3);
+      FALLTHROUGH;
     case 3:
       copy_block(d + 2, s + 2);
+      FALLTHROUGH;
     case 2:
       copy_block(d + 1, s + 1);
+      FALLTHROUGH;
     case 1:
       copy_block(d + 0, s + 0);
   }

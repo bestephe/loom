@@ -1,17 +1,42 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #ifndef BESS_DRIVERS_UNIXSOCKET_H_
 #define BESS_DRIVERS_UNIXSOCKET_H_
 
-#include <assert.h>
-#include <errno.h>
-#include <poll.h>
-#include <stdio.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <thread>
 #include <unistd.h>
 
-#include <glog/logging.h>
+#include <atomic>
+#include <thread>
 
 #include "../message.h"
 #include "../port.h"
@@ -25,10 +50,10 @@ class UnixSocketPort final : public Port {
   UnixSocketPort()
       : Port(),
         recv_skip_cnt_(),
-        listen_fd_(),
+        accept_thread_stop_req_(false),
+        listen_fd_(kNotConnectedFd),
         addr_(),
-        client_fd_(),
-        old_client_fd_() {}
+        client_fd_(kNotConnectedFd) {}
 
   /*!
    * Initialize the port, ie, open the socket.
@@ -77,19 +102,9 @@ class UnixSocketPort final : public Port {
    */
   int SendPackets(queue_t qid, bess::Packet **pkts, int cnt) override;
 
-  /*!
-   * Waits for a client to connect to the socket.
-   */
-  void AcceptNewClient();
-
  private:
   // Value for a disconnected socket.
   static const int kNotConnectedFd = -1;
-
-  /*!
-   * Closes the client connection but does not shut down the listener fd.
-   */
-  void CloseConnection();
 
   /*!
   * Calling recv() system call is expensive so we only do it every
@@ -97,6 +112,21 @@ class UnixSocketPort final : public Port {
   * since we last called recv().
   * */
   uint32_t recv_skip_cnt_;
+
+  /*!
+   * Function for the thread accepting and monitoring clients (accept thread).
+   */
+  void AcceptThread();
+
+  /*!
+   * Accept thread handle.
+   */
+  std::thread accept_thread_;
+
+  /*!
+   * Sent stop request to accept thread.
+   */
+  std::atomic<bool> accept_thread_stop_req_;
 
   /*!
    * The listener fd -- listen for new connections here.
@@ -112,9 +142,6 @@ class UnixSocketPort final : public Port {
   // volatile.
   /* FD for client connection.*/
   volatile int client_fd_;
-  /* If client FD is not connected, what was the fd the last time we were
-   * connected to a client? */
-  int old_client_fd_;
 };
 
 #endif  // BESS_DRIVERS_UNIXSOCKET_H_

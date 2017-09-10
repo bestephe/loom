@@ -1,3 +1,33 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
+// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+// * Redistributions of source code must retain the above copyright notice, this
+// list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright notice,
+// this list of conditions and the following disclaimer in the documentation
+// and/or other materials provided with the distribution.
+//
+// * Neither the names of the copyright holders nor the names of their
+// contributors may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
 #include "packet.h"
 
 #include <glog/logging.h>
@@ -15,7 +45,7 @@
 
 namespace bess {
 
-Packet pframe_template;
+const size_t PacketBatch::kMaxBurst;
 
 static struct rte_mempool *pframe_pool[RTE_MAX_NUMA_NODES];
 
@@ -72,22 +102,6 @@ again:
             << ": OK";
 }
 
-static void init_templates(void) {
-  int i;
-
-  for (i = 0; i < RTE_MAX_NUMA_NODES; i++) {
-    Packet *pkt;
-
-    if (!pframe_pool[i]) {
-      continue;
-    }
-
-    pkt = reinterpret_cast<Packet *>(rte_pktmbuf_alloc(pframe_pool[i]));
-    pframe_template = *pkt;
-    Packet::Free(pkt);
-  }
-}
-
 void init_mempool(void) {
   int initialized[RTE_MAX_NUMA_NODES];
 
@@ -109,8 +123,6 @@ void init_mempool(void) {
       initialized[sid] = 1;
     }
   }
-
-  init_templates();
 }
 
 void close_mempool(void) {
@@ -141,6 +153,32 @@ static Packet *paddr_to_snb_memchunk(struct rte_mempool_memhdr *chunk,
 
   return nullptr;
 }
+
+#define check_offset(field)                                                                                                                                                                                                                                                                                                  \
+  do {                                                                                                                                                                                                                                                                                                                \
+    static_assert(offsetof(Packet, field##_) == offsetof(rte_mbuf, field), \
+      "Incompatibility detected between class Packet and struct rte_mbuf"); \
+  } while (0)
+
+Packet::Packet() {
+  // static assertions for rte_mbuf layout compatibility
+  static_assert(offsetof(Packet, mbuf_) == 0, "mbuf_ must be at offset 0");
+  check_offset(buf_addr);
+  check_offset(rearm_data);
+  check_offset(data_off);
+  check_offset(refcnt);
+  check_offset(nb_segs);
+  check_offset(rx_descriptor_fields1);
+  check_offset(pkt_len);
+  check_offset(data_len);
+  check_offset(buf_len);
+  check_offset(pool);
+  check_offset(next);
+
+  rte_pktmbuf_reset(&mbuf_);
+}
+
+#undef check_offset
 
 Packet *Packet::from_paddr(phys_addr_t paddr) {
   for (int i = 0; i < RTE_MAX_NUMA_NODES; i++) {
@@ -251,7 +289,7 @@ std::string Packet::Dump() {
 
   dump << "refcnt chain: ";
   for (pkt = this; pkt; pkt = pkt->next_) {
-    dump << pkt->refcnt_;
+    dump << pkt->refcnt_ << ' ';
   }
   dump << std::endl;
 
@@ -273,8 +311,8 @@ std::string Packet::Dump() {
   dump << "dump packet at " << this << ", phys=" << buf_physaddr_
        << ", buf_len=" << buf_len_ << std::endl;
   dump << "  pkt_len=" << pkt_len_ << ", ol_flags=" << std::hex
-       << offload_flags_ << ", nb_segs=" << std::dec << unsigned{nb_segs_}
-       << ", in_port=" << unsigned{port_} << std::endl;
+       << mbuf_.ol_flags << ", nb_segs=" << std::dec << nb_segs_
+       << ", in_port=" << mbuf_.port << std::endl;
 
   nb_segs = nb_segs_;
   pkt = this;
