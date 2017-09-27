@@ -1,0 +1,7 @@
+# Add in bess as a remote:
+remote "bess-subtree"]
+	url = https://github.com/NetSys/bess.git
+	fetch = +refs/heads/*:refs/remotes/bess-subtree/
+
+# Merge updates from bess:
+git subtree pull --prefix code/bess bess-subtree master --squash
