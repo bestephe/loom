@@ -381,6 +381,16 @@ def get_var_attrs(cli, var_token, partial_word):
             var_desc = 'tcpdump(1) command-line options ' \
                 '(e.g., "-ne tcp port 22")'
 
+        elif var_token == '[TSHARK_OPTS...]':
+            var_type = 'opts'
+            var_desc = 'tshark(1) command-line options ' \
+                '(default "-z proto,colinfo,frame.comment,frame.comment")'
+
+        elif var_token == '[GRAPHEASY_OPTS...]':
+            var_type = 'opts'
+            var_desc = 'graph-easy(1p) command-line options ' \
+                '(e.g. --as dot | dot -Tsvg -o graph.svg)'
+
         elif var_token == '[BESSD_OPTS...]':
             var_type = 'opts'
             var_desc = 'bess daemon command-line options (see "bessd -h")'
@@ -828,9 +838,16 @@ def _do_run_file(cli, conf_file):
 
     try:
         code = compile(xformed, conf_file, 'exec')
-    except:
-        # TODO: Provide more information where and why fail to compile
-        cli.err('Fail to compile bess config file %s ' % conf_file)
+    except SyntaxError as e:
+        # TODO: e.offset might be wrong if there's a correct syntactic
+        #       sugar in an erroneous line
+
+        # Mimic python's error reporting style
+        cli.err('\n  File "%s", line %d\n    %s\n    %s\nSyntaxError: %s' %
+                (conf_file, e.lineno, e.text, ' '*(e.offset - 1) + '^', e.msg))
+        raise cli.HandledError()
+    except Exception as e:
+        cli.err('Fail to compile bess config file (%s): %s ' % (conf_file, e))
         raise cli.HandledError()
 
     if is_pipeline_empty(cli):
@@ -1261,7 +1278,10 @@ def show_status(cli):
 
 
 # last_stats: a map of (node name, gateid) -> (timestamp, counter value)
-def _draw_pipeline(cli, field, units, last_stats=None):
+def _draw_pipeline(cli, field, units, last_stats=None, graph_args=[]):
+    if graph_args is None:
+        graph_args = []
+
     modules = sorted(cli.bess.list_modules().modules, key=lambda x: x.name)
     names = []
     node_labels = {}
@@ -1273,10 +1293,8 @@ def _draw_pipeline(cli, field, units, last_stats=None):
         node_labels[name] = '%s\\n%s' % (name, mclass)
         node_labels[name] += '\\n%s' % m.desc
 
-    port_inc_list = []
-
     try:
-        f = subprocess.Popen('graph-easy', shell=True,
+        f = subprocess.Popen('graph-easy ' + ' '.join(graph_args), shell=True,
                              stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE)
@@ -1319,28 +1337,28 @@ def _draw_pipeline(cli, field, units, last_stats=None):
 
     except IOError as e:
         if e.errno == errno.EPIPE:
-            raise cli.CommandError('"graph-easy" program is not availabe? '
+            raise cli.CommandError('"graph-easy" program is not available? '
                                    'Check if the package "libgraph-easy-perl" '
                                    'is installed.')
         else:
             raise
 
 
-@cmd('show pipeline', 'Show the current datapath pipeline')
-def show_pipeline(cli):
-    cli.fout.write(_draw_pipeline(cli, 'pkts', ''))
+@cmd('show pipeline [GRAPHEASY_OPTS...]', 'Show the current datapath pipeline')
+def show_pipeline(cli, opts):
+    cli.fout.write(_draw_pipeline(cli, 'pkts', '', graph_args=opts))
 
 
-@cmd('show pipeline batch',
+@cmd('show pipeline batch [GRAPHEASY_OPTS...]',
      'Show the current datapath pipeline with batch counters')
-def show_pipeline_batch(cli):
-    cli.fout.write(_draw_pipeline(cli, 'cnt', ''))
+def show_pipeline_batch(cli, opts):
+    cli.fout.write(_draw_pipeline(cli, 'cnt', '', graph_args=opts))
 
 
-@cmd('show pipeline bit',
+@cmd('show pipeline bit [GRAPHEASY_OPTS...]',
      'Show the current datapath pipeline with Megabit counters')
-def show_pipeline_bit(cli):
-    cli.fout.write(_draw_pipeline(cli, 'bytes', 'Mb'))
+def show_pipeline_bit(cli, opts):
+    cli.fout.write(_draw_pipeline(cli, 'bytes', 'Mb', graph_args=opts))
 
 
 def _show_port(cli, port):
@@ -1567,7 +1585,7 @@ def show_version(cli):
     cli.fout.write('%s\n' % version.version)
 
 
-def _monitor_pipeline(cli, field, units):
+def _monitor_pipeline(cli, field, units, graph_args=[]):
     modules = sorted(cli.bess.list_modules().modules, key=lambda x: x.name)
 
     last_stats = {}
@@ -1581,27 +1599,29 @@ def _monitor_pipeline(cli, field, units):
     try:
         while True:
             time.sleep(1)
-            cli.fout.write(_draw_pipeline(cli, field, units, last_stats))
+            cli.fout.write(_draw_pipeline(cli, field, units, last_stats,
+                                          graph_args=graph_args))
             cli.fout.write('\n')
     except KeyboardInterrupt:
         pass
 
 
-@cmd('monitor pipeline', 'Monitor packet counters in the datapath pipeline')
-def monitor_pipeline(cli):
-    _monitor_pipeline(cli, 'pkts', '')
+@cmd('monitor pipeline [GRAPHEASY_OPTS...]',
+     'Monitor packet counters in the datapath pipeline')
+def monitor_pipeline(cli, opts):
+    _monitor_pipeline(cli, 'pkts', '', graph_args=opts)
 
 
-@cmd('monitor pipeline batch',
+@cmd('monitor pipeline batch [GRAPHEASY_OPTS...]',
      'Monitor batch counters in the datapath pipeline')
-def monitor_pipeline_batch(cli):
-    _monitor_pipeline(cli, 'cnt', '')
+def monitor_pipeline_batch(cli, opts):
+    _monitor_pipeline(cli, 'cnt', '', graph_args=opts)
 
 
-@cmd('monitor pipeline bit',
+@cmd('monitor pipeline bit [GRAPHEASY_OPTS...]',
      'Monitor Megabit counters in the datapath pipeline')
-def monitor_pipeline_bit(cli):
-    _monitor_pipeline(cli, 'bytes', 'Mbps')
+def monitor_pipeline_bit(cli, opts):
+    _monitor_pipeline(cli, 'bytes', 'Mbps', graph_args=opts)
 
 
 PortRate = collections.namedtuple('PortRate',
@@ -1813,10 +1833,7 @@ def monitor_tc_all(cli, tcs):
     _monitor_tcs(cli, *tcs)
 
 
-# tcpdump can write pcap files, so we don't need to support it separately
-@cmd('tcpdump MODULE [DIRECTION] [GATE] [TCPDUMP_OPTS...]',
-     'Capture packets on a gate')
-def tcpdump_module(cli, module_name, direction, gate, opts):
+def _capture_module(cli, module_name, direction, gate, opts, program, hook_fn):
     if gate is None:
         gate = 0
 
@@ -1831,7 +1848,7 @@ def tcpdump_module(cli, module_name, direction, gate, opts):
 
     fd = os.open(fifo, os.O_RDWR)
 
-    tcpdump_cmd = ['tcpdump']
+    tcpdump_cmd = [program]
     tcpdump_cmd.extend(['-r', fifo])
     tcpdump_cmd.extend(opts)
     tcpdump_cmd = ' '.join(tcpdump_cmd)
@@ -1841,7 +1858,7 @@ def tcpdump_module(cli, module_name, direction, gate, opts):
 
     cli.bess.pause_all()
     try:
-        cli.bess.tcpdump(True, module_name, direction, gate, fifo)
+        hook_fn(True, module_name, direction, gate, fifo)
     finally:
         cli.bess.resume_all()
 
@@ -1853,7 +1870,7 @@ def tcpdump_module(cli, module_name, direction, gate, opts):
     finally:
         cli.bess.pause_all()
         try:
-            cli.bess.tcpdump(False, module_name, direction, gate)
+            hook_fn(False, module_name, direction, gate)
         finally:
             cli.bess.resume_all()
 
@@ -1863,6 +1880,23 @@ def tcpdump_module(cli, module_name, direction, gate, opts):
             os.system('stty sane')  # more/less may have screwed the terminal
         except:
             pass
+
+
+# tcpdump can write pcap files, so we don't need to support it separately
+@cmd('tcpdump MODULE [DIRECTION] [GATE] [TCPDUMP_OPTS...]',
+     'Capture packets on a gate')
+def tcpdump_module(cli, module_name, direction, gate, opts):
+    _capture_module(cli, module_name, direction,
+                    gate, opts, 'tcpdump', cli.bess.tcpdump)
+
+
+@cmd('tshark MODULE [DIRECTION] [GATE] [TSHARK_OPTS...]',
+     'Capture packets on a gate with metadata')
+def tshark_module(cli, module_name, direction, gate, opts):
+    if opts is None:
+        opts = ['-z', 'proto,colinfo,frame.comment,frame.comment']
+    _capture_module(cli, module_name, direction,
+                    gate, opts, 'tshark', cli.bess.pcapng)
 
 
 def _track_module(cli, bits, flag, module_name, direction, gate):

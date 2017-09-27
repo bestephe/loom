@@ -1,5 +1,4 @@
-// Copyright (c) 2014-2016, The Regents of the University of California.
-// Copyright (c) 2016-2017, Nefeli Networks, Inc.
+// Copyright (c) 2017, Nefeli Networks, Inc.
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -28,52 +27,10 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include "ip_checksum.h"
+#include "shared_obj.h"
 
-#include "../utils/checksum.h"
-#include "../utils/ether.h"
-#include "../utils/ip.h"
+namespace bess {
 
-void IPChecksum::ProcessBatch(bess::PacketBatch *batch) {
-  using bess::utils::Ethernet;
-  using bess::utils::Ipv4;
-  using bess::utils::Vlan;
-  using bess::utils::be16_t;
+SharedObjectSpace shared_objects;
 
-  int cnt = batch->cnt();
-
-  for (int i = 0; i < cnt; i++) {
-    Ethernet *eth = batch->pkts()[i]->head_data<Ethernet *>();
-    void *data = eth + 1;
-    Ipv4 *ip;
-
-    be16_t ether_type = eth->ether_type;
-
-    if (ether_type == be16_t(Ethernet::Type::kQinQ)) {
-      Vlan *qinq = reinterpret_cast<Vlan *>(data);
-      data = qinq + 1;
-      ether_type = qinq->ether_type;
-      if (ether_type != be16_t(Ethernet::Type::kVlan)) {
-        continue;
-      }
-    }
-
-    if (ether_type == be16_t(Ethernet::Type::kVlan)) {
-      Vlan *vlan = reinterpret_cast<Vlan *>(data);
-      data = vlan + 1;
-      ether_type = vlan->ether_type;
-    }
-
-    if (ether_type == be16_t(Ethernet::Type::kIpv4)) {
-      ip = reinterpret_cast<Ipv4 *>(data);
-    } else {
-      continue;
-    }
-
-    ip->checksum = CalculateIpv4Checksum(*ip);
-  }
-
-  RunNextModule(batch);
-}
-
-ADD_MODULE(IPChecksum, "ip_checksum", "recomputes the IPv4 checksum")
+}  // namespace bess
