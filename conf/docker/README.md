@@ -1,4 +1,9 @@
-## Miscellaneous testing and configuration guide for the Loom experiments that use docker containers
+## Testing and Configuration guide for using docker containers with virtio-user
+
+Note: for some reason using both testpmd and BESS in these experiments can
+forward pings but causes problems with TCP traffic.
+
+Note: When ethtool is used to disable TSO and checksum offloading then the testpmd approach works.
 
 ### Step 0: Install packages and libraries
 

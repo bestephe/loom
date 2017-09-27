@@ -45,6 +45,10 @@
         - lcov
         - python-autopep8
 
+        # Loom changes
+        - net-tools
+        - iperf3
+
     - name: Set default gcc and g++ version
       alternatives: name={{item}} link=/usr/bin/{{item}} path=/usr/bin/{{item}}-5
       become: true
