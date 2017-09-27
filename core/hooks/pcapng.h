@@ -28,52 +28,45 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include "ip_checksum.h"
+#ifndef BESS_HOOKS_PCAPNG_
+#define BESS_HOOKS_PCAPNG_
 
-#include "../utils/checksum.h"
-#include "../utils/ether.h"
-#include "../utils/ip.h"
+#include "../message.h"
+#include "../module.h"
 
-void IPChecksum::ProcessBatch(bess::PacketBatch *batch) {
-  using bess::utils::Ethernet;
-  using bess::utils::Ipv4;
-  using bess::utils::Vlan;
-  using bess::utils::be16_t;
+// Pcapng dumps copies of the packets seen by a gate (data + metadata) in
+// pcapng format.  Useful for debugging.
+class Pcapng final : public bess::GateHook {
+ public:
+  Pcapng();
 
-  int cnt = batch->cnt();
+  virtual ~Pcapng();
 
-  for (int i = 0; i < cnt; i++) {
-    Ethernet *eth = batch->pkts()[i]->head_data<Ethernet *>();
-    void *data = eth + 1;
-    Ipv4 *ip;
+  CommandResponse Init(const bess::Gate *, const bess::pb::PcapngArg &);
 
-    be16_t ether_type = eth->ether_type;
+  void ProcessBatch(const bess::PacketBatch *batch);
 
-    if (ether_type == be16_t(Ethernet::Type::kQinQ)) {
-      Vlan *qinq = reinterpret_cast<Vlan *>(data);
-      data = qinq + 1;
-      ether_type = qinq->ether_type;
-      if (ether_type != be16_t(Ethernet::Type::kVlan)) {
-        continue;
-      }
-    }
+  static constexpr uint16_t kPriority = 2;
+  static const std::string kName;
 
-    if (ether_type == be16_t(Ethernet::Type::kVlan)) {
-      Vlan *vlan = reinterpret_cast<Vlan *>(data);
-      data = vlan + 1;
-      ether_type = vlan->ether_type;
-    }
+ private:
+  struct Attr {
+    // Attribute offset in the packet metadata.
+    int md_offset;
+    // Size in bytes of the attribute.
+    size_t size;
+    // Offset where this attribute hex dump should go inside `attr_template_`.
+    size_t tmpl_offset;
+  };
 
-    if (ether_type == be16_t(Ethernet::Type::kIpv4)) {
-      ip = reinterpret_cast<Ipv4 *>(data);
-    } else {
-      continue;
-    }
+  // The file descripton where to output the pcapng stream.
+  int fifo_fd_;
+  // List of attributes to dump.
+  std::vector<Attr> attrs_;
+  // Preallocated string with attribute names and values.  For each packet,
+  // we will change in place the values and send the string out, without
+  // doing any memory allocation.
+  std::vector<char> attr_template_;
+};
 
-    ip->checksum = CalculateIpv4Checksum(*ip);
-  }
-
-  RunNextModule(batch);
-}
-
-ADD_MODULE(IPChecksum, "ip_checksum", "recomputes the IPv4 checksum")
+#endif  // BESS_HOOKS_PCAPNG_
