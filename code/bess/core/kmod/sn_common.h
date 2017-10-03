@@ -126,6 +126,9 @@ struct sn_tx_metadata {
 	uint16_t csum_dest;
 
         uint64_t skb_opaque;
+
+        /* Driver xmit timestamp. */
+        uint64_t drv_xmit_ts;
 };
 
 struct sn_tx_desc {

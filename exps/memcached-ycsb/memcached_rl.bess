@@ -1,0 +1,56 @@
+import multiprocessing
+import scapy.all as scapy
+import os
+
+queue_count = multiprocessing.cpu_count()
+#queue_count = 1
+
+VPORT_NAME = 'loom'
+VPORT_ADDR = '10.10.1.1/24'
+
+QSIZE = 2048
+
+# DEBUGGING
+#bess.set_debug(True)
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Configure a 10Gbps rate limit
+bess.add_tc('bit_limit',
+            policy='rate_limit',
+            resource='bit',
+            limit={'bit': int(10e9)})
+bess.add_tc('bit_limit_rr', parent = 'bit_limit', policy='round_robin')
+
+# Create a vport as an interface on the host
+v = VPort(ifname=VPORT_NAME, ip_addrs=[VPORT_ADDR], num_inc_q=queue_count,
+    num_out_q=queue_count)
+
+# Connect it to a PMD with 1-txq and q-rxq
+p = PMDPort(port_id=0, num_inc_q=queue_count, num_out_q=1,
+    size_inc_q=QSIZE, size_out_q=QSIZE)
+
+# Merge all incoming traffic from the vport into a single PMD output port/queue
+v_inc::PortInc(port=v.name) -> merge::Merge() -> p_out::PortOut(port=p.name)
+
+# Connect queues instead of ports
+for i in range(queue_count):
+    # All vport queues get merged into one
+    #v_qinc = QueueInc(port=v.name, qid=i)
+
+    # Use NIC RSS to select the receive queue
+    #v_qout = QueueOut(port=v.name, qid=i)
+    #p_qinc = QueueInc(port=p.name, qid=i)
+    QueueInc(port=p.name, qid=i) -> QueueOut(port=v.name, qid=i)
+
+# Rate limit traffic coming from the vport
+#v_inc.attach_task(parent='bit_limit')
+for i in range(queue_count):
+    v_inc.attach_task(parent='bit_limit_rr', module_taskid=i)
+
+# DEBUG
+print('Two ports have been spliced: {} <-> {}'.format(p, v))

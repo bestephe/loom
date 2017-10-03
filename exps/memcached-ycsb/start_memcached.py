@@ -5,20 +5,34 @@ import glob
 import os
 import platform
 import subprocess
+import sys
 import yaml
 from time import sleep
 
-DRIVER_DIR = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/code/ixgbe-5.0.4/'
+sys.path.insert(0, os.path.abspath('..'))
+from loom_exp_common import *
+
+if 'LOOM_HOME' in os.environ:
+    LOOM_HOME = os.environ['LOOM_HOME']
+else:
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/git/loom-code/'
+
+DRIVER_DIR = LOOM_HOME + '/code/ixgbe-5.0.4/'
 
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
+QMODEL_BESS = 'bess'
 
 MEMCACHED_CONFIG_DEFAULTS = {
-    'qmodel': QMODEL_SQ,
+    #'qmodel': QMODEL_SQ,
+    'qmodel': QMODEL_BESS,
     'rate_limit': 2e9,
-    'iface': 'eno2',
+    'iface': 'enp8s0f0',
+    'iface_addr': '0000:08:00.0',
     'max_mem': (16 * 1024),
     'threads': 16,
+
+    'bess_conf': 'memcached_rl.bess',
 
     #XXX: Not really used anymore
     'servers': [
@@ -148,6 +162,12 @@ def memcached_config_server(config):
     #TODO: Configure Qdisc/TC
     memcached_config_qdisc(config)
 
+def memcached_config_bess(config):
+    loom_config_bess(config)
+
+    # Also configure RFS
+    memcached_configure_rfs(config)
+
 def memcached_start_servers(config):
     #XXX: "-L" enables hugepage support.  This currently didn't work for me.
     cmd_tmpl = '/usr/bin/memcached -m %(max_mem)d -p %(port)s -u memcache -t %(threads)s -R 1000 -d -c 4096'
@@ -199,7 +219,10 @@ def main():
     sleep(0.1)
 
     # Configure the server
-    memcached_config_server(config)
+    if config.qmodel == QMODEL_BESS:
+        memcached_config_bess(config)
+    else:
+        memcached_config_server(config)
 
     # Start the memcached servers
     procs = memcached_start_servers(config)

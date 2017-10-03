@@ -31,6 +31,7 @@
 #include <linux/version.h>
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
+#include <linux/timex.h>
 
 #ifndef UTS_RELEASE
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
@@ -701,6 +702,8 @@ static void sn_set_tx_metadata(struct sk_buff *skb,
 		tx_meta->csum_start = SN_TX_CSUM_DONT;
 		tx_meta->csum_dest = SN_TX_CSUM_DONT;
 	}
+
+        //tx_meta->drv_xmit_ts = get_cycles();
 }
 
 static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
@@ -984,6 +987,8 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 				conf->num_txq, conf->num_rxq);
 		return -EINVAL;
 	}
+	log_err("ioctl arguments: num_txq=%d, num_rxq=%d\n",
+			conf->num_txq, conf->num_rxq);
 
 	netdev = alloc_etherdev_mqs(sizeof(struct sn_device),
 			conf->num_txq, conf->num_rxq);
