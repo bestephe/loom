@@ -8,7 +8,7 @@ This version is optimized to work with the crail file system (https://github.com
 
   * October 4th, 2017: The `crail-terasort` repository is renamed to `crail-sprak-terasort`. 
 
-## `crail-terasort` options 
+## crail-terasort options 
 The crail-terasort program takes following options :
 ```bash
 -n,--testname <string>            Name of the test valid tests are :
