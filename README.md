@@ -2,10 +2,10 @@
 
 Crail-spark-terasort is a modified version of the original Terasort program from https://github.com/ehiggs/spark-terasort. The original program generates, sorts, and validates 100 bytes (10b + 90b) key-value records as described by http://sortbenchmark.org/.
 
-This version is optimized to work with the crail file system (https://github.com/zrlio/crail), and does only sorting (and other controller experimentes, see -n option in the next section).  
+This version is optimized to work with the crail file system (https://github.com/zrlio/crail), and does only sorting (and other controller experimentes, see -n option in the next section). 
 
 **News:** 
-
+  * October 6th, 2017: Dependency to `crail-saprk-io` is updated and the pom artifact is renamed from `crail-terasort` to `crail-spark-terasort`. Spark version is bumped from `2.1` to `2.2` (however, there is no API change between these two). 
   * October 4th, 2017: The `crail-terasort` repository is renamed to `crail-sprak-terasort`. 
 
 ## crail-terasort options 
