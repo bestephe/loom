@@ -46,10 +46,10 @@ The crail-terasort program takes following options :
 Apart from the dependencies of the original program, crail-terasort 
 depends upon 
   - crail-client (1.0) : https://github.com/zrlio/crail
-  - spark-io (1.0) : https://github.com/zrlio/spark-io
-  - spark (2.0.0)
+  - crail-spark-io (1.0) : https://github.com/zrlio/crail-spark-io
+  - spark (2.0.0+, current build is for 2.2.0)
 
-`spark-io` extensions enable spark to run on the crail file system. 
+`crail-spark-io` extensions enable spark to run on the crail file system. 
 Hence, you must build and install zrlio artifacts in your local maven 
 repository. For details see their respective github repositories. 
 
@@ -97,7 +97,7 @@ and set `yarn-site.xml` accordingly to something appropriate:
 
 ## Running
 
-We assume that you have a working spark installation with `spark-io` 
+We assume that you have a working spark installation with `crail-spark-io` 
 extensions. Here we give detail instructions about how to generate, 
 sort, and validate crail-terasort program. 
 
