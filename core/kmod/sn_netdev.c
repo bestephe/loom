@@ -258,12 +258,9 @@ static void sn_disable_interrupt(struct sn_queue *rx_queue)
 	rx_queue->rx.rx_regs->irq_disabled = 1;
 }
 
-/* if non-zero, the caller should drop the packet */
-static int sn_process_rx_metadata(struct sk_buff *skb,
+static void sn_process_rx_metadata(struct sk_buff *skb,
 				   struct sn_rx_metadata *rx_meta)
 {
-	int ret = 0;
-
 	if (rx_meta->gso_mss) {
 		skb_shinfo(skb)->gso_size = rx_meta->gso_mss;
 		skb_shinfo(skb)->gso_type = SKB_GSO_TCPV4;
@@ -291,8 +288,6 @@ static int sn_process_rx_metadata(struct sk_buff *skb,
 	default:
 		; /* do nothing */
 	}
-
-	return ret;
 }
 
 static inline int sn_send_tx_queue(struct sn_queue *queue,
@@ -368,25 +363,21 @@ static int sn_poll_action_batch(struct sn_queue *rx_queue, int budget)
 
 			rx_queue->rx.stats.bytes += skb->len;
 
-			ret = sn_process_rx_metadata(skb, &rx_meta[i]);
-			if (ret == 0) {
+			sn_process_rx_metadata(skb, &rx_meta[i]);
+		}
+
+		if (!rx_queue->rx.opts.loopback) {
+			for (i = 0; i < cnt; i++) {
+				struct sk_buff *skb = skbs[i];
+				if (!skb)
+					continue;
+
 				skb_record_rx_queue(skb, rx_queue->queue_id);
 				skb->protocol = eth_type_trans(skb, napi->dev);
 #ifdef CONFIG_NET_RX_BUSY_POLL
 				skb_mark_napi_id(skb, napi);
 #endif
-			} else {
-				dev_kfree_skb(skb);
-				skbs[i] = NULL;
-			}
-		}
-
-		if (!rx_queue->rx.opts.loopback) {
-			for (i = 0; i < cnt; i++) {
-				if (!skbs[i])
-					continue;
-
-				netif_receive_skb(skbs[i]);
+				netif_receive_skb(skb);
 			}
 		} else
 			sn_process_loopback(dev, skbs, cnt);
@@ -417,11 +408,7 @@ static int sn_poll_action_single(struct sn_queue *rx_queue, int budget)
 		rx_queue->rx.stats.packets++;
 		rx_queue->rx.stats.bytes += skb->len;
 
-		ret = sn_process_rx_metadata(skb, &rx_meta);
-		if (unlikely(ret)) {
-			dev_kfree_skb(skb);
-			continue;
-		}
+		sn_process_rx_metadata(skb, &rx_meta);
 
 		skb_record_rx_queue(skb, rx_queue->queue_id);
 		skb->protocol = eth_type_trans(skb, napi->dev);
@@ -642,9 +629,14 @@ static u16 sn_select_queue(struct net_device *netdev,
 	return dev->cpu_to_txq[raw_smp_processor_id()];
 }
 
-static struct
-rtnl_link_stats64 *sn_get_stats64(struct net_device *netdev,
-				  struct rtnl_link_stats64 *storage)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
+static
+struct rtnl_link_stats64 *sn_get_stats64(struct net_device *netdev,
+          struct rtnl_link_stats64 *storage)
+#else
+static void sn_get_stats64(struct net_device *netdev,
+          struct rtnl_link_stats64 *storage)
+#endif
 {
 	struct sn_device *dev = netdev_priv(netdev);
 
@@ -664,8 +656,9 @@ rtnl_link_stats64 *sn_get_stats64(struct net_device *netdev,
 		storage->rx_bytes 	+= dev->rx_queues[i]->rx.stats.bytes;
 		storage->rx_dropped 	+= dev->rx_queues[i]->rx.stats.dropped;
 	}
-
-	return storage;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
+  return storage;
+#endif
 }
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0))
@@ -818,7 +811,11 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 	 * Also see attach_default_qdiscs() in sch_generic.c */
 	netdev->tx_queue_len = 0;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,11,9))
 	netdev->destructor = sn_netdev_destructor;
+#else
+	netdev->priv_destructor = sn_netdev_destructor;
+#endif
 
 	sn_set_offloads(netdev);
 
