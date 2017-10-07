@@ -249,9 +249,15 @@ enum CheckConstraintResult {
   CHECK_FATAL_ERROR = 2
 };
 
-class Module {
+class alignas(64) Module {
   // overide this section to create a new module -----------------------------
  public:
+  static void *operator new(std::size_t size) {
+    return mem_alloc_ex(size, alignof(Module), 0);
+  }
+
+  static void operator delete(void *ptr) { mem_free(ptr); }
+
   Module()
       : name_(),
         module_builder_(),
@@ -573,25 +579,26 @@ class ModuleTask {
 // Functor used by a leaf in a Worker's Scheduler to run a task in a module.
 class Task {
  public:
-  // When this task is scheduled it will execute 'm' with 'arg'.
-  // When the associated leaf is created/destroyed, 't' will be updated.
-  Task(Module *m, void *arg, ModuleTask *t) : module_(m), arg_(arg), t_(t) {}
+  // When this task is scheduled it will execute 'm' with 'arg'.  When the
+  // associated leaf is created/destroyed, 'module_task' will be updated.
+  Task(Module *m, void *arg, ModuleTask *module_task)
+      : module_(m), arg_(arg), module_task_(module_task) {}
 
   // Called when the leaf that owns this task is destroyed.
   void Detach() {
-    if (t_) {
-      t_->SetTC(nullptr);
+    if (module_task_) {
+      module_task_->SetTC(nullptr);
     }
   }
 
   // Called when the leaf that owns this task is created.
   void Attach(bess::LeafTrafficClass<Task> *c) {
-    if (t_) {
-      t_->SetTC(c);
+    if (module_task_) {
+      module_task_->SetTC(c);
     }
   }
 
-  struct task_result operator()(void) {
+  struct task_result operator()(void) const {
     return module_->RunTask(arg_);
   }
 
@@ -610,11 +617,15 @@ class Task {
   /*!
    * Add a worker to the set of workers that call this task.
    */
-  void AddActiveWorker(int wid) {
+  void AddActiveWorker(int wid) const {
     if (module_) {
-      module_->AddActiveWorker(wid, t_);
+      module_->AddActiveWorker(wid, module_task_);
     }
   }
+
+  Module *module() const { return module_; }
+
+  ModuleTask *module_task() const { return module_task_; }
 
  private:
   // Used by operator().
@@ -622,7 +633,7 @@ class Task {
   void *arg_;
 
   // Used to notify a module that a leaf is being created/destroyed.
-  ModuleTask *t_;
+  ModuleTask *module_task_;
 };
 
 /* run all per-thread initializers */
