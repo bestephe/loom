@@ -1,10 +1,10 @@
 import scapy.all as scapy
 import os
 
-VPORT_NAME = 'loom_mq_pt'
-VPORT_ADDR = '10.10.1.1/24'
+VPORT_NAME = 'loom'
+VPORT_ADDR = '10.10.1.2/24'
 
-NUM_QUEUES = int($SN_QUEUES!'16')
+NUM_QUEUES = int($SN_QUEUES!'32')
 NUM_WORKERS = int($SN_WORKERS!'2')
 
 assert (NUM_QUEUES % NUM_WORKERS == 0)
@@ -50,4 +50,4 @@ for i in range(NUM_QUEUES):
     ##bess.attach_task("p_qout", 0, wid=w)
 
 # DEBUG
-print 'Two ports have been spliced: {} <-> {}'.format(p, v)
+print('Two ports have been spliced: {} <-> {}'.format(p, v))

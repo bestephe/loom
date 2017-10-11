@@ -36,6 +36,7 @@
 #include <rte_config.h>
 #include <rte_errno.h>
 #include <rte_ethdev.h>
+#include <rte_pci.h>
 
 #include "../module.h"
 #include "../port.h"

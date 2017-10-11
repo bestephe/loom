@@ -57,6 +57,7 @@
         # Loom changes
         - net-tools
         - iperf3
+        - cgroup-tools
 
     # The server doesn't seem to have 32-bit binaries for clang-5.0 package.
     # Remove "when" once it's fixed.

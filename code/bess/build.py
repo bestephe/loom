@@ -47,9 +47,9 @@ DEPS_DIR = '%s/deps' % BESS_DIR
 # It's best to use a release tag if possible -- see comments in
 # download_dpdk
 DPDK_REPO = 'http://dpdk.org/git/dpdk'
-DPDK_TAG = 'v17.05'
+DPDK_TAG = 'v17.08'
 
-DPDK_VER = 'dpdk-17.05'
+DPDK_VER = 'dpdk-17.08'
 
 arch = subprocess.check_output('uname -m', shell=True).strip()
 if arch == 'x86_64':

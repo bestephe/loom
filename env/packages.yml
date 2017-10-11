@@ -1,0 +1,121 @@
+- hosts: all
+  tags: package
+  vars:
+    - sockperf_src: "/tmp/sockperf"
+  tasks:
+
+    - name: Install packages via apt
+      apt: name={{item}} state=latest update_cache=yes
+      become: true
+      with_items:
+        - ca-certificates
+        - build-essential
+        - autoconf
+        - automake
+        - libtool
+        - make
+        - cmake
+        - gcc-5-plugin-dev
+        - libpcap-dev
+        - libssl-dev
+        - kernel-package
+        - curl
+        - git
+        - linux-headers-generic
+        - lcov
+        - python
+        - python-dev
+        - python-pip
+        - python-scapy
+        - python-numpy
+        - python-scipy
+        - python-paramiko
+        - python-argparse
+        - python-matplotlib
+        - python-yaml
+        - python-autopep8
+        - python-libxml2
+        - libmlx4-1
+        - infiniband-diags
+        - ibutils
+        - ibverbs-utils
+        # rdmacm-utils gets overwritten by OFED later.
+        #- rdmacm-utils
+
+        - perftest
+        - tgt
+        - targetcli
+        - iperf3
+        - dkms
+        - dpatch
+        - libnl-route-3-200
+        - libgfortran3
+        - swig
+        - tk
+        - gfortran
+        - quilt
+        - chrpath
+        - libnuma1
+        - libnuma-dev
+        - libpthread-workqueue-dev
+        - htop
+        - dstat
+        - ipython
+        - vim
+        - memcached
+        - maven
+        - cgroup-tools
+        - exuberant-ctags
+        - docker
+        - docker.io
+
+        # Although it would be desirable to use as new of a kernel version as
+        # possible, OFED + Linux 4.11 cause a kernel crash related to RDMA
+        # cgroups.
+        #- linux-headers-4.11.0-13
+        #- linux-image-4.11.0-13-lowlatency
+        #- linux-source-4.11.0
+
+    - name: Install Linux headers of current running kernel
+      apt: name=linux-headers-{{ ansible_kernel }} state=latest update_cache=yes
+      become: true
+      when: ansible_kernel | match(".*-generic")
+
+    - name: Install python packages
+      pip:
+        name:
+          # TODO: on Ubuntu versions newer than 16.04, grip can be installed by apt
+          - grip
+          - "git+https://github.com/niligulmohar/python-symmetric-jsonrpc"
+        editable: false
+      become: true
+
+    - name: Download sockperf
+      git: repo=https://github.com/Mellanox/sockperf dest={{ sockperf_src }} accept_hostkey=yes
+
+    - name: Verify sockperf installation
+      command: which sockperf
+      register: sockperf_installed
+      ignore_errors: True
+      changed_when: False
+
+    - name: Autogen sockperf
+      shell: ./autogen.sh 
+      args:
+        chdir: "{{ sockperf_src }}"
+        creates: "{{ sockperf_src }}/configure"
+      when: sockperf_installed.rc > 0
+    
+    - name: Configure sockperf
+      shell: ./configure 
+      args:
+        chdir: "{{ sockperf_src }}"
+        creates: "{{ sockperf_src }}/Makefile"
+      when: sockperf_installed.rc > 0
+    
+    - name: Make and install sockperf
+      become: true
+      shell: make && make install 
+      args:
+        chdir: "{{ sockperf_src }}"
+      when: sockperf_installed.rc > 0

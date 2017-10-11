@@ -22,7 +22,8 @@ matplotlib.rcParams.update({'font.size': 14})
 
 master_hatch = ['//', '\\\\', 'x', '+', '\\', 'o', 'O', '.', '-',  '*']
 
-RESFS = ['lines.memcached_2gbps_rate.yaml', 'lines.memcached_4gbps_rate.yaml']
+#RESFS = ['lines.memcached_2gbps_rate.yaml', 'lines.memcached_4gbps_rate.yaml']
+RESFS = ['lines.memcached_2gbps_rate.yaml']
 
 def main():
     for resf in RESFS:

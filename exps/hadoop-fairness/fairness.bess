@@ -1,0 +1,174 @@
+import glob
+import multiprocessing
+import scapy.all as scapy
+import os
+import platform
+import socket
+import subprocess
+
+import binascii
+
+def aton(ip):
+    return socket.inet_aton(ip)
+
+#queue_count = multiprocessing.cpu_count()
+#queue_count = 32
+queue_count = 1
+
+
+# CloudLab experiment platform specific code:
+def node2id(node):
+    node2id_dict = {
+        'node-1.loomtest.opennf-pg0.clemson.cloudlab.us': 1,
+        'node-0.loomtest.opennf-pg0.clemson.cloudlab.us': 2,
+    }
+    return node2id_dict[node]
+node_name = platform.node()
+node_id = node2id(node_name)
+
+# XXX: Testing
+def config_rfs(iface):
+    rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % iface)
+    entries = 65536
+    entries_per_rxq = entries / len(rxqs)
+    cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
+        entries
+    subprocess.check_call(cmd, shell=True)
+    for rxq in rxqs:
+        cmd = 'echo %d | sudo tee /%s/rps_flow_cnt > /dev/null' % (entries_per_rxq, rxq)
+        subprocess.check_call(cmd, shell=True)
+
+# TODO: Move vport configuration into a single dictionary
+VPORT1_NAME = 'loom1'
+VPORT1_ADDR = '10.10.101.%d' % node_id
+VPORT1_ADDR_PREFIX = VPORT1_ADDR + '/24'
+VPORT1_MAC = '00:8c:fa:00:A1:{:02x}'.format(node_id)
+VPORT1_NETNS = 'loom_test1'
+VPORT1_VLAN = 101
+
+VPORT2_NAME = 'loom2'
+VPORT2_ADDR = '10.10.102.%d' % node_id
+VPORT2_ADDR_PREFIX = VPORT2_ADDR + '/24'
+VPORT2_MAC = '00:8c:fa:00:A2:{:02x}'.format(node_id)
+VPORT2_NETNS = 'loom_test2'
+VPORT2_VLAN = 102
+
+QSIZE = 2048
+DUMP_IVAL = 0.00001
+
+# DEBUGGING
+#bess.set_debug(True)
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# TODO: configure the scheduler (fairness/10Gbps rate-limit)
+
+# Delete then add the network namespaces
+subprocess.call('sudo ip -all netns del', shell=True)
+for netns in [VPORT1_NETNS, VPORT2_NETNS]:
+    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
+
+# Create a vport as an interface on the host for each tenant
+#v1 = VPort(ifname=VPORT1_NAME, ip_addrs=[VPORT1_ADDR_PREFIX],
+#    netns='/var/run/netns/%s' % VPORT1_NETNS, num_inc_q=queue_count,
+#    num_out_q=queue_count)
+#v2 = VPort(ifname=VPORT2_NAME, ip_addrs=[VPORT2_ADDR_PREFIX],
+#    netns='/var/run/netns/%s' % VPORT2_NETNS, num_inc_q=queue_count,
+#    num_out_q=queue_count)
+v1 = VPort(ifname=VPORT1_NAME, ip_addrs=[VPORT1_ADDR_PREFIX],
+    num_inc_q=queue_count, num_out_q=queue_count)
+v2 = VPort(ifname=VPORT2_NAME, ip_addrs=[VPORT2_ADDR_PREFIX],
+    num_inc_q=queue_count, num_out_q=queue_count)
+
+# Set custom MAC addresses for the vports
+for (iface, mac, netns) in [(VPORT1_NAME, VPORT1_MAC, VPORT1_NETNS),
+        (VPORT2_NAME, VPORT2_MAC, VPORT2_NETNS)]:
+    config_rfs(iface)
+
+    ip_link_prefix = 'ip link'
+    #ip_link_prefix = 'sudo ip netns exec %s ip link' % netns
+    subprocess.check_call('%s set dev %s down' % (ip_link_prefix, iface), shell=True)
+    subprocess.check_call('%s set dev %s promisc on' % (ip_link_prefix, iface), shell=True)
+    subprocess.check_call('%s set %s address %s' % (ip_link_prefix, iface, mac), shell=True)
+    subprocess.check_call('%s set dev %s up' % (ip_link_prefix, iface), shell=True)
+
+# Create a PMD port (physical) with 1-txq and q-rxq
+p = PMDPort(port_id=0, num_inc_q=queue_count, num_out_q=1,
+    size_inc_q=QSIZE, size_out_q=QSIZE)
+
+# Merge all incoming traffic from the vport into a single PMD output port/queue
+merge::Merge() -> p_out::PortOut(port=p.name)
+v1_inc::PortInc(port=v1.name) -> merge
+v2_inc::PortInc(port=v2.name) -> merge
+
+#XXX: If using VLANs, tags need to be added
+#v1_inc::PortInc(port=v1.name) -> VLANPush(tci=101) -> merge
+#v2_inc::PortInc(port=v2.name) -> VLANPush(tci=102) -> merge
+
+# Connect queues instead of ports
+for i in range(queue_count):
+    #XXX: IP forwarding is currently broken in BESS
+    #ipfwd = IPLookup()
+    #QueueInc(port=p.name, qid=i) -> ipfwd
+    #ipfwd:1 -> QueueOut(port=v1.name, qid=i)
+    #ipfwd:2 -> QueueOut(port=v2.name, qid=i)
+    #ipfwd.add(prefix='10.10.101.2', prefix_len=32, gate=1)
+    #ipfwd.add(prefix='10.10.102.2', prefix_len=32, gate=2)
+
+    #XXX: Exact mactch fowarding and IP forwarding suffer from ARP problems.
+    #XXX: VLANs seem to be the cleanest solution.
+    # Use exact match for IP assuming a known packet format
+    # Assumes a 14-byte Eth header with no VLAN, VXLAN, etc.
+    #em = ExactMatch(fields=[{'offset': 26, 'num_bytes': 4}])
+    #QueueInc(port=p.name, qid=i) -> dump_pmdinc::Dump(interval=DUMP_IVAL) -> em
+    #em:1 -> dump_em1::Dump(interval=DUMP_IVAL) -> QueueOut(port=v1.name, qid=i)
+    #em:2 -> dump_em2::Dump(interval=DUMP_IVAL) -> QueueOut(port=v2.name, qid=i)
+    #em.add(fields=[{'value_bin':aton(VPORT1_ADDR)}], gate=1)
+    #em.add(fields=[{'value_bin':aton(VPORT2_ADDR)}], gate=2)
+
+    #XXX: VLANs are clean, but by default CloudLab drops VLAN tagged packets
+    #     instead of performing VLAN-in-VLAN tagging.  There should be a way to
+    #     configure the switches to expect already tagged packets and to be
+    #     allocated multiple VLANs.
+    # Use VLANs to split traffic
+    #QueueInc(port=p.name, qid=i) -> dump_pmdinc::Dump(interval=DUMP_IVAL) -> vsplit::VLANSplit()
+    #vsplit:VPORT1_VLAN -> dump_v1::Dump(interval=DUMP_IVAL) -> VLANPop() \
+    #    -> QueueOut(port=v1.name, qid=i)
+    #vsplit:VPORT2_VLAN -> dump_v2::Dump(interval=DUMP_IVAL) -> VLANPop() \
+    #    -> QueueOut(port=v2.name, qid=i)
+
+    # Inefficient but working solution: broadcast all traffic to both
+    # interfaces.  In other words, implement an L2 hub.
+    #QueueInc(port=p.name, qid=i) -> bcast::Replicate(gates=[1, 2])
+    #bcast:1 -> QueueOut(port=v1.name, qid=i)
+    #bcast:2 -> QueueOut(port=v2.name, qid=i)
+
+    # Current solution: use L2 forwarding and replicate broadcast traffic to
+    # both interfaces.  In other words, implement our own L2 switch.
+    l2fwd = L2Forward()
+    QueueInc(port=p.name, qid=i) -> l2fwd
+    l2_entries = [{'addr': 'ff:ff:ff:ff:ff:ff', 'gate': 0},
+        {'addr': VPORT1_MAC, 'gate': 1},
+        {'addr': VPORT2_MAC, 'gate': 2},
+    ]
+    l2fwd.add(entries=l2_entries)
+    l2fwd.set_default_gate(gate=0)
+    v1out_merge = Merge()
+    v1out_merge -> QueueOut(port=v1.name, qid=i)
+    v2out_merge = Merge()
+    v2out_merge -> QueueOut(port=v2.name, qid=i)
+    l2fwd:1 -> v1out_merge
+    l2fwd:2 -> v2out_merge
+    bcast = Replicate(gates=[1, 2])
+    l2fwd:0 -> bcast
+    bcast:1 -> v1out_merge
+    bcast:2 -> v2out_merge
+
+# DEBUG
+print('Two ports now share one PMD: {} <-> {} and {} <-> {}'.format(v1, p, v2, p))
+#print(VPORT1_ADDR, binascii.hexlify(socket.inet_aton(VPORT1_ADDR)).upper())
+#print(VPORT2_ADDR, binascii.hexlify(socket.inet_aton(VPORT2_ADDR)).upper())

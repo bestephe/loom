@@ -163,6 +163,8 @@ CommandResponse IPLookup::Init(const bess::pb::IPLookupArg &arg) {
 
   lpm_ = rte_lpm_create(name().c_str(), /* socket_id = */ 0, &conf);
 
+  LOG(WARNING) << "INIT: this:" << this << " lpm_:" << lpm_;
+
   if (!lpm_) {
     return CommandFailure(rte_errno, "DPDK error: %s", rte_strerror(rte_errno));
   }
@@ -288,6 +290,7 @@ CommandResponse IPLookup::CommandAdd(
   if (prefix_len == 0) {
     default_gate_ = gate;
   } else {
+    LOG(WARNING) << "this:" << this << " lpm_:" << lpm_ << " prefix_len:" << prefix_len;
     int ret = rte_lpm_add(lpm_, net_addr.value(), prefix_len, gate);
     if (ret) {
       return CommandFailure(-ret, "rpm_lpm_add() failed");

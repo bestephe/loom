@@ -32,8 +32,9 @@ def main():
     prefixes_and_names = [
         # 2Gbps rate limit EXP
         ('memcached_rate.sq.2gbps_rl', 'SQ\n(2Gbps)'),
-        ('memcached_rate.mq.2gbps_rl', '16Q\n(2Gbps per-Q)'),
-        ('memcached_rate.mq.125mbps_rl', '16Q\n(125Mbps per-Q)'),
+        ('memcached_rate.mq.2gbps_rl', '16Q\n(2Gbps\nper-Q)'),
+        ('memcached_rate.mq.125mbps_rl', '16Q\n(125Mbps\nper-Q)'),
+        ('memcached_rate.bess.2-2gbps_rl', 'Loom\n(2Gbps)'),
         ##('memcached_rate.mq.200mbps_rl', '16Q\n(200Mbps per-Q)'),
         ##('memcached_rate.mq.175mbps_rl', '16Q (175Mbps per-Q)'),
 

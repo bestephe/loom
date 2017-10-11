@@ -12,8 +12,9 @@ MASTER_IP=$1
 IFACE=eno2
 IP=$(/sbin/ifconfig $IFACE | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
 TAP_IP_PREFIX=$(echo $IP | cut -d. -f1,2,3)
-TAP_IP_SUFFIX=10$(echo $IP | cut -d. -f4)
-TAP_IP=$TAP_IP_PREFIX.$TAP_IP_SUFFIX
+TAP_IP_SUFFIX=$(echo $IP | cut -d. -f4)
+#TAP_IP=$TAP_IP_PREFIX.$TAP_IP_SUFFIX
+TAP_IP=10.10.101.$TAP_IP_SUFFIX
 
 sudo apt-get update --fix-missing
 sudo apt-get -y install vim
@@ -44,7 +45,7 @@ sed -i s/MASTER_IP/$MASTER_IP/g mapred-site.xml
 sed -i s/MASTER_IP/$MASTER_IP/g yarn-site.xml
 sed -i s/CHANGE_MASTER_IP/$MASTER_IP/g spark-defaults.conf
 sed -i s/CHANGE_MASTER_IP/$MASTER_IP/g spark-env.sh
-sed -i s/CHANGE_LOCAL_IP/$IP/g spark-env.sh
+sed -i s/CHANGE_LOCAL_IP/$TAP_IP/g spark-env.sh
 
 cd ..
 mv conf/instances .

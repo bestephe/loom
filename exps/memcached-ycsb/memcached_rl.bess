@@ -2,8 +2,8 @@ import multiprocessing
 import scapy.all as scapy
 import os
 
-queue_count = multiprocessing.cpu_count()
-#queue_count = 1
+#queue_count = multiprocessing.cpu_count()
+queue_count = 32
 
 VPORT_NAME = 'loom'
 VPORT_ADDR = '10.10.1.1/24'
@@ -23,7 +23,7 @@ bess.resume_all()
 bess.add_tc('bit_limit',
             policy='rate_limit',
             resource='bit',
-            limit={'bit': int(10e9)})
+            limit={'bit': int(2.2e9)})
 bess.add_tc('bit_limit_rr', parent = 'bit_limit', policy='round_robin')
 
 # Create a vport as an interface on the host

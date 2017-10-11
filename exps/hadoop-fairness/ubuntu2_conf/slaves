@@ -16,5 +16,5 @@
 #
 
 # A Spark Worker will be started on each of the machines listed below.
-10.10.1.2
-10.10.1.1
+10.10.102.2
+10.10.102.1

@@ -27,8 +27,8 @@ MEMCACHED_CONFIG_DEFAULTS = {
     #'qmodel': QMODEL_SQ,
     'qmodel': QMODEL_BESS,
     'rate_limit': 2e9,
-    'iface': 'enp8s0f0',
-    'iface_addr': '0000:08:00.0',
+    'iface': 'eno2',
+    'iface_addr': '0000:81:00.1',
     'max_mem': (16 * 1024),
     'threads': 16,
 
@@ -109,6 +109,8 @@ def get_rxqs(config):
 
 def memcached_configure_rfs(config):
     rxqs = get_rxqs(config)
+    if len(rxqs) == 0:
+        rxqs = range(64)
     entries = 65536
     entries_per_rxq = entries / len(rxqs)
     cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
@@ -166,7 +168,10 @@ def memcached_config_bess(config):
     loom_config_bess(config)
 
     # Also configure RFS
+    iface_save = config.iface
+    config.iface = 'loom'
     memcached_configure_rfs(config)
+    config.iface = iface_save
 
 def memcached_start_servers(config):
     #XXX: "-L" enables hugepage support.  This currently didn't work for me.
