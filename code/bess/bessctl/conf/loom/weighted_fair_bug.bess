@@ -1,0 +1,49 @@
+import scapy.all as scapy
+import subprocess
+
+use_vport = int($BESS_WF_USE_VPORT!'1')
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Configure workers and weighted fair traffic classes
+bess.add_worker(0, 0)
+bess.add_tc('tenant_out_wf',
+            wid=0,
+            policy='weighted_fair',
+            resource='bit')
+bess.add_tc('t1_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
+bess.add_tc('rest_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
+
+# The first source may either be a source or a VPort
+if use_vport:
+    v1 = VPort(ifname='eth_vport_test', ip_addrs=['10.255.99.2/24'])
+    src1 = PortInc(port=v1.name)
+else:
+    src1 = Source()
+
+
+# Hook up three different sources to a single sink
+src2 = Source()
+src3 = Source()
+merge = Merge()
+sink = Sink()
+src1 -> merge
+src2 -> merge
+src3 -> merge
+merge -> sink
+
+# Add the sources to the appropriate traffic classes
+#src1.attach_task(parent='t1_out_rr')
+src1.attach_task(parent='t1_out_rr')
+src2.attach_task(parent='rest_out_rr')
+src3.attach_task(parent='rest_out_rr')

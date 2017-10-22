@@ -201,7 +201,7 @@ bool WeightedFairTrafficClass::AddChild(TrafficClass *child,
   }
 
   child->parent_ = this;
-  WeightedFairTrafficClass::ChildData child_data{STRIDE1 / share, pass, child};
+  WeightedFairTrafficClass::ChildData child_data{STRIDE1 / share, pass, 0, child};
   if (child->blocked_) {
     blocked_children_.push_back(child_data);
   } else {
@@ -247,6 +247,7 @@ bool WeightedFairTrafficClass::RemoveChild(TrafficClass *child) {
 }
 
 TrafficClass *WeightedFairTrafficClass::PickNextChild() {
+  //LOG(INFO) << "WeightedFairTrafficClass PickNextChild: " << runnable_children_.top().c_->name_;
   return runnable_children_.top().c_;
 }
 
@@ -255,6 +256,13 @@ void WeightedFairTrafficClass::UnblockTowardsRoot(uint64_t tsc) {
   for (auto it = blocked_children_.begin(); it != blocked_children_.end();) {
     if (!it->c_->blocked_) {
       it->pass_ = 0;
+      // Unblocked children should not be allowed to consume
+      // arbitrary resources in catching up.
+      // TODO(Brent): it would be reasonable to allow unblocked children to
+      // receive some configurable quanity of credits.
+      if (!runnable_children_.empty()) {
+        it->pass_ = runnable_children_.top().pass_;
+      }
       runnable_children_.push(*it);
       blocked_children_.erase(it++);
     } else {
@@ -284,16 +292,39 @@ void WeightedFairTrafficClass::FinishAndAccountTowardsRoot(
 
   // DCHECK_EQ(item.c_, child) << "Child that we picked should be at the front
   // of priority queue.";
+  //DCHECK_EQ(runnable_children_.top().c_, child) << "Child that we picked should be at the front of priority queue.";
   if (child->blocked_) {
     auto item = runnable_children_.top();
     runnable_children_.pop();
     blocked_children_.emplace_back(std::move(item));
     blocked_ = runnable_children_.empty();
+
+    //DEBUG
+    //LOG(INFO) << "Child is now blocked: " << child->name_;
   } else {
-    auto &item = runnable_children_.mutable_top();
+    //auto &item = runnable_children_.mutable_top();
+    auto item = runnable_children_.top();
+    runnable_children_.pop();
+
     uint64_t consumed = usage[resource_];
-    item.pass_ += item.stride_ * consumed / QUANTUM;
-    runnable_children_.decrease_key_top();
+    // A child that does not block ever or consume a resource will starve out
+    // all other children
+    if (consumed == 0) {
+        item.noops_ += 1;
+      if (!runnable_children_.empty() && item.noops_ >= MAX_WF_NOOPS) {
+        item.pass_ = runnable_children_.top().pass_ + 1;
+
+        //LOG(INFO) << "Next highest child " << runnable_children_.top().c_->name_ << " pass_:" << runnable_children_.top().pass_;
+      }
+    } else {
+      item.pass_ += item.stride_ * consumed / QUANTUM;
+      item.noops_ = 0;
+    }
+
+    //runnable_children_.decrease_key_top();
+    runnable_children_.push(item);
+
+    //LOG(INFO) << "Child " << item.c_->name_ << " used: " << consumed << ", pass_:" << item.pass_;
   }
 
   if (!parent_) {

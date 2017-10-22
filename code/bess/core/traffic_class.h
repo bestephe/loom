@@ -59,6 +59,8 @@ namespace bess {
 // This doesn't mean anything, other than avoiding int64 overflow
 #define QUANTUM (1 << 10)
 
+#define MAX_WF_NOOPS (64)
+
 // Resource types that can be accounted for.
 enum resource_t {
   RESOURCE_COUNT = 0,  // Count of how many times scheduled
@@ -342,6 +344,7 @@ class WeightedFairTrafficClass final : public TrafficClass {
 
     int64_t stride_;
     int64_t pass_;
+    int64_t noops_;
 
     TrafficClass *c_;
   };
