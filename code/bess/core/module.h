@@ -49,7 +49,7 @@ using bess::gate_idx_t;
 
 #define INVALID_TASK_ID ((task_id_t)-1)
 #define MAX_NUMA_NODE 16
-#define MAX_TASKS_PER_MODULE 32
+#define MAX_TASKS_PER_MODULE 64
 #define UNCONSTRAINED_SOCKET ((0x1ull << MAX_NUMA_NODE) - 1)
 
 // Represents a node in `module_graph_`.

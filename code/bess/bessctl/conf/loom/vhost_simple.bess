@@ -4,6 +4,7 @@ import os
 
 VPORT_NAME = 'loom'
 VPORT_ADDR = '10.10.1.2/24'
+NUM_QUEUES = int($SN_QUEUES!'8')
 
 # Reset everything at the start
 #XXX: Note: I doubt both of these are necessary or are even considered
@@ -13,25 +14,31 @@ bess.resume_all()
 
 # Create a vport as an interface on the host
 #TODO: How are queues configured on the vport?
-v = PMDPort(name=VPORT_NAME, vdev='virtio_user0,path=/dev/vhost-net,queues=1,queue_size=1024,iface=%s' % VPORT_NAME)
-#subprocess.check_call('ip link set tap0 name %s' % VPORT_NAME, shell=True)
-subprocess.check_call('ip addr add %s dev %s' % (VPORT_ADDR, VPORT_NAME), shell=True)
-subprocess.check_call('ip link set dev %s up' % VPORT_NAME, shell=True)
+vdev_str = 'virtio_user0,path=/dev/vhost-net,queues=%d,queue_size=2048,iface=%s' % \
+        (NUM_QUEUES, VPORT_NAME)
+v = PMDPort(name=VPORT_NAME, vdev=vdev_str, num_inc_q=NUM_QUEUES,
+    num_out_q=NUM_QUEUES)
 subprocess.check_call('ip addr add %s dev %s' % (VPORT_ADDR, VPORT_NAME), shell=True)
 subprocess.check_call('ip link set dev %s up' % VPORT_NAME, shell=True)
 subprocess.check_call('sudo ethtool -K %s tso off' % VPORT_NAME, shell=True)
-subprocess.check_call('sudo ethtool -K %s sg off' % VPORT_NAME, shell=True)
-subprocess.check_call('sudo ethtool -K %s tx off' % VPORT_NAME, shell=True)
+#subprocess.check_call('sudo ethtool -K %s sg off' % VPORT_NAME, shell=True)
+#subprocess.check_call('sudo ethtool -K %s tx off' % VPORT_NAME, shell=True)
 
-# Connect it to a PMD with 1-txq and 1-rxq
-p = PMDPort(port_id=0, num_inc_q=1, num_out_q=1)
+# Connect it to a physical PMD
+p = PMDPort(port_id=0, num_inc_q=NUM_QUEUES, num_out_q=NUM_QUEUES)
 
 # Connect the ports
-#TODO: Configure queues instead of ports
-# input0::QueueInc(port=myport, qid=0) #This module will read from myport on queue 0
-# output0::QueueOut(port=myport, qid=0) #This module will write to myport on queue 0
-PortInc(port=p.name) -> PortOut(port=v.name)
-PortInc(port=v.name) -> IPChecksum() -> L4Checksum() -> PortOut(port=p.name)
+#PortInc(port=p.name) -> PortOut(port=v.name)
+#PortInc(port=v.name) -> IPChecksum() -> L4Checksum() -> PortOut(port=p.name)
+
+for i in range(NUM_QUEUES):
+    v_qinc = QueueInc(port=v.name, qid=i)
+    v_qout = QueueOut(port=v.name, qid=i)
+    p_qinc = QueueInc(port=p.name, qid=i)
+    p_qout = QueueOut(port=p.name, qid=i)
+
+    v_qinc -> IPChecksum() -> L4Checksum() -> p_qout
+    p_qinc -> v_qout
 
 # DEBUG
 print('Two ports have been spliced: {} <-> {}'.format(p, v))

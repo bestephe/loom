@@ -36,7 +36,8 @@
 #define PCAP_VERSION_MINOR 4
 #define PCAP_THISZONE 0
 #define PCAP_SIGFIGS 0
-#define PCAP_SNAPLEN 65535
+//#define PCAP_SNAPLEN 65535
+#define PCAP_SNAPLEN 64
 #define PCAP_NETWORK 1 /* Ethernet */
 
 struct pcap_hdr {

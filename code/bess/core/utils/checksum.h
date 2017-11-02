@@ -486,6 +486,34 @@ static inline uint16_t CalculateIpv4TcpChecksum(const Tcp &tcph, be32_t src,
   return FoldChecksum(sum);
 }
 
+static inline uint16_t CalculateIpv4TcpChecksum(const Tcp &tcph, be32_t src,
+                                                be32_t dst, uint16_t tcp_len,
+                                                uint16_t sum_) {
+  const uint32_t *buf32 = reinterpret_cast<const uint32_t *>(&tcph);
+  // tcp options and payload
+  uint32_t sum = sum_;
+  uint32_t len = static_cast<uint32_t>(be16_t::swap(tcp_len));
+
+  // Calculate the checksum of TCP header and pseudo header
+  asm("addl %[u0], %[sum]      \n\t"
+      "adcl %[u1], %[sum]      \n\t"
+      "adcl %[u2], %[sum]      \n\t"
+      "adcl %[u3], %[sum]      \n\t"
+      "adcl %[u4], %[sum]      \n\t"
+      "adcl %[src], %[sum]     \n\t"
+      "adcl %[dst], %[sum]     \n\t"
+      "adcl %[len], %[sum]     \n\t"
+      "adcl $0x0600, %[sum]    \n\t"  // 6 == IPPROTO_TCP
+      "adcl $0, %[sum]         \n\t"
+      : [sum] "+r"(sum)
+      : [u0] "m"(buf32[0]), [u1] "m"(buf32[1]), [u2] "m"(buf32[2]),
+        [u3] "m"(buf32[3]),
+        [u4] "g"(buf32[4] >> 16),  // skip checksum field
+        [src] "r"(src.raw_value()), [dst] "r"(dst.raw_value()), [len] "r"(len));
+
+  return FoldChecksum(sum);
+}
+
 // Returns TCP (on IPv4) checksum of the tcp header 'tcph' with ip header 'iph'
 // It skips the checksum field into the calculation
 // It does not set the checksum field in TCP header

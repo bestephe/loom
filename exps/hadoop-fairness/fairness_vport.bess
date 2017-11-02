@@ -15,7 +15,7 @@ def aton(ip):
 
 #queue_count = multiprocessing.cpu_count()
 #queue_count = 32
-queue_count = 1
+queue_count = 8
 
 
 # CloudLab experiment platform specific code:
@@ -103,7 +103,7 @@ p = PMDPort(port_id=0, num_inc_q=queue_count, num_out_q=1,
     size_inc_q=QSIZE, size_out_q=QSIZE)
 
 # Merge all incoming traffic from the vport into a single PMD output port/queue
-merge::Merge() -> p_out::PortOut(port=p.name)
+merge::Merge() -> IPChecksum() -> L4Checksum() -> p_out::PortOut(port=p.name)
 v1_inc::PortInc(port=v1.name) -> merge
 v2_inc::PortInc(port=v2.name) -> merge
 
@@ -152,7 +152,8 @@ for i in range(queue_count):
     # Current solution: use L2 forwarding and replicate broadcast traffic to
     # both interfaces.  In other words, implement our own L2 switch.
     l2fwd = L2Forward()
-    QueueInc(port=p.name, qid=i) -> l2fwd
+    q_inc = QueueInc(port=p.name, qid=i) 
+    q_inc -> l2fwd
     l2_entries = [{'addr': 'ff:ff:ff:ff:ff:ff', 'gate': 0},
         {'addr': VPORT1_MAC, 'gate': 1},
         {'addr': VPORT2_MAC, 'gate': 2},
@@ -169,6 +170,16 @@ for i in range(queue_count):
     l2fwd:0 -> bcast
     bcast:1 -> v1out_merge
     bcast:2 -> v2out_merge
+
+    # DEBUG
+    fifo = '/tmp/vport_q_inc_%d.pcap' % i
+    try:
+        os.remove(fifo)
+    except:
+        pass
+    os.mkfifo(fifo, 0o600)
+    fd = os.open(fifo, os.O_RDWR)
+    bess.tcpdump(True, q_inc.name, fifo=fifo)
 
 # DEBUG
 print('Two ports now share one PMD: {} <-> {} and {} <-> {}'.format(v1, p, v2, p))

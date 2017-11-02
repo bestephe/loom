@@ -1,21 +1,29 @@
+import binascii
 import glob
 import multiprocessing
-import scapy.all as scapy
 import os
 import platform
+import scapy.all as scapy
+import shlex
 import socket
 import subprocess
+import sys
+import time
 
-import binascii
+#QUEUE_COUNT = multiprocessing.cpu_count()
+QUEUE_COUNT = 32
+#QUEUE_COUNT = 4
+#QSIZE = 2048
+QSIZE = 1024
+DUMP_IVAL = 0.00001
+VPORT = False
 
+# DEBUGGING
+#bess.set_debug(True)
+
+# Helpers
 def aton(ip):
     return socket.inet_aton(ip)
-
-#queue_count = multiprocessing.cpu_count()
-#queue_count = 32
-queue_count = 1
-
-
 # CloudLab experiment platform specific code:
 def node2id(node):
     node2id_dict = {
@@ -25,8 +33,6 @@ def node2id(node):
     return node2id_dict[node]
 node_name = platform.node()
 node_id = node2id(node_name)
-
-# XXX: Testing
 def config_rfs(iface):
     rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % iface)
     entries = 65536
@@ -37,71 +43,146 @@ def config_rfs(iface):
     for rxq in rxqs:
         cmd = 'echo %d | sudo tee /%s/rps_flow_cnt > /dev/null' % (entries_per_rxq, rxq)
         subprocess.check_call(cmd, shell=True)
+def start_ping_proc(ip):
+    ping_cmd = 'sudo ping -i 0.001 -c 20 %s' % ip
+    proc = subprocess.Popen(ping_cmd, shell=True,
+        stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+    return proc
+def make_tcpdump_fifo(fifo):
+    try:
+        os.remove(fifo)
+    except:
+        pass
+    os.mkfifo(fifo, 0o600)
+    fd = os.open(fifo, os.O_RDWR)
+    return fifo
 
-# TODO: Move vport configuration into a single dictionary
-VPORT1_NAME = 'loom1'
-VPORT1_ADDR = '10.10.101.%d' % node_id
-VPORT1_ADDR_PREFIX = VPORT1_ADDR + '/24'
-VPORT1_MAC = '00:8c:fa:00:A1:{:02x}'.format(node_id)
-VPORT1_NETNS = 'loom_test1'
-VPORT1_VLAN = 101
+class VhostConf(object):
+    def __init__(self, *initial_data, **kwargs):
+        for dictionary in initial_data:
+            for key in dictionary:
+                setattr(self, key, dictionary[key])
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+def gen_vhost_conf(i):
+    vhost_conf_dict = {
+        'name': 'loom%d' % i,
+        'addr': '10.10.10%d.%d' % (i, node_id),
+        'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
+        'netns': 'loom_test%d' % i,
+        'vlan': '10%d' % i,
+    }
+    vhost_conf = VhostConf(vhost_conf_dict)
+    vhost_conf.addr_prefix = vhost_conf.addr + '/24'
+    vhost_conf.vdev_str = 'virtio_user%d,path=/dev/vhost-net,queues=%d,' \
+        'queue_size=%d,iface=%s,mac=%s' % \
+        (i, QUEUE_COUNT, QSIZE, vhost_conf.name, vhost_conf.mac)
+    return vhost_conf
 
-VPORT2_NAME = 'loom2'
-VPORT2_ADDR = '10.10.102.%d' % node_id
-VPORT2_ADDR_PREFIX = VPORT2_ADDR + '/24'
-VPORT2_MAC = '00:8c:fa:00:A2:{:02x}'.format(node_id)
-VPORT2_NETNS = 'loom_test2'
-VPORT2_VLAN = 102
+def config_virtio_user(vhost_conf):
+    v = PMDPort(name=vhost_conf.name, vdev=vhost_conf.vdev_str, num_inc_q=QUEUE_COUNT,
+        num_out_q=QUEUE_COUNT)
+    config_rfs(vhost_conf.name)
+    #TODO: network namespaces if needed
+    ip_cmd_prefix = ''
+    #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
+    #subprocess.check_call('ip link set %s netns %s' % (vhost_conf.name,
+    #    vhost_conf.netns), shell=True)
+    subprocess.check_call('%s ip addr add %s dev %s' % (ip_cmd_prefix,
+        vhost_conf.addr_prefix, vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set %s address %s' % (ip_cmd_prefix,
+        vhost_conf.name, vhost_conf.mac), shell=True)
+    subprocess.check_call('%s ip link set dev %s up' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set dev %s promisc on' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    subprocess.check_call('%s ethtool -K %s tso off' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    return v
 
-QSIZE = 2048
-DUMP_IVAL = 0.00001
-
-# DEBUGGING
-#bess.set_debug(True)
+def config_vport(vhost_conf):
+    v = VPort(ifname=vhost_conf.name, ip_addrs=[vhost_conf.addr_prefix],
+        num_inc_q=QUEUE_COUNT, num_out_q=QUEUE_COUNT)
+    config_rfs(vhost_conf.name)
+    ip_cmd_prefix = ''
+    #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
+    subprocess.check_call('%s ip link set dev %s down' % \
+        (ip_cmd_prefix, vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set dev %s promisc on' % \
+        (ip_cmd_prefix, vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set %s address %s' % \
+        (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
+    subprocess.check_call('%s ip link set dev %s up' % \
+        (ip_cmd_prefix, vhost_conf.name), shell=True)
+    return v
 
 # Reset everything at the start
 #XXX: Note: I doubt both of these are necessary or are even considered
 # "correct"
 bess.reset_all()
-bess.resume_all()
+#bess.resume_all()
+bess.pause_all()
 
-# TODO: configure the scheduler (fairness/10Gbps rate-limit)
+# Try out using different workers for inc and out
+#XXX: Trying out because weighted fairness is causing problems.
+#bess.add_worker(0, 0, scheduler='experimental')
+#bess.add_worker(1, 28, scheduler='experimental')
+bess.add_worker(0, 0)
+bess.add_worker(1, 28)
+
+# Configure the scheduler
+bess.add_tc('tenant_inc_rr',
+            wid=0,
+            policy='round_robin')
+bess.add_tc('tenant_out_rl',
+            wid=1,
+            policy='rate_limit',
+            resource='bit',
+            limit={'bit': int(10e9)})
+bess.add_tc('tenant_out_rr',
+            parent='tenant_out_rl',
+            policy='round_robin')
+bess.add_tc('tenant_out_wf',
+            parent='tenant_out_rr',
+            policy='weighted_fair',
+            resource='bit')
+bess.add_tc('t1_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
+bess.add_tc('t2_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
+
+# Get config for each vhost
+v1_vhost_conf = gen_vhost_conf(1)
+v2_vhost_conf = gen_vhost_conf(2)
+
+# Configure network namespaces
+#subprocess.call('sudo ip -all netns del', shell=True)
+#for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
+#    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
 
 # Delete then add the network namespaces
 subprocess.call('sudo ip -all netns del', shell=True)
-for netns in [VPORT1_NETNS, VPORT2_NETNS]:
+for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
     subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
 
-# Create a vport as an interface on the host for each tenant
-#v1 = VPort(ifname=VPORT1_NAME, ip_addrs=[VPORT1_ADDR_PREFIX],
-#    netns='/var/run/netns/%s' % VPORT1_NETNS, num_inc_q=queue_count,
-#    num_out_q=queue_count)
-#v2 = VPort(ifname=VPORT2_NAME, ip_addrs=[VPORT2_ADDR_PREFIX],
-#    netns='/var/run/netns/%s' % VPORT2_NETNS, num_inc_q=queue_count,
-#    num_out_q=queue_count)
-v1 = VPort(ifname=VPORT1_NAME, ip_addrs=[VPORT1_ADDR_PREFIX],
-    num_inc_q=queue_count, num_out_q=queue_count)
-v2 = VPort(ifname=VPORT2_NAME, ip_addrs=[VPORT2_ADDR_PREFIX],
-    num_inc_q=queue_count, num_out_q=queue_count)
-
-# Set custom MAC addresses for the vports
-for (iface, mac, netns) in [(VPORT1_NAME, VPORT1_MAC, VPORT1_NETNS),
-        (VPORT2_NAME, VPORT2_MAC, VPORT2_NETNS)]:
-    config_rfs(iface)
-
-    ip_link_prefix = 'ip link'
-    #ip_link_prefix = 'sudo ip netns exec %s ip link' % netns
-    subprocess.check_call('%s set dev %s down' % (ip_link_prefix, iface), shell=True)
-    subprocess.check_call('%s set dev %s promisc on' % (ip_link_prefix, iface), shell=True)
-    subprocess.check_call('%s set %s address %s' % (ip_link_prefix, iface, mac), shell=True)
-    subprocess.check_call('%s set dev %s up' % (ip_link_prefix, iface), shell=True)
+# Create a vhost as an interface on the host for each tenant
+if VPORT:
+    v1 = config_vport(v1_vhost_conf)
+    v2 = config_vport(v2_vhost_conf)
+else:
+    v1 = config_virtio_user(v1_vhost_conf)
+    v2 = config_virtio_user(v2_vhost_conf)
 
 # Create a PMD port (physical) with 1-txq and q-rxq
-p = PMDPort(port_id=0, num_inc_q=queue_count, num_out_q=1,
+p = PMDPort(port_id=0, num_inc_q=QUEUE_COUNT, num_out_q=1,
     size_inc_q=QSIZE, size_out_q=QSIZE)
 
 # Merge all incoming traffic from the vport into a single PMD output port/queue
-merge::Merge() -> p_out::PortOut(port=p.name)
+merge::Merge() -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
 v1_inc::PortInc(port=v1.name) -> merge
 v2_inc::PortInc(port=v2.name) -> merge
 
@@ -109,8 +190,14 @@ v2_inc::PortInc(port=v2.name) -> merge
 #v1_inc::PortInc(port=v1.name) -> VLANPush(tci=101) -> merge
 #v2_inc::PortInc(port=v2.name) -> VLANPush(tci=102) -> merge
 
+# Configure the scheduler for traffic outgoing the physical port
+for i in range(QUEUE_COUNT):
+    v1_inc.attach_task(parent='t1_out_rr', module_taskid=i)
+    v2_inc.attach_task(parent='t2_out_rr', module_taskid=i)
+
+
 # Connect queues instead of ports
-for i in range(queue_count):
+for i in range(QUEUE_COUNT):
     #XXX: IP forwarding is currently broken in BESS
     #ipfwd = IPLookup()
     #QueueInc(port=p.name, qid=i) -> ipfwd
@@ -150,10 +237,11 @@ for i in range(queue_count):
     # Current solution: use L2 forwarding and replicate broadcast traffic to
     # both interfaces.  In other words, implement our own L2 switch.
     l2fwd = L2Forward()
-    QueueInc(port=p.name, qid=i) -> l2fwd
+    q_inc = QueueInc(port=p.name, qid=i)
+    q_inc -> l2fwd
     l2_entries = [{'addr': 'ff:ff:ff:ff:ff:ff', 'gate': 0},
-        {'addr': VPORT1_MAC, 'gate': 1},
-        {'addr': VPORT2_MAC, 'gate': 2},
+        {'addr': v1_vhost_conf.mac, 'gate': 1},
+        {'addr': v2_vhost_conf.mac, 'gate': 2},
     ]
     l2fwd.add(entries=l2_entries)
     l2fwd.set_default_gate(gate=0)
@@ -168,7 +256,47 @@ for i in range(queue_count):
     bcast:1 -> v1out_merge
     bcast:2 -> v2out_merge
 
+    # Configure the scheduler
+    q_inc.attach_task(parent='tenant_inc_rr')
+
+    # DEBUG
+    #fifo = make_tcpdump_fifo('/tmp/vport_q_inc_%d.pcap' % i)
+    #bess.tcpdump(True, q_inc.name, fifo=fifo)
+
+bess.resume_all()
+
+#DEBUG: Do some quick ping debugging
+#time.sleep(0.01)
+#ping_p1 = start_ping_proc('10.10.101.1')
+#ping_p2 = start_ping_proc('10.10.102.1')
+#time.sleep(1)
+#ping_p1.kill()
+#ping_p2.kill()
+
+#XXX: DEBUG before BESS crashes
+#print('TCs:')
+#print(bess.list_tcs())
+
+#bess.pause_all()
+#bess.reset_all()
+
+#DEBUG: read the ping output
+#print('Ping 10.10.101.1:')
+#print('stdout:', ping_p1.stdout.read())
+#print()
+#print('Ping 10.10.102.1:')
+#print('stdout:', ping_p2.stdout.read())
+#print()
+
 # DEBUG
 print('Two ports now share one PMD: {} <-> {} and {} <-> {}'.format(v1, p, v2, p))
 #print(VPORT1_ADDR, binascii.hexlify(socket.inet_aton(VPORT1_ADDR)).upper())
 #print(VPORT2_ADDR, binascii.hexlify(socket.inet_aton(VPORT2_ADDR)).upper())
+
+# Dump outgoing packets for later analysis
+out_fifo = make_tcpdump_fifo('/tmp/pout.pcap')
+bess.tcpdump(True, p_out.name, direction='in', fifo=out_fifo)
+tcpdump_cmd = 'sudo tcpdump -r /tmp/pout.pcap -s 64 -w /dev/shm/spark_tcp_flows.pcap -s 64'
+tcpdump = subprocess.Popen(shlex.split(tcpdump_cmd),
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+tcpdump.wait()

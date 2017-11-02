@@ -1,0 +1,25 @@
+lines:
+- avg_gbps: 1.7817185157857225
+  lname: 'SQ
+
+    (2Gbps)'
+  stddev: 0.010195591610570426
+- avg_gbps: 7.333365273593002
+  lname: '16Q
+
+    (2Gbps
+
+    per-Q)'
+  stddev: 0.1486854568652379
+- avg_gbps: 1.0813336455051032
+  lname: '16Q
+
+    (125Mbps
+
+    per-Q)'
+  stddev: 0.0776060082679361
+- avg_gbps: 1.8634996702376825
+  lname: 'Loom
+
+    (2Gbps)'
+  stddev: 0.030721594072098322

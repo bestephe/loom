@@ -11,4 +11,7 @@ sudo chmod 0444 /dev/bess
 sudo perf buildid-cache -a bess.ko
 
 # Also configure huge-pages
-sudo sysctl vm.nr_hugepages=1024
+#sudo sysctl vm.nr_hugepages=1024
+
+# Success
+exit 0

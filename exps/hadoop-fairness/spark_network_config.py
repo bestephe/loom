@@ -9,22 +9,33 @@ import sys
 import yaml
 from time import sleep
 
+sys.path.insert(0, os.path.abspath('..'))
+from loom_exp_common import *
+
+if 'LOOM_HOME' in os.environ:
+    LOOM_HOME = os.environ['LOOM_HOME']
+else:
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/git/loom-code/'
+
 DRIVER_DIR = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/code/ixgbe-5.0.4/'
 TCP_BYTE_LIMIT_DIR = '/proc/sys/net/ipv4/tcp_limit_output_bytes'
 TCP_QUEUE_SYSTEM_DEFAULT = 262144
 
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
+QMODEL_BESS = 'bess'
 
 H2_PORTS = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096, 9097,
     9098, 9099, 9337, 51070, 51090, 51091, 51010, 51075, 51020, 51070,
     51475, 51470, 51100, 51105, 9485, 9480, 9481, 3049, 5242]
 
 SPARK_CONFIG_DEFAULTS = {
-    'qmodel': QMODEL_SQ,
+    'qmodel': QMODEL_BESS,
     'job_fair_ratio': 1,
 
     'iface': 'eno2',
+    'iface_addr': '0000:81:00.1',
+    'bess_conf': 'fairness.bess',
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
 
@@ -240,6 +251,19 @@ def spark_config_server(config):
     # Configure BQL
     set_all_bql_limit_max(config)
 
+def spark_config_bess(config):
+    subprocess.call('sudo killall tcpdump', shell=True)
+
+    bessctl = loom_config_bess(config)
+
+    # Save a tcpdump file
+    #XXX: Do to fd and processes stopping issues, running tcpdump from within
+    # the BESS script seems to work best for now.
+    #subprocess.call('sudo killall tcpdump', shell=True)
+    #tcpdump_cmd = 'sudo tcpdump -r /tmp/pout.pcap -w /dev/shm/spark_tcp_flows.pcap -s 64'
+    #tcpdump = subprocess.Popen(shlex.split(tcpdump_cmd),
+    #    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description='Configure the server and '
@@ -257,7 +281,10 @@ def main():
         config = SparkConfig()
 
     # Configure the server
-    spark_config_server(config)
+    if config.qmodel == QMODEL_BESS:
+        spark_config_bess(config)
+    else:
+        spark_config_server(config)
 
 if __name__ == '__main__':
     main()

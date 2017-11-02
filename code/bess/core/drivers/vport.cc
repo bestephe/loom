@@ -1092,6 +1092,8 @@ int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 
   reclaim_packets(rx_queue->drv_to_sn);
 
+  //LOG(INFO) << "qid: " << (int)qid << " receiving " << cnt << " packets";
+
   for (int i = 0; i < cnt; i++) {
     bess::Packet *snb = pkts[i];
 
@@ -1147,6 +1149,7 @@ int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   /* TODO: generic notification architecture */
   if (__sync_bool_compare_and_swap(&rx_queue->rx_regs->irq_disabled, 0, 1)) {
     ret = ioctl(fd_, SN_IOC_KICK_RX, 1 << map_.rxq_to_cpu[qid]);
+    //LOG(INFO) << "ioctl(KICK_RX)";
     if (ret) {
       PLOG(ERROR) << "ioctl(KICK_RX)";
     }

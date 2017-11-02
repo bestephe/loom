@@ -53,6 +53,7 @@ class PMDPort final : public Port {
   PMDPort()
       : Port(),
         dpdk_port_id_(DPDK_PORT_UNKNOWN),
+        mtu_(1500),
         hot_plugged_(false),
         node_placement_(UNCONSTRAINED_SOCKET) {}
 
@@ -142,6 +143,11 @@ class PMDPort final : public Port {
    */
 
   dpdk_port_t dpdk_port_id_;
+
+  /*!
+   * The MTU of the DPDK port
+   */
+  uint16_t mtu_;
 
   /*!
    * True if device did not exist when bessd started and was later patched in.

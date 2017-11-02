@@ -29,9 +29,15 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 #include "pmd.h"
+#include <rte_net.h>
 
 #include "../utils/ether.h"
 #include "../utils/format.h"
+
+// These likely do not need to be included
+#include "../utils/ip.h"
+#include "../utils/tcp.h"
+#include "../utils/udp.h"
 
 /*!
  * The following are deprecated. Ignore us.
@@ -50,14 +56,14 @@ static const struct rte_eth_conf default_eth_conf() {
       .max_rx_pkt_len = 0,            /* valid only if jumbo is on */
       .split_hdr_size = 0,            /* valid only if HS is on */
       .header_split = 0,              /* Header Split */
-      .hw_ip_checksum = SN_HW_RXCSUM, /* IP checksum offload */
+      .hw_ip_checksum = 1,            /* IP checksum offload */
       .hw_vlan_filter = 0,            /* VLAN filtering */
       .hw_vlan_strip = 0,             /* VLAN strip */
       .hw_vlan_extend = 0,            /* Extended VLAN */
       .jumbo_frame = 0,               /* Jumbo Frame support */
       .hw_strip_crc = 1,              /* CRC stripped by hardware */
-      .enable_scatter = 0,            /* no scattered RX */
-      .enable_lro = 0,                /* no large receive offload */
+      .enable_scatter = 1,            /* no scattered RX */
+      .enable_lro = 1,                /* no large receive offload */
   };
 
   ret.rx_adv_conf.rss_conf = {
@@ -263,10 +269,20 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     eth_rxconf.rx_drop_en = 1;
   }
 
+  LOG(INFO) << "PMD Driver: " << driver_;
+  if (driver_ == "net_virtio_user") {
+    LOG(INFO) << "Disabling LRO for virtio_user";
+    eth_conf.rxmode.enable_lro = 0;
+    eth_conf.rxmode.hw_ip_checksum = 0;
+  }
+
   eth_txconf = dev_info.default_txconf;
-  eth_txconf.txq_flags = ETH_TXQ_FLAGS_NOVLANOFFL |
-                         ETH_TXQ_FLAGS_NOMULTSEGS * (1 - SN_TSO_SG) |
-                         ETH_TXQ_FLAGS_NOXSUMS * (1 - SN_HW_TXCSUM);
+  eth_txconf.txq_flags = ETH_TXQ_FLAGS_NOVLANOFFL;
+  //eth_txconf.txq_flags = ETH_TXQ_FLAGS_NOVLANOFFL |
+  //                       ETH_TXQ_FLAGS_NOXSUMS * (1 - SN_HW_TXCSUM);
+  //eth_txconf.txq_flags = ETH_TXQ_FLAGS_NOVLANOFFL |
+  //                       ETH_TXQ_FLAGS_NOMULTSEGS * (1 - SN_TSO_SG) |
+  //                       ETH_TXQ_FLAGS_NOXSUMS * (1 - SN_HW_TXCSUM);
 
   ret = rte_eth_dev_configure(ret_port_id, num_rxq, num_txq, &eth_conf);
   if (ret != 0) {
@@ -308,6 +324,11 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
   }
 
   dpdk_port_id_ = ret_port_id;
+
+  ret = rte_eth_dev_get_mtu(dpdk_port_id_, &mtu_);
+  if (ret != 0) {
+    return CommandFailure(-ret, "rte_eth_dev_get_mtu() failed");
+  }
 
   numa_node = rte_eth_dev_socket_id(static_cast<int>(ret_port_id));
   node_placement_ =
@@ -392,10 +413,113 @@ void PMDPort::CollectStats(bool reset) {
 }
 
 int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
-  return rte_eth_rx_burst(dpdk_port_id_, qid, (struct rte_mbuf **)pkts, cnt);
+  int ret = rte_eth_rx_burst(dpdk_port_id_, qid, (struct rte_mbuf **)pkts, cnt);
+
+#if 0
+  /* LOOM: DEBUG */
+  {
+    int i;
+    for (i = 0; i < ret; i++) {
+      LOG(INFO) << "(Port " << name() << ") Packet Dump:" << pkts[i]->Dump();
+      if (pkts[i]->nb_segs() > 1) {
+        LOG(INFO) << "(Port " << name() << ") Number of segs: " << pkts[i]->nb_segs();
+      }
+      if (pkts[i]->total_len() > 1550) {
+        LOG(INFO) << "(Port " << name() << ") Packet len > 1550 (" << pkts[i]->total_len() << ")";
+      }
+      if (!pkts[i]->is_linear()) {
+        LOG(INFO) << "(Port " << name() << ") Packet is not linear!";
+      }
+      if (!pkts[i]->is_simple()) {
+        LOG(INFO) << "(Port " << name() << ") Packet is not simple!";
+      }
+    }
+  }
+#endif
+
+  return ret;
+}
+
+/* Assumes ETH/IPv4/TCP (and no VLAN, tunneling, etc.) */
+static void config_pkt_offloads(bess::Packet *pkt, uint16_t mtu) {
+  using bess::utils::Ethernet;
+  using bess::utils::Ipv4;
+  using bess::utils::Tcp;
+  using bess::utils::Udp;
+  using bess::utils::be16_t;
+
+  struct rte_mbuf *m = &pkt->as_rte_mbuf();
+
+  Ethernet *eth = pkt->head_data<Ethernet *>();
+  if (eth->ether_type != be16_t(Ethernet::Type::kIpv4))
+    return;
+  Ipv4 *ip = reinterpret_cast<Ipv4 *>(eth + 1);
+  uint16_t ip_header_len = (ip->header_length) << 2;
+  if (ip->protocol != Ipv4::Proto::kTcp)
+    return;
+  Tcp *tcp =
+      reinterpret_cast<Tcp *>(reinterpret_cast<uint8_t *>(ip) + ip_header_len);
+
+  uint16_t eth_len = sizeof(*eth);
+  //size_t ip_len = ip->length.value();
+  uint16_t tcp_len = (tcp->offset << 2);
+  uint16_t segsz = mtu - (eth_len + ip_header_len + tcp_len);
+  //LOG(INFO) << "segsz: " << segsz << ", mtu: " << mtu;
+
+  m->l2_len = eth_len;
+  m->l3_len = ip_header_len;
+  m->l4_len = tcp_len;
+  m->tso_segsz = segsz;
+  m->ol_flags = PKT_TX_IPV4 | PKT_TX_IP_CKSUM | PKT_TX_TCP_SEG;
+
+  rte_net_intel_cksum_prepare(m); 
 }
 
 int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
+  /* LOOM: Configure TSO and checksumming offloads. */
+  int i;
+  for (i = 0; i < cnt; i++) {
+    /* Only configure segmentation for large segments */
+    if (pkts[i]->total_len() > 1514) {
+      //LOG(INFO) << "(Port " << name() << ") total_len: " << pkts[i]->total_len() <<
+      //  ", mtu: " << mtu_;
+      /* XXX: should be mtu_, not 1500 */
+      config_pkt_offloads(pkts[i], 1400);
+    }
+  }
+
+
+#if 0
+  /* LOOM: DEBUG */
+  {
+    int di;
+    for (di = 0; di < cnt; di++) {
+      if (pkts[di]->total_len() > 1514) {
+        struct rte_mbuf *m = &pkts[di]->as_rte_mbuf();
+        LOG(INFO) << "(Port " << name() << ") ol_flags: << " << //std::hex << 
+          m->ol_flags << ", l2_len: " << m->l2_len << ", l3_len: " << 
+          m->l3_len << ", l4_len: " << m->l4_len << ", tso_segsz: " <<
+          m->tso_segsz;
+      }
+
+      //LOG(INFO) << "(Port " << name() << ") Packet Dump:" << pkts[di]->Dump();
+      if (pkts[di]->nb_segs() > 1) {
+        LOG(INFO) << "(Port " << name() << ") Number of segs: " << pkts[di]->nb_segs();
+      }
+      if (pkts[di]->total_len() > 1550) {
+        LOG(INFO) << "(Port " << name() << ") Packet len > 1550 (" << pkts[di]->total_len() << ")";
+      }
+      if (!pkts[di]->is_linear()) {
+        LOG(INFO) << "(Port " << name() << ") Packet is not linear!";
+      }
+      if (!pkts[di]->is_simple()) {
+        LOG(INFO) << "(Port " << name() << ") Packet is not simple!";
+      }
+
+    }
+  }
+#endif
+
   int sent =
       rte_eth_tx_burst(dpdk_port_id_, qid, (struct rte_mbuf **)pkts, cnt);
 

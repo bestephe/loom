@@ -28,6 +28,8 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+#include <rte_ip.h>
+
 #include "l4_checksum.h"
 
 #include "../utils/checksum.h"
@@ -46,6 +48,7 @@ void L4Checksum::ProcessBatch(bess::PacketBatch *batch) {
   int cnt = batch->cnt();
 
   for (int i = 0; i < cnt; i++) {
+    bess::Packet *pkt = batch->pkts()[i];
     Ethernet *eth = batch->pkts()[i]->head_data<Ethernet *>();
 
     // Calculate checksum only for IPv4 packets
@@ -63,7 +66,17 @@ void L4Checksum::ProcessBatch(bess::PacketBatch *batch) {
       size_t ip_bytes = (ip->header_length) << 2;
       Tcp *tcp =
           reinterpret_cast<Tcp *>(reinterpret_cast<uint8_t *>(ip) + ip_bytes);
-      tcp->checksum = CalculateIpv4TcpChecksum(*ip, *tcp);
+
+      /* This does not work with multi-segment packets! */
+      //tcp->checksum = CalculateIpv4TcpChecksum(*ip, *tcp);
+    
+      uint16_t sum;
+      struct rte_mbuf *m = &pkt->as_rte_mbuf();
+      uint32_t off = sizeof(*eth) + ip_bytes + sizeof(*tcp);
+      uint32_t len = pkt->total_len() - off;
+      rte_raw_cksum_mbuf(m, off, len, &sum);
+      tcp->checksum = CalculateIpv4TcpChecksum(*tcp, ip->src, ip->dst,
+        ip->length.value() - ip_bytes, sum);
     }
 
     continue;

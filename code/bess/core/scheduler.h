@@ -260,6 +260,8 @@ class DefaultScheduler : public Scheduler<CallableTask> {
       ctx.set_current_tsc(this->checkpoint_);  // Tasks see updated tsc.
       ctx.set_current_ns(this->checkpoint_ * this->ns_per_cycle_);
 
+      //LOG(INFO) << "Running task: " << leaf->name_;
+
       // Run.
       auto ret = leaf->task()();
 

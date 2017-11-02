@@ -1,0 +1,40 @@
+import scapy.all as scapy
+import subprocess
+import os
+
+VPORT_NAME = 'loom'
+VPORT_ADDR = '10.10.101.2/24'
+QSIZE = 1024
+DUMP_IVAL = 0.001
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Create a PMD for the physical NIC with 1-txq and 1-rxq
+p = PMDPort(port_id=0, num_inc_q=1, num_out_q=1)
+
+# Create a vhost NIC
+vdev_str = 'virtio_user0,path=/dev/vhost-net,queues=1,' \
+        'queue_size=%d,iface=%s' % (QSIZE, VPORT_NAME)
+v = PMDPort(name=VPORT_NAME, vdev=vdev_str, num_inc_q=1, num_out_q=1)
+subprocess.check_call('sudo ip addr add %s dev %s' % (VPORT_ADDR, VPORT_NAME), \
+    shell=True)
+subprocess.check_call('sudo ip link set dev %s up' % (VPORT_NAME), shell=True)
+subprocess.check_call('sudo ip link set dev %s promisc on' % (VPORT_NAME), \
+    shell=True)
+#subprocess.check_call('sudo ethtool -K %s tso off' % (VPORT_NAME), shell=True)
+
+# Connect the ports
+#TODO: Should we do checksumming? How does this interact with TSO/LRO?  
+# -> PincDump::Dump(interval=DUMP_IVAL)
+PortInc(port=p.name) -> IPChecksum() -> L4Checksum() -> PortOut(port=v.name)
+#PortInc(port=p.name) -> PortOut(port=v.name)
+
+PortInc(port=v.name) -> IPChecksum() -> L4Checksum() -> PortOut(port=p.name)
+#PortInc(port=v.name) -> PortOut(port=p.name)
+
+# DEBUG
+print('Two ports have been spliced: {} <-> {}'.format(p, v))

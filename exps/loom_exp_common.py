@@ -1,13 +1,14 @@
 #!/usr/bin/python
 
 import os
+import shlex
 import subprocess
 import yaml
 
 if 'LOOM_HOME' in os.environ:
     LOOM_HOME = os.environ['LOOM_HOME']
 else:
-    LOOM_HOME = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/'
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/bes/git/loom-code/'
 BESS_HOME = LOOM_HOME + '/code/bess/'
 
 def loom_config_bess_kmod(config):
@@ -29,15 +30,20 @@ def loom_config_dpdk(config):
     subprocess.check_call(devbind_cmd, shell=True, cwd=BESS_HOME)
 
     # Configure huge pages
-    hp_cmd = 'sudo sysctl vm.nr_hugepages=1024'
-    subprocess.check_call(hp_cmd, shell=True)
-
-    # Start BESS with the appropriate configuration
-    bess_conf = os.path.abspath(config.bess_conf)
-    bess_cmd = 'sudo bessctl/bessctl -- daemon start -- run file %s' % bess_conf
-    subprocess.check_call(bess_cmd, shell=True, cwd=BESS_HOME)
-
+    #hp_cmd = 'sudo sysctl vm.nr_hugepages=1024'
+    #subprocess.check_call(hp_cmd, shell=True)
 
 def loom_config_bess(config):
     loom_config_bess_kmod(config)
     loom_config_dpdk(config)
+
+    # Start BESS with the appropriate configuration
+    #  Note: keep bessctl running in the background to keep tcpdump from BESS working
+    bess_conf = os.path.abspath(config.bess_conf)
+    bess_cmd = 'nohup sudo bessctl/bessctl -- daemon start -- run file %s ' % \
+        bess_conf
+    bessctl = subprocess.Popen(shlex.split(bess_cmd), cwd=BESS_HOME,
+        #stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'),
+        stdout=open('/tmp/bessctl_stdout', 'w'), stderr=open('/tmp/bessctl_stderr', 'w'),
+        preexec_fn=os.setpgrp)
+    return bessctl

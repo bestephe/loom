@@ -21,11 +21,25 @@ for i in range(queue_count):
     v_inc.attach_task(parent='bit_limit_rr', module_taskid=i)
 ```
 
+### VPort
+
+- For some reason switching between two VPorts is flakey to where only one VPort works
+    - This only happens when more than 8 queues are used?
+
+### Scheduler problem
+
+- weighted\_fair doesn't work with 'bits' as a resource
+    - This is because the scheduler is not work conserving.  It stays
+      perpetually blocked when a leaf does not consume any resources.
+
+
 ### Packet loss:
 
 - The kmod interfaces with the kernel incorrectly and unnecessarily drops packets
 
 - The TX PMD should exert backpressure
+
+- Vhost Tap driver drops packets on buffer overflow
 
 ### Software switching
 

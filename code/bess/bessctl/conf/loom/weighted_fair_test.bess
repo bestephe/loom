@@ -1,0 +1,104 @@
+import scapy.all as scapy
+import subprocess
+
+pkt_size = int($SN_PKT_SIZE!'1500')
+assert(60 <= pkt_size <= 1522)
+
+def build_pkt(size):
+    eth = scapy.Ether(src='00:1b:21:73:e8:4c', dst='06:16:3e:1b:72:32')
+    ip = scapy.IP(src='192.168.0.1', dst='10.0.0.1')
+    udp = scapy.UDP(sport=10001, dport=10002)
+    payload = ('hello' + '0123456789' * 200)[:size-len(eth/ip/udp)]
+    pkt = eth/ip/udp/payload
+    pkt.show()
+    return str(pkt)
+pkt_templates = [build_pkt(pkt_size)]
+
+node_id = 2
+QUEUE_COUNT = 1
+QSIZE = 2048
+class VhostConf(object):
+    def __init__(self, *initial_data, **kwargs):
+        for dictionary in initial_data:
+            for key in dictionary:
+                setattr(self, key, dictionary[key])
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+def gen_vhost_conf(i):
+    vhost_conf_dict = {
+        'name': 'loom%d' % i,
+        'addr': '10.10.10%d.%d' % (i, node_id),
+        'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
+        'netns': 'loom_test%d' % i,
+        'vlan': '10%d' % i,
+    }
+    vhost_conf = VhostConf(vhost_conf_dict)
+    vhost_conf.addr_prefix = vhost_conf.addr + '/24'
+    vhost_conf.vdev_str = 'virtio_user%d,path=/dev/vhost-net,queues=%d,' \
+        'queue_size=%d,iface=%s,mac=%s' % \
+        (i, QUEUE_COUNT, QSIZE, vhost_conf.name, vhost_conf.mac)
+    return vhost_conf
+
+def config_virtio_user(vhost_conf):
+    v = PMDPort(name=vhost_conf.name, vdev=vhost_conf.vdev_str, num_inc_q=QUEUE_COUNT,
+        num_out_q=QUEUE_COUNT)
+    #TODO: network namespaces if needed
+    ip_cmd_prefix = ''
+    #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
+    #subprocess.check_call('ip link set %s netns %s' % (vhost_conf.name,
+    #    vhost_conf.netns), shell=True)
+    subprocess.check_call('%s ip addr add %s dev %s' % (ip_cmd_prefix,
+        vhost_conf.addr_prefix, vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set %s address %s' % (ip_cmd_prefix,
+        vhost_conf.name, vhost_conf.mac), shell=True)
+    subprocess.check_call('%s ip link set dev %s up' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set dev %s promisc on' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    subprocess.check_call('%s ethtool -K %s tso off' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    return v
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Configure workers and weighted fair traffic classes
+bess.add_worker(0, 0)
+bess.add_tc('tenant_out_wf',
+            wid=0,
+            policy='weighted_fair',
+            resource='bit')
+bess.add_tc('t1_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
+bess.add_tc('rest_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
+
+# Create a vhost interface
+v1_vhost_conf = gen_vhost_conf(1)
+v1 = config_virtio_user(v1_vhost_conf)
+v1_inc::PortInc(port=v1.name)
+
+# Hook up two different sources to a single sink
+#src1 = Source()
+src2 = Source()
+src3 = Source()
+merge = Merge()
+sink = Sink()
+#src1 -> Rewrite(templates=pkt_templates) -> merge
+v1_inc -> merge
+src2 -> Rewrite(templates=pkt_templates) -> merge
+src3 -> Rewrite(templates=pkt_templates) -> merge
+merge -> sink
+
+# Add the sources to the appropriate traffic classes
+#src1.attach_task(parent='t1_out_rr')
+v1_inc.attach_task(parent='t1_out_rr')
+src2.attach_task(parent='rest_out_rr')
+src3.attach_task(parent='rest_out_rr')
