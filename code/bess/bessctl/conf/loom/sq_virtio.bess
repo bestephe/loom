@@ -28,13 +28,10 @@ subprocess.check_call('sudo ip link set dev %s promisc on' % (VPORT_NAME), \
 #subprocess.check_call('sudo ethtool -K %s tso off' % (VPORT_NAME), shell=True)
 
 # Connect the ports
-#TODO: Should we do checksumming? How does this interact with TSO/LRO?  
+# LRO requires checksumming.  TSO does not.
 # -> PincDump::Dump(interval=DUMP_IVAL)
 PortInc(port=p.name) -> IPChecksum() -> L4Checksum() -> PortOut(port=v.name)
-#PortInc(port=p.name) -> PortOut(port=v.name)
-
 PortInc(port=v.name) -> IPChecksum() -> L4Checksum() -> PortOut(port=p.name)
-#PortInc(port=v.name) -> PortOut(port=p.name)
 
 # DEBUG
 print('Two ports have been spliced: {} <-> {}'.format(p, v))

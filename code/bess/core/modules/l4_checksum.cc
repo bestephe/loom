@@ -28,6 +28,7 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+#include <rte_config.h>
 #include <rte_ip.h>
 
 #include "l4_checksum.h"
@@ -69,14 +70,25 @@ void L4Checksum::ProcessBatch(bess::PacketBatch *batch) {
 
       /* This does not work with multi-segment packets! */
       //tcp->checksum = CalculateIpv4TcpChecksum(*ip, *tcp);
+
+      /* XXX: BUG: This does not compute a correct checksum. */
+      //tcp->checksum = 0;
+      //tcp->checksum =
+      //    rte_ipv4_udptcp_cksum(reinterpret_cast<const ipv4_hdr *>(ip), tcp);
+      //LOG(INFO) << "DPDK TCP cksum: " << std::hex << tcp->checksum;
     
       uint16_t sum;
       struct rte_mbuf *m = &pkt->as_rte_mbuf();
-      uint32_t off = sizeof(*eth) + ip_bytes + sizeof(*tcp);
+      /* This is not the full tcp header length. It ignores options. This is
+       * what CalculateIpv4TcpChecksum expects. */
+      //uint16_t tcp_len = (tcp->offset << 2);
+      uint16_t tcp_len = sizeof(*tcp); 
+      uint32_t off = sizeof(*eth) + ip_bytes + tcp_len;
       uint32_t len = pkt->total_len() - off;
       rte_raw_cksum_mbuf(m, off, len, &sum);
       tcp->checksum = CalculateIpv4TcpChecksum(*tcp, ip->src, ip->dst,
         ip->length.value() - ip_bytes, sum);
+      //LOG(INFO) << "BESS TCP cksum: " << std::hex << tcp->checksum.value();
     }
 
     continue;

@@ -55,6 +55,8 @@ static const struct rte_eth_conf default_eth_conf() {
       .mq_mode = ETH_MQ_RX_RSS,       /* doesn't matter for 1-queue */
       .max_rx_pkt_len = 0,            /* valid only if jumbo is on */
       .split_hdr_size = 0,            /* valid only if HS is on */
+      .offloads = 0,                  /* don't use the new interface for RX
+                                       * offloads yet */
       .header_split = 0,              /* Header Split */
       .hw_ip_checksum = 1,            /* IP checksum offload */
       .hw_vlan_filter = 0,            /* VLAN filtering */
@@ -62,8 +64,11 @@ static const struct rte_eth_conf default_eth_conf() {
       .hw_vlan_extend = 0,            /* Extended VLAN */
       .jumbo_frame = 0,               /* Jumbo Frame support */
       .hw_strip_crc = 1,              /* CRC stripped by hardware */
-      .enable_scatter = 1,            /* no scattered RX */
-      .enable_lro = 1,                /* no large receive offload */
+      .enable_scatter = 1,            /* scattered RX */
+      .enable_lro = 1,                /* large receive offload */
+      .hw_timestamp = 1,              /* enable hw timestampping */
+      .security = 0,                  /* don't enable rte_security offloads */
+      .ignore_offload_bitfield = 0,   /* do not use the "offloads" field yet. */
   };
 
   ret.rx_adv_conf.rss_conf = {
@@ -262,6 +267,7 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     driver_ = dev_info.driver_name;
   }
 
+
   eth_rxconf = dev_info.default_rxconf;
 
   /* #36: em driver does not allow rx_drop_en enabled */
@@ -274,6 +280,10 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     LOG(INFO) << "Disabling LRO for virtio_user";
     eth_conf.rxmode.enable_lro = 0;
     eth_conf.rxmode.hw_ip_checksum = 0;
+    needs_tso_csum_ = false;
+  }
+  if (driver_ == "net_ixgbe") {
+    needs_tso_csum_ = true;
   }
 
   eth_txconf = dev_info.default_txconf;
@@ -420,7 +430,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   {
     int i;
     for (i = 0; i < ret; i++) {
-      LOG(INFO) << "(Port " << name() << ") Packet Dump:" << pkts[i]->Dump();
+      //LOG(INFO) << "(Port " << name() << ") Packet Dump:" << pkts[i]->Dump();
       if (pkts[i]->nb_segs() > 1) {
         LOG(INFO) << "(Port " << name() << ") Number of segs: " << pkts[i]->nb_segs();
       }
@@ -480,11 +490,11 @@ int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   int i;
   for (i = 0; i < cnt; i++) {
     /* Only configure segmentation for large segments */
-    if (pkts[i]->total_len() > 1514) {
+    if (needs_tso_csum_ && pkts[i]->total_len() > 1514) {
       //LOG(INFO) << "(Port " << name() << ") total_len: " << pkts[i]->total_len() <<
       //  ", mtu: " << mtu_;
       /* XXX: should be mtu_, not 1500 */
-      config_pkt_offloads(pkts[i], 1400);
+      config_pkt_offloads(pkts[i], mtu_);
     }
   }
 

@@ -36,12 +36,14 @@
 #include <rte_config.h>
 #include <rte_errno.h>
 #include <rte_ethdev.h>
+#include <rte_ether.h>
 #include <rte_pci.h>
+#include <rte_bus_pci.h>
 
 #include "../module.h"
 #include "../port.h"
 
-typedef uint8_t dpdk_port_t;
+typedef uint16_t dpdk_port_t;
 
 #define DPDK_PORT_UNKNOWN RTE_MAX_ETHPORTS
 /*!
@@ -54,6 +56,7 @@ class PMDPort final : public Port {
       : Port(),
         dpdk_port_id_(DPDK_PORT_UNKNOWN),
         mtu_(1500),
+        needs_tso_csum_(false),
         hot_plugged_(false),
         node_placement_(UNCONSTRAINED_SOCKET) {}
 
@@ -148,6 +151,11 @@ class PMDPort final : public Port {
    * The MTU of the DPDK port
    */
   uint16_t mtu_;
+
+  /*!
+   * LOOM: UGLY HACK to get TSO working on Intel NICs.
+   */
+  bool needs_tso_csum_;
 
   /*!
    * True if device did not exist when bessd started and was later patched in.
