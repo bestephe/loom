@@ -45,6 +45,17 @@
 
 typedef uint16_t dpdk_port_t;
 
+/* LOOM: GSO HACK. */
+#define GSO_MAX_PKT_BURST 128
+struct loom_requeue {
+  bess::Packet *rx_rq_pkts[bess::PacketBatch::kMaxBurst];
+  int rx_rq_pos;
+  int rx_rq_pkts_len;
+  bess::Packet *gso_segs[GSO_MAX_PKT_BURST];
+  int gso_segs_pos;
+  int gso_segs_len;
+};
+
 #define DPDK_PORT_UNKNOWN RTE_MAX_ETHPORTS
 /*!
  * This driver binds a port to a device using DPDK.
@@ -57,6 +68,7 @@ class PMDPort final : public Port {
         dpdk_port_id_(DPDK_PORT_UNKNOWN),
         mtu_(1500),
         needs_tso_csum_(false),
+        rq_(),
         hot_plugged_(false),
         node_placement_(UNCONSTRAINED_SOCKET) {}
 
@@ -140,6 +152,14 @@ class PMDPort final : public Port {
     return node_placement_;
   }
 
+  /*!
+   * Get the DPDK port id for this PMD.
+   *  Currently this is only used for DPDK SoftNIC.
+   */
+  dpdk_port_t GetDpdkPortId() {
+    return dpdk_port_id_;
+  }
+
  private:
   /*!
    * The DPDK port ID number (set after binding).
@@ -158,6 +178,13 @@ class PMDPort final : public Port {
   bool needs_tso_csum_;
 
   /*!
+   * LOOM: Hack: For testing out GSO instead of TSO.
+   *  This could be an llring (see vport), but arrays should be fine for now.
+   *  TODO: it would also make sense to have a requeue structure.
+   */
+  struct loom_requeue rq_;
+
+  /*!
    * True if device did not exist when bessd started and was later patched in.
    */
   bool hot_plugged_;
@@ -168,6 +195,9 @@ class PMDPort final : public Port {
   placement_constraint node_placement_;
 
   std::string driver_;  // ixgbe, i40e, ...
+
+  /* TODO: DPDK SoftNIC code to move elsewhere. */
+  //void PktMetadataSet(bess::Packet **pkts, uint32_t n_pkts);
 };
 
 #endif  // BESS_DRIVERS_PMD_H_

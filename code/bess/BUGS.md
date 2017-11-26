@@ -41,6 +41,21 @@ for i in range(queue_count):
 
 - Vhost Tap driver drops packets on buffer overflow
 
+### Lack of TX Backpressure and BQL
+
+- When TX queues reach a limit, they should block.
+    - This could potentially cause problems if blocking goes all the way up to
+      leaf nodes that *could* send to a port but could also switch packets to
+      other ports.
+    - If blocking does not pause all upstream leaf nodes, then what happens if
+      a packet that needs to be switched to a block port.  Catch-22
+        - The real solution to this is packet classification
+            - Using an ideal input-queued switch would solve this problem
+
+- The current scheduler lets 100us--1ms of packets build up.
+
+- Priorities don't mean much when you don't limit HOL blocking
+
 ### Software switching
 
 For something name a "software switch", BESS is surprisingly lacking in the

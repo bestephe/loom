@@ -1,0 +1,144 @@
+import scapy.all as scapy
+import subprocess
+import sys
+import os
+
+#use_experimental_sched = int($BESS_EXP_SCHED!'1')
+use_experimental_sched = int($BESS_EXP_SCHED!'0')
+
+QUEUE_COUNT = 1
+QSIZE = 1024
+DUMP_IVAL = 0.001
+node_id = 2
+
+P_PORT_ID = 0
+P_PORT_NAME = '0000:08:00.0'
+
+class VhostConf(object):
+    def __init__(self, *initial_data, **kwargs):
+        for dictionary in initial_data:
+            for key in dictionary:
+                setattr(self, key, dictionary[key])
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+def gen_vhost_conf(i):
+    vhost_conf_dict = {
+        'name': 'loom%d' % i,
+        'addr': '10.10.10%d.%d' % (i, node_id),
+        'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
+        'netns': 'loom_test%d' % i,
+        'vlan': '10%d' % i,
+    }
+    vhost_conf = VhostConf(vhost_conf_dict)
+    vhost_conf.addr_prefix = vhost_conf.addr + '/24'
+    vhost_conf.vdev_str = 'virtio_user%d,path=/dev/vhost-net,queues=%d,' \
+        'queue_size=%d,iface=%s,mac=%s' % \
+        (i, QUEUE_COUNT, QSIZE, vhost_conf.name, vhost_conf.mac)
+    return vhost_conf
+
+def config_virtio_user(vhost_conf):
+    v = PMDPort(name=vhost_conf.name, vdev=vhost_conf.vdev_str, num_inc_q=QUEUE_COUNT,
+        num_out_q=QUEUE_COUNT)
+    #TODO: network namespaces if needed
+    ip_cmd_prefix = ''
+    #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
+    #subprocess.check_call('ip link set %s netns %s' % (vhost_conf.name,
+    #    vhost_conf.netns), shell=True)
+    subprocess.check_call('%s ip addr add %s dev %s' % (ip_cmd_prefix,
+        vhost_conf.addr_prefix, vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set %s address %s' % (ip_cmd_prefix,
+        vhost_conf.name, vhost_conf.mac), shell=True)
+    subprocess.check_call('%s ip link set dev %s up' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set dev %s promisc on' % (ip_cmd_prefix,
+        vhost_conf.name), shell=True)
+    return v
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+bess.resume_all()
+
+# Use the normal or experimental scheduler
+if use_experimental_sched:
+    bess.add_worker(0, 0, scheduler='experimental')
+else:
+    bess.add_worker(0, 0)
+
+# Configure the scheduler
+bess.add_tc('tenant_inc_rr',
+            wid=0,
+            policy='round_robin')
+bess.add_tc('tenant_out_pri',
+            wid=0,
+            policy='priority')
+bess.add_tc('t1_out_rr',
+            parent='tenant_out_pri',
+            policy='round_robin',
+            priority=1)
+bess.add_tc('t2_out_rr',
+            parent='tenant_out_pri',
+            policy='round_robin',
+            priority=2)
+
+# Create a PMD for the physical NIC with 1-txq and 1-rxq
+#TODO: change size_inc_q and size_out_q
+p = PMDPort(port_id=0, num_inc_q=QUEUE_COUNT, num_out_q=QUEUE_COUNT,
+    size_inc_q=QSIZE, size_out_q=32)
+
+# Create a SoftNIC PMD for the physical NIC
+snp_name = p.name + '_sn'
+snp_vdev_str = 'net_softnic,soft_tm=on,hard_name=%s,soft_tm_deq_bsz=16' % \
+    (P_PORT_NAME)
+#TODO: what values should num_inc_q and num_out_q have?
+snp = PMDPort(name=snp_name, vdev=snp_vdev_str, num_inc_q=QUEUE_COUNT,
+    num_out_q=QUEUE_COUNT, size_inc_q=QSIZE, size_out_q=QSIZE)
+
+# Create the PortOut for the physical NIC
+#p_out::PortOut(port=p.name)
+p_out::LoomPortOut(port=snp.name)
+
+# Get the config for and create each vhost
+v1_vhost_conf = gen_vhost_conf(1)
+v2_vhost_conf = gen_vhost_conf(2)
+v1 = config_virtio_user(v1_vhost_conf)
+v2 = config_virtio_user(v2_vhost_conf)
+
+# Merge all incoming traffic from the vport into a single PMD output port/queue
+merge::Merge() -> IPChecksum() -> L4Checksum() -> p_out
+v1_inc::PortInc(port=v1.name) -> SetMetadata(attrs=[{'name': 'priority', 'size': 1, 'value_int': 0}])-> merge
+v2_inc::PortInc(port=v2.name) -> SetMetadata(attrs=[{'name': 'priority', 'size': 1, 'value_int': 1}])-> merge
+
+# Configure the scheduler for traffic outgoing the physical port
+for i in range(QUEUE_COUNT):
+    v1_inc.attach_task(parent='t1_out_rr', module_taskid=i)
+    v2_inc.attach_task(parent='t2_out_rr', module_taskid=i)
+
+# Connect queues instead of ports
+for i in range(QUEUE_COUNT):
+    # Current solution: use L2 forwarding and replicate broadcast traffic to
+    # both interfaces.  In other words, implement our own L2 switch.
+    l2fwd = L2Forward()
+    q_inc = QueueInc(port=p.name, qid=i)
+    q_inc -> IPChecksum() -> L4Checksum() -> l2fwd
+    l2_entries = [{'addr': 'ff:ff:ff:ff:ff:ff', 'gate': 0},
+        {'addr': v1_vhost_conf.mac, 'gate': 1},
+        {'addr': v2_vhost_conf.mac, 'gate': 2},
+    ]
+    l2fwd.add(entries=l2_entries)
+    l2fwd.set_default_gate(gate=0)
+    v1out_merge = Merge()
+    v1out_merge -> QueueOut(port=v1.name, qid=i)
+    v2out_merge = Merge()
+    v2out_merge -> QueueOut(port=v2.name, qid=i)
+    l2fwd:1 -> v1out_merge
+    l2fwd:2 -> v2out_merge
+    bcast = Replicate(gates=[1, 2])
+    l2fwd:0 -> bcast
+    bcast:1 -> v1out_merge
+    bcast:2 -> v2out_merge
+
+    # Configure the scheduler
+    q_inc.attach_task(parent='tenant_inc_rr')
+

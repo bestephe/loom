@@ -701,6 +701,17 @@ message PortOutArg {
 }
 
 /**
+ * The LoomPortOut module connects to a DPDK SoftNIC ,
+ * virtual ports, libpcap, etc, see the sidebar in the wiki.
+ *
+ * __Input Gates__: 1
+ * __Output Gates__: 0
+ */
+message LoomPortOutArg {
+  string port = 1; /// The portname to connect to.
+}
+
+/**
  * The QueueInc produces input packets from a physical or virtual port.
  * Unlike PortInc, it supports multiqueue ports.
  * For details on how to configure QueueInc with DPDK, virtualports,

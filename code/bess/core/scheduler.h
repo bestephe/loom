@@ -347,13 +347,19 @@ class ExperimentalScheduler : public Scheduler<CallableTask> {
       now = rdtsc();
 
       if (ret.packets == 0 && ret.block) {
-        constexpr uint64_t kMaxWait = 1ull << 32;
+        //constexpr uint64_t kMaxWait = 1ull << 32;
+        /* 5us @ 2GHz. As a TODO: make more precise cross-platform. */
+        constexpr uint64_t kMaxWait = 10000ull; 
         uint64_t wait = std::min(kMaxWait, leaf->wait_cycles() << 1);
         leaf->set_wait_cycles(wait);
 
         leaf->blocked_ = true;
         leaf->wakeup_time_ = now + leaf->wait_cycles();
         this->wakeup_queue_.Add(leaf);
+
+        /* LOOM: NOTE: I'm concerned that the below resetting of resource usage
+         * could further exacerbate existing problems caused by the scheduler
+         * not being work conserving. */
 
         usage[RESOURCE_COUNT] = 0;
         usage[RESOURCE_CYCLE] = 0;
