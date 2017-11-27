@@ -31,6 +31,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -288,6 +289,11 @@ run_default(struct rte_eth_dev *dev)
 	uint32_t pos;
 	uint16_t i;
 
+	/* LOOM: DEBUG: Ensure there are no requeued packets. */
+	assert(p->requeue.rq_pkts == NULL);
+	assert(p->requeue.rq_pos == 0);
+	assert(p->requeue.rq_pkts_len == 0);
+
 	/* Soft device TXQ read, Hard device TXQ write */
 	for (i = 0; i < nb_tx_queues; i++) {
 		struct rte_ring *txq = dev->data->tx_queues[txq_pos];
@@ -318,11 +324,17 @@ run_default(struct rte_eth_dev *dev)
 	}
 
 	if (flush_count >= FLUSH_COUNT_THRESHOLD) {
-		for (pos = 0; pos < pkts_len; )
+		for (pos = 0; pos < pkts_len; ) {
+			/* LOOM: DEBUG */
+			if (pos > 0) {
+				RTE_LOG(INFO, PMD,
+					"Retrying TX: pos = %d\n", pos);
+			}
 			pos += rte_eth_tx_burst(p->hard.port_id,
 				p->params.hard.tx_queue_id,
 				&pkts[pos],
 				(uint16_t)(pkts_len - pos));
+		}
 
 		pkts_len = 0;
 		flush_count = 0;
@@ -356,6 +368,11 @@ run_tm(struct rte_eth_dev *dev)
 	/* Not part of the persistent context */
 	uint32_t pkts_deq_len, pos;
 	uint16_t i;
+
+	/* LOOM: DEBUG: Ensure there are no requeued packets. */
+	assert(p->requeue.rq_pkts == NULL);
+	assert(p->requeue.rq_pos == 0);
+	assert(p->requeue.rq_pkts_len == 0);
 
 	/* Soft device TXQ read, TM enqueue */
 	for (i = 0; i < nb_tx_queues; i++) {
@@ -397,11 +414,75 @@ run_tm(struct rte_eth_dev *dev)
 	/* TM dequeue, Hard device TXQ write */
 	pkts_deq_len = rte_sched_port_dequeue(sched, pkts_deq, deq_bsz);
 
-	for (pos = 0; pos < pkts_deq_len; )
+/* Old retry code. */
+#if 0
+	for (pos = 0; pos < pkts_deq_len; ) {
+		/* LOOM: DEBUG */
+		if (pos > 0) {
+			RTE_LOG(INFO, PMD,
+				"Retrying TX: pos = %d\n", pos);
+		}
+
 		pos += rte_eth_tx_burst(p->hard.port_id,
 			p->params.hard.tx_queue_id,
 			&pkts_deq[pos],
 			(uint16_t)(pkts_deq_len - pos));
+	}
+/* New retry code. */
+#else
+	pos = 0;
+	pos += rte_eth_tx_burst(p->hard.port_id,
+		p->params.hard.tx_queue_id,
+		&pkts_deq[pos],
+		(uint16_t)(pkts_deq_len - pos));
+	
+	if (pos < pkts_deq_len) {
+		p->requeue.rq_pkts = pkts_deq;
+		p->requeue.rq_pkts_len = pkts_deq_len;
+		p->requeue.rq_pos = pos;
+	}
+#endif
+
+	return 0;
+}
+
+static __rte_always_inline int
+run_requeue(struct rte_eth_dev *dev)
+{
+	struct pmd_internals *p = dev->data->dev_private;
+
+	/* Persistent context: Read Only (update not required) */
+	struct rte_mbuf **rq_pkts = p->requeue.rq_pkts;
+
+	/* Persistent context: Read - Write (update required) */
+	uint32_t rq_pos = p->requeue.rq_pos;
+	uint32_t rq_pkts_len = p->requeue.rq_pkts_len;
+
+	/* Quit early if there are no requeued packets. */
+	if (rq_pkts == NULL) {
+		return 0;
+	}
+
+	/* LOOM: DEBUG. */
+	assert(rq_pkts != NULL);
+	assert(rq_pkts_len > 0);
+
+	/* Try to send *some* packets. */
+	rq_pos += rte_eth_tx_burst(p->hard.port_id,
+		p->params.hard.tx_queue_id,
+		&rq_pkts[rq_pos],
+		(uint16_t)(rq_pkts_len - rq_pos));
+
+	if (rq_pos >= rq_pkts_len) {
+		assert(rq_pos == rq_pkts_len);
+		rq_pkts = NULL;
+		rq_pos = 0;
+		rq_pkts_len = 0;
+	}
+
+	p->requeue.rq_pkts = rq_pkts;
+	p->requeue.rq_pos = rq_pos;
+	p->requeue.rq_pkts_len = rq_pkts_len;
 
 	return 0;
 }
@@ -410,12 +491,23 @@ int
 rte_pmd_softnic_run(uint16_t port_id)
 {
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
+	struct pmd_internals *p = dev->data->dev_private;
+	int ret;
 
 #ifdef RTE_LIBRTE_ETHDEV_DEBUG
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, 0);
 #endif
 
-	return (tm_used(dev)) ? run_tm(dev) : run_default(dev);
+	if (p->requeue.rq_pkts_len > 0) {
+		ret = run_requeue(dev);
+		assert(ret == 0); /* TODO: error checking? */
+	}
+
+	if (p->requeue.rq_pkts_len == 0) {
+		return (tm_used(dev)) ? run_tm(dev) : run_default(dev);
+	}
+
+	return 0;
 }
 
 static struct ether_addr eth_addr = { .addr_bytes = {0} };
@@ -467,6 +559,25 @@ default_free(struct pmd_internals *p)
 	rte_free(p->soft.def.pkts);
 }
 
+static int
+requeue_init(struct pmd_internals *p,
+	struct pmd_params *params,
+	int numa_node)
+{
+	p->requeue.rq_pkts = NULL;
+	p->requeue.rq_pos = 0;
+	p->requeue.rq_pkts_len = 0;
+
+	return 0;
+}
+
+static void
+requeue_free(struct pmd_internals *p)
+{
+	/* NOOP. */
+	p = p;
+}
+
 static void *
 pmd_init(struct pmd_params *params, int numa_node)
 {
@@ -491,10 +602,20 @@ pmd_init(struct pmd_params *params, int numa_node)
 		return NULL;
 	}
 
+	/* Requeue */
+	status = requeue_init(p, params, numa_node);
+	if (status) {
+		default_free(p);
+		free(p->params.hard.name);
+		rte_free(p);
+		return NULL;
+	}
+
 	/* Traffic Management (TM)*/
 	if (params->soft.flags & PMD_FEATURE_TM) {
 		status = tm_init(p, params, numa_node);
 		if (status) {
+			requeue_free(p);
 			default_free(p);
 			free(p->params.hard.name);
 			rte_free(p);
@@ -511,6 +632,7 @@ pmd_free(struct pmd_internals *p)
 	if (p->params.soft.flags & PMD_FEATURE_TM)
 		tm_free(p);
 
+	requeue_free(p);
 	default_free(p);
 
 	free(p->params.hard.name);

@@ -95,7 +95,8 @@ struct pmd_params {
 #endif
 
 #ifndef FLUSH_COUNT_THRESHOLD
-#define FLUSH_COUNT_THRESHOLD			(1 << 17)
+//#define FLUSH_COUNT_THRESHOLD			(1 << 17)
+#define FLUSH_COUNT_THRESHOLD			(1)
 #endif
 
 struct default_internals {
@@ -236,6 +237,13 @@ struct pmd_internals {
 		struct default_internals def; /**< Default */
 		struct tm_internals tm; /**< Traffic Management */
 	} soft;
+
+        /** Requeue buffer */
+	struct {
+		struct rte_mbuf **rq_pkts;
+		uint32_t rq_pos;
+		uint32_t rq_pkts_len;
+	} requeue;
 
 	/** Hard device */
 	struct {
