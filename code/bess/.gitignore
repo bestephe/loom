@@ -41,7 +41,8 @@ core/test_all
 *_bench
 
 # 3rd-party libraries
-deps/dpdk*
+# LOOM: Add DPDK not as a subtree for now.
+#deps/dpdk*
 !deps/dpdk*_common_linuxapp
 
 # OSX
