@@ -15,9 +15,9 @@ from loom_exp_common import *
 if 'LOOM_HOME' in os.environ:
     LOOM_HOME = os.environ['LOOM_HOME']
 else:
-    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/git/loom-code/'
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/bes/git/loom-code/'
 
-DRIVER_DIR = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/code/ixgbe-5.0.4/'
+DRIVER_DIR = LOOM_HOME + '/code/ixgbe-5.0.4/'
 TCP_BYTE_LIMIT_DIR = '/proc/sys/net/ipv4/tcp_limit_output_bytes'
 TCP_QUEUE_SYSTEM_DEFAULT = 262144
 
@@ -153,6 +153,14 @@ def spark_config_nic_driver(config):
     # Assign the IP
     ip_cmd = 'sudo ifconfig %s %s netmask 255.255.255.0' % (config.iface, ip)
     subprocess.check_call(ip_cmd, shell=True)
+
+    # Assign additional IPs
+    for ip_part in ['101', '102']:
+        ip_split = ip.split('.')
+        ip_split[2] = ip_part
+        ip_extra = '.'.join(ip_split)
+        ip_cmd = 'sudo ip addr add %s/24 dev %s' % (ip_extra, config.iface)
+        subprocess.check_call(ip_cmd, shell=True)
 
 def get_txqs(config):
     txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % config.iface)

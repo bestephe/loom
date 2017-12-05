@@ -1059,6 +1059,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   int ret;
 
   /* LOOM: XXX: Test out using GSO. */
+#if 0
   if (driver_ == "net_virtio_user") {
     /* Receive a burst of packets if needed. */
     if (rq_.rx_rq_pkts_len == 0) {
@@ -1116,6 +1117,9 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   } else {
     ret = rte_eth_rx_burst(dpdk_port_id_, qid, (struct rte_mbuf **)pkts, cnt);
   }
+#else
+  ret = rte_eth_rx_burst(dpdk_port_id_, qid, (struct rte_mbuf **)pkts, cnt);
+#endif
 
 #if 0
   /* LOOM: DEBUG */

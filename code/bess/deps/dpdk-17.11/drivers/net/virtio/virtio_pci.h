@@ -162,7 +162,7 @@ struct virtnet_ctl;
 /*
  * Maximum number of virtqueues per device.
  */
-#define VIRTIO_MAX_VIRTQUEUE_PAIRS 8
+#define VIRTIO_MAX_VIRTQUEUE_PAIRS 128U
 #define VIRTIO_MAX_VIRTQUEUES (VIRTIO_MAX_VIRTQUEUE_PAIRS * 2 + 1)
 
 /* Common configuration */

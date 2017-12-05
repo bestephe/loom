@@ -2,7 +2,7 @@
 
 RUNS=1
 
-for i in {1..1}
+for i in {1..20}
 do
     sudo -u ubuntu -H ./spark_run_scripts/spark_all_bess_netconf.sh
     # Note: tcpdump has already been started as part of configuring BESS (fairnes.bess)

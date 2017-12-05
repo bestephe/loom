@@ -17,6 +17,8 @@ echo "DPDK"
 cd $BESS_DIR
 pwd
 sudo ifconfig $IFACE 0.0.0.0
+sudo ifconfig $IFACE 0.0.0.0
+sleep 0.2
 sudo modprobe uio_pci_generic
 sudo ./bin/dpdk-devbind.py -b uio_pci_generic $IFACE_ADDR
 

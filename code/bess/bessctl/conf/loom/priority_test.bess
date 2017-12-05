@@ -6,13 +6,14 @@ import os
 #use_experimental_sched = int($BESS_EXP_SCHED!'1')
 use_experimental_sched = int($BESS_EXP_SCHED!'0')
 
-QUEUE_COUNT = 1
+QUEUE_COUNT = 8
 QSIZE = 1024
 DUMP_IVAL = 0.001
 node_id = 2
 
 P_PORT_ID = 0
-P_PORT_NAME = '0000:08:00.0'
+#P_PORT_NAME = '0000:08:00.0'
+P_PORT_NAME = '81:00.1'
 
 class VhostConf(object):
     def __init__(self, *initial_data, **kwargs):
@@ -85,19 +86,19 @@ bess.add_tc('t2_out_rr',
 # Create a PMD for the physical NIC with 1-txq and 1-rxq
 #TODO: change size_inc_q and size_out_q
 p = PMDPort(port_id=0, num_inc_q=QUEUE_COUNT, num_out_q=QUEUE_COUNT,
-    size_inc_q=QSIZE, size_out_q=32)
+    size_inc_q=QSIZE, size_out_q=512)
 
 # Create a SoftNIC PMD for the physical NIC
 snp_name = p.name + '_sn'
 snp_vdev_str = 'net_softnic,soft_tm=on,hard_name=%s,soft_tm_deq_bsz=16' % \
     (P_PORT_NAME)
 #TODO: what values should num_inc_q and num_out_q have?
-snp = PMDPort(name=snp_name, vdev=snp_vdev_str, num_inc_q=QUEUE_COUNT,
-    num_out_q=QUEUE_COUNT, size_inc_q=QSIZE, size_out_q=QSIZE)
+#snp = PMDPort(name=snp_name, vdev=snp_vdev_str, num_inc_q=QUEUE_COUNT,
+#    num_out_q=QUEUE_COUNT, size_inc_q=QSIZE, size_out_q=QSIZE)
 
 # Create the PortOut for the physical NIC
-#p_out::PortOut(port=p.name)
-p_out::LoomPortOut(port=snp.name)
+p_out::PortOut(port=p.name)
+#p_out::LoomPortOut(port=snp.name)
 
 # Get the config for and create each vhost
 v1_vhost_conf = gen_vhost_conf(1)

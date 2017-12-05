@@ -11,8 +11,8 @@ import sys
 import time
 
 #QUEUE_COUNT = multiprocessing.cpu_count()
-QUEUE_COUNT = 32
-#QUEUE_COUNT = 4
+#QUEUE_COUNT = 32
+QUEUE_COUNT = 8
 #QSIZE = 2048
 QSIZE = 1024
 DUMP_IVAL = 0.00001
@@ -134,13 +134,16 @@ bess.add_worker(1, 28)
 bess.add_tc('tenant_inc_rr',
             wid=0,
             policy='round_robin')
-bess.add_tc('tenant_out_rl',
-            wid=1,
-            policy='rate_limit',
-            resource='bit',
-            limit={'bit': int(10e9)})
+#bess.add_tc('tenant_out_rl',
+#            wid=1,
+#            policy='rate_limit',
+#            resource='bit',
+#            limit={'bit': int(10e9)})
+#bess.add_tc('tenant_out_rr',
+#            parent='tenant_out_rl',
+#            policy='round_robin')
 bess.add_tc('tenant_out_rr',
-            parent='tenant_out_rl',
+            wid=1,
             policy='round_robin')
 bess.add_tc('tenant_out_wf',
             parent='tenant_out_rr',
@@ -238,7 +241,7 @@ for i in range(QUEUE_COUNT):
     # both interfaces.  In other words, implement our own L2 switch.
     l2fwd = L2Forward()
     q_inc = QueueInc(port=p.name, qid=i)
-    q_inc -> l2fwd
+    q_inc -> IPChecksum() -> L4Checksum() -> l2fwd
     l2_entries = [{'addr': 'ff:ff:ff:ff:ff:ff', 'gate': 0},
         {'addr': v1_vhost_conf.mac, 'gate': 1},
         {'addr': v2_vhost_conf.mac, 'gate': 2},
