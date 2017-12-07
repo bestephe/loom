@@ -1024,8 +1024,8 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   //}
 
   /* If the driver is requesting a TX interrupt, generate one. */
-  if (__sync_bool_compare_and_swap(&tx_queue->tx_regs->irq_disabled, 0, 1)) {
-  //if (1) {
+  //if (__sync_bool_compare_and_swap(&tx_queue->tx_regs->irq_disabled, 0, 1)) {
+  if (1) {
 
     /* TODO: trigger interrupts for specific queues.  The major question is on
      * which cores should napi_schedule be called from. */

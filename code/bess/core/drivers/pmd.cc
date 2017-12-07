@@ -817,6 +817,12 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     eth_conf.rxmode.hw_ip_checksum = 0;
     needs_tso_csum_ = false;
   }
+  /* DEBUG: TODO: REMOVE */
+  else {
+    LOG(INFO) << "DEBUG Always Disabling LRO";
+    eth_conf.rxmode.enable_lro = 0;
+    eth_conf.rxmode.hw_ip_checksum = 0;
+  }
   if (driver_ == "net_ixgbe") {
     needs_tso_csum_ = true;
   }
@@ -1058,6 +1064,8 @@ int segment_gso_pkt(bess::Packet *pkt, bess::Packet **segs, int segs_len) {
 int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   int ret;
 
+/* XXX: DEBUG: Removing software GSO for now. */
+#if 0
   /* LOOM: XXX: Test out using GSO. */
 #if 0
   if (driver_ == "net_virtio_user") {
