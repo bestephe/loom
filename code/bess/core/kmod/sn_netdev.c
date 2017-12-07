@@ -670,6 +670,21 @@ static int sn_poll_tx(struct napi_struct *napi, int budget)
 		napi_complete(napi);
 		sn_disable_interrupt_tx(tx_queue);
 		sn_maybe_stop_tx(tx_queue);
+	/* Why did we get kicked if there are no available snbs?  Either way,
+	 * we should finish NAPI, leave the interrupt enabled, and then wait
+	 * until BESS kicks us again. */
+	} else {
+		napi_complete(napi);
+		/* sn_maybe_stop_tx will enable the interrupt, so this is redundant. */
+		sn_enable_interrupt_tx(tx_queue);
+		sn_maybe_stop_tx(tx_queue);
+	}
+
+	/* LOOM: DEBUG */
+	if (sn_avail_snbs(tx_queue) == 0 && unlikely(net_ratelimit())) {
+		log_info("%s: sn_poll_tx on tx_queue %d. No avail snbs (%d)!\n",
+			 tx_queue->dev->netdev->name, tx_queue->queue_id,
+			 sn_avail_snbs(tx_queue));
 	}
 
 	return ret;
