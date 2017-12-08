@@ -10,8 +10,8 @@ import subprocess
 import sys
 import time
 
-#QUEUE_COUNT = multiprocessing.cpu_count()
-QUEUE_COUNT = 8
+QUEUE_COUNT = multiprocessing.cpu_count()
+#QUEUE_COUNT = 8
 #QUEUE_COUNT = 1
 #QSIZE = 2048
 QSIZE = 1024
@@ -137,16 +137,13 @@ bess.add_worker(1, 4)
 bess.add_tc('tenant_inc_rr',
             wid=0,
             policy='round_robin')
-#bess.add_tc('tenant_out_rl',
-#            wid=1,
-#            policy='rate_limit',
-#            resource='bit',
-#            limit={'bit': int(10e9)})
-#bess.add_tc('tenant_out_rr',
-#            parent='tenant_out_rl',
-#            policy='round_robin')
-bess.add_tc('tenant_out_rr',
+bess.add_tc('tenant_out_rl',
             wid=1,
+            policy='rate_limit',
+            resource='bit',
+            limit={'bit': int(10e9)})
+bess.add_tc('tenant_out_rr',
+            parent='tenant_out_rl',
             policy='round_robin')
 #bess.add_tc('tenant_out_rr',
 #            wid=1,

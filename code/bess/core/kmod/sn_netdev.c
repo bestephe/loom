@@ -911,7 +911,12 @@ static void sn_set_offloads(struct net_device *netdev)
         //netdev->hw_features = 0;
 
 	netdev->hw_features = NETIF_F_SG |
+			      NETIF_F_IP_CSUM |
+			      //NETIF_F_HW_CSUM |
+			      NETIF_F_RXCSUM |
 			      NETIF_F_FRAGLIST |
+			      NETIF_F_LRO |
+			      //NETIF_F_GRO |
 			      NETIF_F_GSO;
 #elif 0
 	netdev->hw_features = NETIF_F_SG |

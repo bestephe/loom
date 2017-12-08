@@ -1137,7 +1137,7 @@ int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
       rx_desc = next_desc;
       /* LOOM: This line of code concerns me.  Shouldn't it be seg->next()
        * instead of snb->next()? */
-      seg = reinterpret_cast<bess::Packet *>(snb->next());
+      seg = reinterpret_cast<bess::Packet *>(seg->next());
     }
   }
 

@@ -1067,7 +1067,6 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 /* XXX: DEBUG: Removing software GSO for now. */
 #if 0
   /* LOOM: XXX: Test out using GSO. */
-#if 0
   if (driver_ == "net_virtio_user") {
     /* Receive a burst of packets if needed. */
     if (rq_.rx_rq_pkts_len == 0) {

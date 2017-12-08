@@ -88,6 +88,7 @@ class VPort final : public Port {
   CommandResponse SetIPAddr(const bess::pb::VPortArg &arg);
 
   /* LOOM: Apologies for putting things in the wrong places. */
+  /* Note: The aren't used any more */
   int RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt);
   bess::Packet *SegPkt(queue_t qid);
 
