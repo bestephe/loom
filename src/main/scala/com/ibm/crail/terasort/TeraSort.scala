@@ -114,7 +114,8 @@ object TeraSort {
         dataset.saveAsNewAPIHadoopFile[TeraOutputFormat](outputFile)
       } else {
         var exe = ""
-        val partit = new TeraSortPartitionerInt(dataset.partitions.length)
+        val numberReduceTasks = if(options.isReduceTasksSet) options.getNumberOfReduceTasks else dataset.partitions.length
+        val partit = new TeraSortPartitionerInt(numberReduceTasks)
         /* check if we need sorting order or not */
         val sorted = new ShuffledRDD[Array[Byte], Array[Byte], Array[Byte]](dataset, partit)
         val setSorting = options.isTestLoadSort || options.isTestLoadSortStore

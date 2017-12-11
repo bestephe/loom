@@ -39,6 +39,8 @@ public class ParseTeraOptions {
     private int f22BufferSize;
     private long paritionSize;
     private boolean isPartitionSet;
+    private int reduceTasks;
+    private boolean isReduceTasksSet;
     private boolean syncOutput;
     private Hashtable<String,String> sparkParams;
     private long warmUpKeys;
@@ -70,6 +72,7 @@ public class ParseTeraOptions {
 
         paritionSize = -1;
         isPartitionSet = false;
+        isReduceTasksSet = false;
         syncOutput = false;
         verbose = false;
 
@@ -92,6 +95,8 @@ public class ParseTeraOptions {
                 "FS while writing (default: 0)");
         options.addOption("p", "partitionSize", true, "<long> Partition size, takes k,m,g,t suffixes\n" +
                 "(default: input partition size, HDFS 2.6 has 128MB)");
+        options.addOption("R", "numberReduceTasks", true, "<int> number of reduces tasks\n" +
+                "(default: derived from input partition size (-p)");
         options.addOption("s", "useSerializer", true, "<string> You can use following serializers: \n" +
                 "none: uses the Spark default serializer \n" +
                 "kryo: optimized Kryo for TeraSort \n" +
@@ -116,6 +121,7 @@ public class ParseTeraOptions {
         str+= "BufferSize        : " + "kryo: " + kryoBufferSize + " f22: " + f22BufferSize + "\n";
         str+= "Serializer        : " + serializer[serializerIndex] + "\n";
         str+= "PartitionSize     : " + ((isPartitionSet)?(paritionSize):("sizeNotSet, using the default from HDFS")) + "\n";
+        str+= "NumberReduceTasks : " + ((isReduceTasksSet)?(reduceTasks):("numberNotSet, using default from ParitionSize")) + "\n";
         str+= "Sync output       : " + syncOutput + "\n";
         str+= "No of warmup keys : " + warmUpKeys + "\n";
         str+= "Verbose           : " + verbose + "\n";
@@ -173,6 +179,14 @@ public class ParseTeraOptions {
 
     public boolean isPartitionSet(){
         return isPartitionSet;
+    }
+
+    public int getNumberOfReduceTasks(){
+        return reduceTasks;
+    }
+
+    public boolean isReduceTasksSet(){
+        return isReduceTasksSet;
     }
 
     public boolean isTestLoadOnly(){
@@ -301,6 +315,10 @@ public class ParseTeraOptions {
             if (cmd.hasOption("p")) {
                 paritionSize = sizeStrToBytesLong(cmd.getOptionValue("p"));
                 isPartitionSet = true;
+            }
+            if (cmd.hasOption("R")) {
+                reduceTasks = Integer.parseInt(cmd.getOptionValue("R"));
+                isReduceTasksSet = true;
             }
             if (cmd.hasOption("S")) {
                 if(Integer.parseInt(cmd.getOptionValue("S")) == 0)
