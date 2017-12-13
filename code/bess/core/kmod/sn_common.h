@@ -54,8 +54,8 @@ typedef uint64_t phys_addr_t;
 
 #define SN_MAX_CPU 64
 
-#define SN_MAX_TXQ 32
-#define SN_MAX_RXQ 32
+#define SN_MAX_TXQ 64
+#define SN_MAX_RXQ 64
 
 #define SN_IOC_CREATE_HOSTNIC 0x8501
 #define SN_IOC_RELEASE_HOSTNIC 0x8502

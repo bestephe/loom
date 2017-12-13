@@ -68,6 +68,7 @@
         - exuberant-ctags
         - docker
         - docker.io
+        - wireshark-common
 
         # Although it would be desirable to use as new of a kernel version as
         # possible, OFED + Linux 4.11 cause a kernel crash related to RDMA

@@ -73,7 +73,7 @@ def main():
     # TODO: I could just take in a list of files instead
     parser.add_argument('tsfiles', help='The files to parse.',
         nargs='+')
-    parser.add_argument('--jfr', help='The job fairness ration (e.g., 1, '
+    parser.add_argument('--jfr', help='The job fairness ratio (e.g., 1, '
         '3, ...)', required=True, type=int)
     parser.add_argument('--outf', help='The output file.')
     args = parser.parse_args()

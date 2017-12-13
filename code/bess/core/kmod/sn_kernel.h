@@ -79,6 +79,7 @@ struct sn_queue {
 				u64 polls;
 				u64 interrupts;
 				u64 busy;
+				u64 stop_queue;
 				u64 restart_queue;
 			} stats;
 

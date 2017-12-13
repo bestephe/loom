@@ -34,10 +34,12 @@ SPARK_CONFIG_DEFAULTS = {
     'job_fair_ratio': 1,
 
     'iface': 'eno2',
+    'ifaces': ['loom1', 'loom2'],
     'iface_addr': '0000:81:00.1',
-    'bess_conf': 'fairness.bess',
+    'bessctl': 'fairness.bess',
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
+    'qdisc': True,
 
     #'drr_quantum': 65536,
     'drr_quantum': 1500,
@@ -85,8 +87,8 @@ def set_tcp_limit(b):
         tcpf.write('%d\n' % b)
     assert (get_tcp_limit() == b)
 
-def get_queue_bql_limit_max(config, txqi):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
+def get_queue_bql_limit_max(config, iface, txqi):
+    sysfs_dir = '/sys/class/net/%s' % iface
     limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
     with open(limitfname) as limitf:
         limit = limitf.read()
@@ -94,15 +96,15 @@ def get_queue_bql_limit_max(config, txqi):
     limit = int(limit)
     return limit
 
-def set_queue_bql_limit_max(config, txqi, limit):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
+def set_queue_bql_limit_max(config, iface, txqi, limit):
+    sysfs_dir = '/sys/class/net/%s' % iface
     limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
     with open(limitfname, 'w') as limitf:
         limitf.write('%d\n' % limit)
-    assert (get_queue_bql_limit_max(config, txqi) == limit)
+    assert (get_queue_bql_limit_max(config, iface, txqi) == limit)
 
-def get_queue_bql_limit_min(config, txqi):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
+def get_queue_bql_limit_min(config, iface, txqi):
+    sysfs_dir = '/sys/class/net/%s' % iface
     limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
     with open(limitfname) as limitf:
         limit = limitf.read()
@@ -110,17 +112,17 @@ def get_queue_bql_limit_min(config, txqi):
     limit = int(limit)
     return limit
 
-def set_queue_bql_limit_min(config, txqi, limit):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
+def set_queue_bql_limit_min(config, iface, txqi, limit):
+    sysfs_dir = '/sys/class/net/%s' % iface
     limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
     with open(limitfname, 'w') as limitf:
         limitf.write('%d\n' % limit)
-    assert (get_queue_bql_limit_min(config, txqi) == limit)
+    assert (get_queue_bql_limit_min(config, iface, txqi) == limit)
 
-def set_all_bql_limit_max(config):
-    for txqi in range(len(get_txqs(config))):
-        set_queue_bql_limit_max(config, txqi, config.bql_limit_max)
-        set_queue_bql_limit_min(config, txqi, 0)
+def set_all_bql_limit_max(config, iface):
+    for txqi in range(len(get_txqs(iface))):
+        set_queue_bql_limit_max(config, iface, txqi, config.bql_limit_max)
+        set_queue_bql_limit_min(config, iface, txqi, 0)
 
 
 #
@@ -138,13 +140,13 @@ def spark_config_nic_driver(config):
 
     # Craft the args for the driver
     ixgbe = DRIVER_DIR + '/src/ixgbeloom.ko'
-    rss_str = '' if config.qmodel == QMODEL_MQ else 'RSS=1,1'
+    rss_str = '' if config.qmodel == QMODEL_MQ else 'RSS=1,1 MQ=0,0'
     drv_cmd = 'sudo insmod %s %s' % (ixgbe, rss_str)
 
     # Add in the new driver
     subprocess.check_call(drv_cmd, shell=True)
 
-    # Unbind the module from ixgbe always even if not present and bind to ixgbetitan
+    # Unbind the module from ixgbe always even if not present and bind to ixgbeloom
     cmd = "sudo /bin/su -c \"echo -n '0000:81:00.1' > /sys/bus/pci/drivers/ixgbe/unbind\""
     os.system(cmd)
     cmd = "sudo /bin/su -c \"echo -n '0000:81:00.1' > /sys/bus/pci/drivers/ixgbeloom/bind\""
@@ -162,16 +164,16 @@ def spark_config_nic_driver(config):
         ip_cmd = 'sudo ip addr add %s/24 dev %s' % (ip_extra, config.iface)
         subprocess.check_call(ip_cmd, shell=True)
 
-def get_txqs(config):
-    txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % config.iface)
+def get_txqs(iface):
+    txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % iface)
     return txqs
 
-def get_rxqs(config):
-    rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % config.iface)
+def get_rxqs(iface):
+    rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % iface)
     return rxqs 
 
-def spark_configure_rfs(config):
-    rxqs = get_rxqs(config)
+def spark_configure_rfs(config, iface):
+    rxqs = get_rxqs(iface)
     entries = 65536
     entries_per_rxq = entries / len(rxqs)
     cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
@@ -190,40 +192,45 @@ def spark_config_xps(config):
             shell=True)
 
         # Also configure RFS
-        spark_configure_rfs(config)
+        spark_configure_rfs(config, config.iface)
     else:
         #Note: maybe not necessary.  But it shouldn't hurt to restart irqbalance
         subprocess.call('sudo service irqbalance restart', shell=True)
 
-def spark_config_qdisc(config):
+def spark_config_qdisc(config, iface):
     #XXX: DEBUG:
     #print 'WARNING: Skipping Qdisc config!'
     #return
 
-    qcnt = len(get_txqs(config))
+    qcnt = len(get_txqs(iface))
     for i in xrange(1, qcnt + 1):
         # Configure a DRR Qdisc per txq
-        tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
-            (config.iface, i, i)
+        try:
+            tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
+                (iface, i, i)
+            subprocess.check_call(tc_cmd, shell=True)
+        except subprocess.CalledProcessError:
+            tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: drr' % \
+                (iface, i)
+            subprocess.check_call(tc_cmd, shell=True)
 
         # Create the classes for Job1 (%d00:1) and Job2 (%d00:2)
-        subprocess.check_call(tc_cmd, shell=True)
         tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:1 drr quantum %d' % \
-            (config.iface, i, i, config.drr_quantum)
+            (iface, i, i, config.drr_quantum)
         subprocess.check_call(tc_cmd, shell=True)
         job2_quantum = int(1.0 * config.drr_quantum / config.job_fair_ratio)
         tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:2 drr quantum %d' % \
-            (config.iface, i, i, job2_quantum)
+            (iface, i, i, job2_quantum)
         subprocess.check_call(tc_cmd, shell=True)
 
         # Note: I don't know if I need to add a child to each DRR class, but it
         # seems like a reasonable idea.  I could just add pfifo_fast, but
         # adding SFQ also makes some sense.
         tc_cmd = 'sudo tc qdisc add dev %s parent %d00:1 sfq limit 32768 perturb 60' % \
-            (config.iface, i)
+            (iface, i)
         subprocess.check_call(tc_cmd, shell=True)
         tc_cmd = 'sudo tc qdisc add dev %s parent %d00:2 sfq limit 32768 perturb 60' % \
-            (config.iface, i)
+            (iface, i)
         subprocess.check_call(tc_cmd, shell=True)
 
         # Create traffic filters to send traffic from the second spark
@@ -232,18 +239,18 @@ def spark_config_qdisc(config):
             for pdir in ['sport', 'dport']:
                 tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
                     'prio 1 u32 match ip %s %d 0xffff flowid %d00:2'
-                tc_cmd = tc_str % (config.iface, i, pdir, p, i)
+                tc_cmd = tc_str % (iface, i, pdir, p, i)
                 subprocess.check_call(tc_cmd, shell=True)
         for pdir in ['sport', 'dport']:
             tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
                 'prio 1 u32 match ip %s 32768 0xff00 flowid %d00:2' 
-            tc_cmd = tc_str % (config.iface, i, pdir, i)
+            tc_cmd = tc_str % (iface, i, pdir, i)
             subprocess.check_call(tc_cmd, shell=True)
 
         # Create a traffic filter to send the rest of the traffic to class :1
         tc_str = 'sudo tc filter add dev %s protocol all parent %d00: ' + \
             'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:1'
-        tc_cmd = tc_str % (config.iface, i, i)
+        tc_cmd = tc_str % (iface, i, i)
         subprocess.check_call(tc_cmd, shell=True)
 
 def spark_config_server(config):
@@ -254,15 +261,15 @@ def spark_config_server(config):
     spark_config_xps(config)
 
     # Configure Qdisc/TC
-    spark_config_qdisc(config)
+    spark_config_qdisc(config, config.iface)
 
     # Configure BQL
-    set_all_bql_limit_max(config)
+    set_all_bql_limit_max(config, config.iface)
 
 def spark_config_bess(config):
     subprocess.call('sudo killall tcpdump', shell=True)
 
-    bessctl = loom_config_bess(config)
+    loom_config_bess(config)
 
     # Save a tcpdump file
     #XXX: Do to fd and processes stopping issues, running tcpdump from within
@@ -271,6 +278,23 @@ def spark_config_bess(config):
     #tcpdump_cmd = 'sudo tcpdump -r /tmp/pout.pcap -w /dev/shm/spark_tcp_flows.pcap -s 64'
     #tcpdump = subprocess.Popen(shlex.split(tcpdump_cmd),
     #    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    # Do not configure XPS (for now)
+    subprocess.call('sudo service irqbalance restart', shell=True)
+
+    # Configure all of the interfaces
+    #XXX: This code doesn't work for virtio/Vhost/TAP interfaces
+    for iface in config.ifaces:
+        # Configure Qdisc/TC
+        #TODO: optionally skip Qdisc config
+        if config.qdisc:
+            spark_config_qdisc(config, iface)
+
+        # Configure RFS
+        spark_configure_rfs(config, iface)
+    
+        # Configure BQL
+        set_all_bql_limit_max(config, iface)
 
 def main():
     # Parse arguments

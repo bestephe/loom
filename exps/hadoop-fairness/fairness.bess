@@ -10,9 +10,8 @@ import subprocess
 import sys
 import time
 
-QUEUE_COUNT = multiprocessing.cpu_count()
-#QUEUE_COUNT = 8
-#QUEUE_COUNT = 1
+TX_QUEUE_COUNT = multiprocessing.cpu_count()
+RX_QUEUE_COUNT = 16
 #QSIZE = 2048
 QSIZE = 1024
 DUMP_IVAL = 0.00001
@@ -78,19 +77,19 @@ def gen_vhost_conf(i):
     vhost_conf.addr_prefix = vhost_conf.addr + '/24'
     vhost_conf.vdev_str = 'virtio_user%d,path=/dev/vhost-net,queues=%d,' \
         'queue_size=%d,iface=%s,mac=%s' % \
-        (i, QUEUE_COUNT, QSIZE, vhost_conf.name, vhost_conf.mac)
+        (i, TX_QUEUE_COUNT, QSIZE, vhost_conf.name, vhost_conf.mac)
     return vhost_conf
 
 def config_virtio_user(vhost_conf):
-    v = PMDPort(name=vhost_conf.name, vdev=vhost_conf.vdev_str, num_inc_q=QUEUE_COUNT,
-        num_out_q=QUEUE_COUNT)
+    v = PMDPort(name=vhost_conf.name, vdev=vhost_conf.vdev_str, num_inc_q=TX_QUEUE_COUNT,
+        num_out_q=RX_QUEUE_COUNT)
     config_rfs(vhost_conf.name)
     #TODO: network namespaces if needed
     ip_cmd_prefix = ''
     #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
     #subprocess.check_call('ip link set %s netns %s' % (vhost_conf.name,
     #    vhost_conf.netns), shell=True)
-    subprocess.check_call('%s ip addr add %s dev %s' % (ip_cmd_prefix,
+    subprocess.check_call('%s ip addr add %s/24 dev %s' % (ip_cmd_prefix,
         vhost_conf.addr_prefix, vhost_conf.name), shell=True)
     subprocess.check_call('%s ip link set %s address %s' % (ip_cmd_prefix,
         vhost_conf.name, vhost_conf.mac), shell=True)
@@ -105,7 +104,7 @@ def config_virtio_user(vhost_conf):
 
 def config_vport(vhost_conf):
     v = VPort(ifname=vhost_conf.name, ip_addrs=[vhost_conf.addr_prefix],
-        num_inc_q=QUEUE_COUNT, num_out_q=QUEUE_COUNT)
+        num_inc_q=TX_QUEUE_COUNT, num_out_q=RX_QUEUE_COUNT)
     config_rfs(vhost_conf.name)
     ip_cmd_prefix = ''
     #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
@@ -131,7 +130,9 @@ bess.pause_all()
 #bess.add_worker(0, 0, scheduler='experimental')
 #bess.add_worker(1, 28, scheduler='experimental')
 bess.add_worker(0, 0)
-bess.add_worker(1, 4)
+bess.add_worker(1, 28)
+
+bess.pause_all()
 
 # Configure the scheduler
 bess.add_tc('tenant_inc_rr',
@@ -145,9 +146,6 @@ bess.add_tc('tenant_out_rl',
 bess.add_tc('tenant_out_rr',
             parent='tenant_out_rl',
             policy='round_robin')
-#bess.add_tc('tenant_out_rr',
-#            wid=1,
-#            policy='round_robin')
 bess.add_tc('tenant_out_wf',
             parent='tenant_out_rr',
             policy='weighted_fair',
@@ -172,8 +170,8 @@ v2_vhost_conf = gen_vhost_conf(2)
 
 # Delete then add the network namespaces
 subprocess.call('sudo ip -all netns del', shell=True)
-for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
-    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
+#for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
+#    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
 
 # Create a vhost as an interface on the host for each tenant
 if VPORT:
@@ -183,9 +181,10 @@ else:
     v1 = config_virtio_user(v1_vhost_conf)
     v2 = config_virtio_user(v2_vhost_conf)
 
-# Create a PMD port (physical) with 1-txq and q-rxq
-p = PMDPort(port_id=0, num_inc_q=QUEUE_COUNT, num_out_q=1,
-    size_inc_q=QSIZE, size_out_q=QSIZE)
+# Create a PMD port (physical) with q-txq and 1-rxq
+## Only use 1-rxq because the 82599 with DPDK only does 16 RSS?
+p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=1,
+    size_inc_q=2*QSIZE, size_out_q=QSIZE)
 
 # Merge all incoming traffic from the vport into a single PMD output port/queue
 merge::Merge() -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
@@ -197,13 +196,19 @@ v2_inc::PortInc(port=v2.name) -> merge
 #v2_inc::PortInc(port=v2.name) -> VLANPush(tci=102) -> merge
 
 # Configure the scheduler for traffic outgoing the physical port
-for i in range(QUEUE_COUNT):
+for i in range(TX_QUEUE_COUNT):
     v1_inc.attach_task(parent='t1_out_rr', module_taskid=i)
     v2_inc.attach_task(parent='t2_out_rr', module_taskid=i)
 
 
+# P Inc -> HashLB
+#pq_inc = QueueInc(port=p.name, qid=0)
+#hashlb = HashLB(gates=range(QUEUE_COUNT), mode='l4')
+#pq_inc -> IPChecksum() -> L4Checksum() -> hashlb
+#pq_inc.attach_task(parent='tenant_inc_rr')
+
 # Connect queues instead of ports
-for i in range(QUEUE_COUNT):
+for i in range(RX_QUEUE_COUNT):
     #XXX: IP forwarding is currently broken in BESS
     #ipfwd = IPLookup()
     #QueueInc(port=p.name, qid=i) -> ipfwd
@@ -245,6 +250,7 @@ for i in range(QUEUE_COUNT):
     l2fwd = L2Forward()
     q_inc = QueueInc(port=p.name, qid=i)
     q_inc -> IPChecksum() -> L4Checksum() -> l2fwd
+    #hashlb:i -> l2fwd
     l2_entries = [{'addr': 'ff:ff:ff:ff:ff:ff', 'gate': 0},
         {'addr': v1_vhost_conf.mac, 'gate': 1},
         {'addr': v2_vhost_conf.mac, 'gate': 2},

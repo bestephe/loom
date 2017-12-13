@@ -285,10 +285,20 @@ static void sn_enable_interrupt_tx(struct sn_queue *tx_queue)
 	/* LOOM: DEBUG */
 	//log_info("%s: sn_enable_interrupt_tx tx_queue=%d\n",
 	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
+	//trace_printk("%s: sn_enable_interrupt_tx on tx_queue %d\n",
+	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
 
+	/* LOOM: DEBUG: TODO: Less extreme synchronization */
+	//smp_mb();
 	__sync_synchronize();
 	tx_queue->tx.tx_regs->irq_disabled = 0;
 	__sync_synchronize();
+	//smp_mb();
+
+	/* LOOM: DEBUG */
+	//trace_printk("%s: sn_enable_interrupt_tx on tx_queue %d. "
+	//	 "irq_disabled: %d\n", tx_queue->dev->netdev->name,
+	//	 tx_queue->queue_id, tx_queue->tx.tx_regs->irq_disabled);
 
 	/* NOTE: make sure check again if the queue is really empty,
 	 * to avoid potential race conditions when you call this function:
@@ -319,9 +329,8 @@ static void sn_disable_interrupt(struct sn_queue *rx_queue)
 
 static void sn_disable_interrupt_tx(struct sn_queue *tx_queue)
 {
-	/* the interrupt is usually disabled by BESS,
-	 * but in some cases the driver itself may also want to disable IRQ
-	 * (e.g., for low latency socket polling) */
+	//trace_printk("%s: sn_disable_interrupt_tx on tx_queue %d\n",
+	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
 
 	tx_queue->tx.tx_regs->irq_disabled = 1;
 }
@@ -598,9 +607,13 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 	/* LOOM: DEBUG */
 	//log_info("%s: sn_maybe_stop_tx stopping tx_queue=%d\n",
 	//	 queue->dev->netdev->name, queue->queue_id);
+	//trace_printk("%s: sn_maybe_stop_tx stopping tx_queue=%d\n",
+	//	 queue->dev->netdev->name, queue->queue_id);
 
 	netif_stop_subqueue(netdev, queue->queue_id);
 	sn_enable_interrupt_tx(queue);
+
+	queue->tx.stats.stop_queue++;
 
 	/* TODO: Which sync function? */
 	smp_mb();
@@ -608,6 +621,10 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 
 	if (likely(sn_avail_snbs(queue) <= limit))
 		return -EBUSY;
+
+	/* LOOM: DEBUG */
+	//trace_printk("%s: sn_maybe_stop_tx reprieve for tx_queue=%d\n",
+	//	 queue->dev->netdev->name, queue->queue_id);
 
 	/* A reprieve! (race condition. ixgbe inspired) */
 	/* Why is this netif_start_subqueue in ixgbe instead of
@@ -635,6 +652,8 @@ static int sn_poll_tx(struct napi_struct *napi, int budget)
 
 	/* LOOM: DEBUG */
 	//log_info("%s: sn_poll_tx on tx_queue %d\n",
+	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
+	//trace_printk("%s: sn_poll_tx on tx_queue %d\n",
 	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
 
 	/* This is supposed to be the number of buffers that have been
@@ -1203,14 +1222,24 @@ void sn_trigger_softirq_tx(void *info)
 	if (unlikely(dev->cpu_to_txq[cpu] == -1)) {
 		struct sn_queue *tx_queue = dev->tx_queues[0];
 
+                /* LOOM: DEBUG: */
+                //trace_printk("%s: sn_trigger_softirq_tx cpu has no txq?!? "
+		//	"for cpu %d queue %d\n", tx_queue->dev->netdev->name,
+		//	cpu, tx_queue->queue_id);
+
 		tx_queue->tx.stats.interrupts++;
 		napi_schedule(&tx_queue->tx.napi);
 
 	} else {
-                /* LOOM: In the future, multiple TX queues may be mapped to one
-                 * core. Awake them all. */
+                /* LOOM: TODO: In the future, multiple TX queues may be mapped
+                 * to one core. Awake them all. */
 		int txq = dev->cpu_to_txq[cpu];
 		struct sn_queue *tx_queue = dev->tx_queues[txq];
+
+                /* LOOM: DEBUG: */
+                //trace_printk("%s: sn_trigger_softirq_tx "
+		//	"for cpu %d queue %d\n", tx_queue->dev->netdev->name,
+		//	cpu, tx_queue->queue_id);
 
 		tx_queue->tx.stats.interrupts++;
 		napi_schedule(&tx_queue->tx.napi);

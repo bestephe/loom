@@ -64,14 +64,16 @@
  *  TODO: Larger by some small amount?
  * More long term, memory should be copied on demand to generate packets from
  * queues. */
-//#define SNBUF_DATA 2048
+#define SNBUF_DATA 2048
 
 /* Note: pool_priv.mbuf_data_room_size is a unit16_t, and so this cannot be
  * larger than 64KB if it is currently allocated with rte_* */
 //#define SNBUF_DATA 65536
 //#define SNBUF_DATA 32768
-#define SNBUF_DATA 8192
 //#define SNBUF_DATA 16384
+
+/* LOOM: NOTE: When LRO is used, an SNBUF_DATA size of 8192 worked well. */
+//#define SNBUF_DATA 8192
 
 #define SNBUF_MBUF_OFF 0
 #define SNBUF_IMMUTABLE_OFF SNBUF_MBUF

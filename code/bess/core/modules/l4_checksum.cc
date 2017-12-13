@@ -39,6 +39,8 @@
 #include "../utils/tcp.h"
 #include "../utils/udp.h"
 
+#define USE_RTE_CSUM (1)
+
 void L4Checksum::ProcessBatch(bess::PacketBatch *batch) {
   using bess::utils::Ethernet;
   using bess::utils::Ipv4;
@@ -68,9 +70,7 @@ void L4Checksum::ProcessBatch(bess::PacketBatch *batch) {
       Tcp *tcp =
           reinterpret_cast<Tcp *>(reinterpret_cast<uint8_t *>(ip) + ip_bytes);
 
-      /* This does not work with multi-segment packets! */
-      //tcp->checksum = CalculateIpv4TcpChecksum(*ip, *tcp);
-
+#if USE_RTE_CSUM
       /* XXX: BUG: This does not compute a correct checksum. */
       //tcp->checksum = 0;
       //tcp->checksum =
@@ -89,6 +89,10 @@ void L4Checksum::ProcessBatch(bess::PacketBatch *batch) {
       tcp->checksum = CalculateIpv4TcpChecksum(*tcp, ip->src, ip->dst,
         ip->length.value() - ip_bytes, sum);
       //LOG(INFO) << "BESS TCP cksum: " << std::hex << tcp->checksum.value();
+#else
+      /* This does not work with multi-segment packets! */
+      tcp->checksum = CalculateIpv4TcpChecksum(*ip, *tcp);
+#endif
     }
 
     continue;

@@ -428,7 +428,8 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
     CHECK(txq_priv->segpktpool);
     ret = llring_init(txq_priv->segpktpool, SLOTS_PER_LLRING, SINGLE_P, SINGLE_C);
     DCHECK_EQ(ret, 0);
-    refill_segpktpool(txq_priv->segpktpool);
+    /* TODO: The seg pkt pool is not used right now. */
+    //refill_segpktpool(txq_priv->segpktpool);
   }
 
   return bar;
@@ -1023,6 +1024,9 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   //if (refill_cnt > 0) {
   //}
 
+  /* LOOM: DEBUG */
+  //LOG(INFO) << bess::utils::Format("VPort RecvPackets for txq: %d", qid);
+
   /* If the driver is requesting a TX interrupt, generate one. */
   if (__sync_bool_compare_and_swap(&tx_queue->tx_regs->irq_disabled, 0, 1)) {
   //if (1) {
@@ -1034,8 +1038,8 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
      * on the appropriate core. */
     /* TODO: In addition to a cpu_to_txq queue mapping, we should also maintain
      * a txq_to_cpu mapping to make this part better. */
-    int cpu = 0;
-    int _cpui;
+    uint64_t cpu = 0;
+    uint64_t _cpui;
     int ret;
     for (_cpui = 0; _cpui < SN_MAX_CPU; _cpui++) {
       if (map_.cpu_to_txq[_cpui] == qid) {
@@ -1043,7 +1047,12 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
         break;
       }
     }
-    ret = ioctl(fd_, SN_IOC_KICK_TX, 1 << cpu);
+    uint64_t cpumask = (1ull << cpu);
+
+    //LOG(INFO) << bess::utils::Format("ioctl(KICK_TX) for cpu: %d, txq: %d, cpumask: %x",
+    //    cpu, qid, cpumask);
+
+    ret = ioctl(fd_, SN_IOC_KICK_TX, cpumask);
     if (ret) {
       PLOG(ERROR) << "ioctl(KICK_TX)";
     }
@@ -1070,10 +1079,10 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
     /* TODO: Set tx_meta as pkt metadata. */
 
     /* Metadata: Process checksumming */
-    if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
-      //do_ip_csum(pkt, tx_meta->csum_start, tx_meta->csum_dest);
-      do_ip_tcp_csum(pkt);
-    }
+    //if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
+    //  //do_ip_csum(pkt, tx_meta->csum_start, tx_meta->csum_dest);
+    //  do_ip_tcp_csum(pkt);
+    //}
 
     /* LOOM: TODO: What additional information should be added to metadata? */
   }
@@ -1148,7 +1157,12 @@ int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 
   /* TODO: generic notification architecture */
   if (__sync_bool_compare_and_swap(&rx_queue->rx_regs->irq_disabled, 0, 1)) {
-    ret = ioctl(fd_, SN_IOC_KICK_RX, 1 << map_.rxq_to_cpu[qid]);
+    uint64_t cpumask = (1ull << map_.rxq_to_cpu[qid]);
+
+    //LOG(INFO) << bess::utils::Format("ioctl(KICK_RX) for cpu: %d, rxq: %d, cpumask: %x",
+    //    map_.rxq_to_cpu[qid], qid, cpumask);
+
+    ret = ioctl(fd_, SN_IOC_KICK_RX, cpumask);
     //LOG(INFO) << "ioctl(KICK_RX)";
     if (ret) {
       PLOG(ERROR) << "ioctl(KICK_RX)";

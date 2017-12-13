@@ -39,11 +39,16 @@ def loom_config_bess(config):
 
     # Start BESS with the appropriate configuration
     #  Note: keep bessctl running in the background to keep tcpdump from BESS working
-    bess_conf = os.path.abspath(config.bess_conf)
+    bessctl = os.path.abspath(config.bessctl)
     bess_cmd = 'nohup sudo bessctl/bessctl -- daemon start -- run file %s ' % \
-        bess_conf
-    bessctl = subprocess.Popen(shlex.split(bess_cmd), cwd=BESS_HOME,
+        bessctl
+    bessctl_proc = subprocess.Popen(shlex.split(bess_cmd), cwd=BESS_HOME,
         #stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'),
         stdout=open('/tmp/bessctl_stdout', 'w'), stderr=open('/tmp/bessctl_stderr', 'w'),
         preexec_fn=os.setpgrp)
-    return bessctl
+
+    #TODO: depending on how PCAP file is being created, this may stall. I need
+    # to revist this later.
+    bessctl_proc.wait()
+
+    return bessctl_proc
