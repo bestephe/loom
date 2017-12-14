@@ -22,20 +22,24 @@ matplotlib.rcParams['pdf.use14corefonts'] = True
 matplotlib.rcParams.update({'font.size': 11})
 matplotlib.rcParams.update({'lines.linewidth': 3})
 
-master_linestyles = ['-', '--', '-.', ':']
+master_linestyles = ['-', '--', ':', '-.']
 master_markers = ['o', 'D', 'v', '^', '<', '>', 's', 'p', '*', '+', 'x']
 
-def plot_fairness_cdf(sq_res, mq_res):
+def plot_fairness_cdf(sq_res, mq_res, loom_res=None):
     sq_line = sq_res['lines'][0]
     sq_line['lname'] = 'SQ'
     mq_line = mq_res['lines'][0]
     mq_line['lname'] = 'MQ'
     lines = [sq_line, mq_line]
+    if loom_res:
+        loom_line = loom_res['lines'][0]
+        loom_line['lname'] = 'Loom'
+        lines.append(loom_line)
 
     # Create the figure
-    figure = plt.figure(figsize=(6, 2.5))
-    bottom = 0.30
-    legend_bbox = (0.5, -0.55)
+    figure = plt.figure(figsize=(4, 2.5))
+    #bottom = 0.30
+    #legend_bbox = (0.5, -0.55)
 
     # Build the colormap
     color_map = get_cmap('Set1')
@@ -57,14 +61,21 @@ def plot_fairness_cdf(sq_res, mq_res):
     yax.grid(True)
     ax.set_xlabel('FM (Gbps)')
     #ax.set_xlim(xmin=0)
+    ax.set_ylim(ymax=1.0)
     ax.set_ylabel('CDF')
 
     # Add the legend
-    plt.legend(ncol=3, loc='lower center', bbox_to_anchor=legend_bbox,
+    #plt.legend(ncol=3, loc='lower center', bbox_to_anchor=legend_bbox,
+    #    columnspacing=1.0, labelspacing=0.0, handletextpad=0.0,
+    #    handlelength=1.5, frameon=False)
+    #plt.tight_layout()
+    #figure.subplots_adjust(bottom=bottom)
+
+    # Alternate legend
+    plt.legend(ncol=1, loc='lower right',
         columnspacing=1.0, labelspacing=0.0, handletextpad=0.0,
-        handlelength=1.5, frameon=False)
+        handlelength=1.5, frameon=True)
     plt.tight_layout()
-    figure.subplots_adjust(bottom=bottom)
 
     # Add the title
     #title(results['title'])
@@ -76,6 +87,7 @@ def main():
         required=True)
     parser.add_argument('--mq', help='A YAML file containing the MQ results.',
         required=True)
+    parser.add_argument('--loom', help='A YAML file containing the MQ results.')
     parser.add_argument('--figname', help='The output name of the figure.')
     args = parser.parse_args()
 
@@ -84,9 +96,14 @@ def main():
         sq_res = yaml.load(f)
     with open(args.mq) as f:
         mq_res = yaml.load(f)
+    if args.loom:
+        with open(args.loom) as f:
+            loom_res = yaml.load(f)
+    else:
+        loom_res = None
 
     # Plot the results
-    plot_fairness_cdf(sq_res, mq_res)
+    plot_fairness_cdf(sq_res, mq_res, loom_res)
 
     # Save the figure if requested
     if args.figname:
