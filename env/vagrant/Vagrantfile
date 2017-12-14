@@ -1,0 +1,63 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+required_plugins = %w(vagrant-cachier vagrant-reload)
+
+plugins_to_install = required_plugins.select { |plugin| not Vagrant.has_plugin? plugin }
+if not plugins_to_install.empty?
+  puts "Installing plugins: #{plugins_to_install.join(' ')}"
+  if system "vagrant plugin install #{plugins_to_install.join(' ')}"
+    exec "vagrant #{ARGV.join(' ')}"
+  else
+    abort "Installation of one or more plugins has failed. Aborting."
+  end
+end
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/ubuntu-16.04"
+  config.vm.hostname = "loomvm"
+  config.vm.synced_folder "../..", "/opt/loom"
+
+  if Vagrant.has_plugin?("vagrant-cachier")
+    config.cache.scope = "machine"
+  end
+
+  config.vm.provision "ansible_local" do |ansible|
+    ansible.playbook = "vagrant.yml"
+  end
+
+  config.vm.provision :reload
+
+  config.vm.network "private_network", ip: "10.248.0.100", auto_config: false, adapter: 2
+  config.vm.network "private_network", ip: "10.248.1.100", auto_config: false, adapter: 3
+
+  config.vm.provider "virtualbox" do |vb|
+    # Uncomment below if necessary.
+    # vb.gui = true
+    vb.name = "Loom dev VM"
+
+    # Customize below. At least two or more vCPUs are recommended.
+    vb.cpus = 2
+    vb.memory = 5120
+
+    vb.customize ["modifyvm", :id, "--nic1", "nat"]
+    vb.customize ["modifyvm", :id, "--nictype1", "virtio"]
+    vb.customize ["modifyvm", :id, "--nictype2", "virtio"]
+    vb.customize ["modifyvm", :id, "--nictype3", "virtio"]
+    vb.customize ["modifyvm", :id, "--macaddress2", "22DEADBEEF22"]
+    vb.customize ["modifyvm", :id, "--macaddress3", "66DEADBEEF66"]
+    vb.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
+    vb.customize ["modifyvm", :id, "--nicpromisc3", "allow-all"]
+
+    # without this, spinlock and rdtsc can be significantly slower...
+    vb.customize ["modifyvm", :id, "--paravirtprovider", "kvm"]
+
+    # Uncomment this if you want AVX2...
+    #vb.customize ["setextradata", :id, "VBoxInternal/CPUM/IsaExts/AVX2", "1"]
+
+    # Useful for debugging kernel crashes
+    vb.customize ["modifyvm", :id, "--ioapic", "on"]
+    vb.customize ["modifyvm", :id, "--uart1", "0x3f8", "4"]
+    vb.customize ["modifyvm", :id, "--uartmode1", "server", "/tmp/vboxconsole"]
+  end
+end

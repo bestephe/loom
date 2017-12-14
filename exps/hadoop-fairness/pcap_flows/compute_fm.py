@@ -44,7 +44,7 @@ def compute_fm(args):
             # Compute the FM only when the total throughput is high enough and
             # both jobs are active
             for i in range(len(xs)):
-                if tot_tput[i] > 8.5 and j1_tput[i] > 1 and j2_tput[i] > 1:
+                if tot_tput[i] > 8.0 and j1_tput[i] > 1 and j2_tput[i] > 1:
                     fs_j1 = 1.0 * j1_tput[i] / args.jfr
                     fs_j2 = j2_tput[i]
                     fm = abs(fs_j1 - fs_j2)
@@ -74,7 +74,7 @@ def main():
     parser.add_argument('tsfiles', help='The files to parse.',
         nargs='+')
     parser.add_argument('--jfr', help='The job fairness ratio (e.g., 1, '
-        '3, ...)', required=True, type=int)
+        '3, ...)', default=1, type=int)
     parser.add_argument('--outf', help='The output file.')
     args = parser.parse_args()
 
