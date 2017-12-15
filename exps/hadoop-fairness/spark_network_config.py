@@ -15,7 +15,7 @@ from loom_exp_common import *
 if 'LOOM_HOME' in os.environ:
     LOOM_HOME = os.environ['LOOM_HOME']
 else:
-    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/bes/git/loom-code/'
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/'
 
 DRIVER_DIR = LOOM_HOME + '/code/ixgbe-5.0.4/'
 TCP_BYTE_LIMIT_DIR = '/proc/sys/net/ipv4/tcp_limit_output_bytes'

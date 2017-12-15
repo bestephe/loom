@@ -12,7 +12,8 @@ import time
 
 TX_QUEUE_COUNT = multiprocessing.cpu_count()
 RX_QUEUE_COUNT = 16
-QSIZE = 1024
+TX_QSIZE = 1024
+RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 
 # DEBUGGING
@@ -134,7 +135,7 @@ v1 = config_vport(v1_vhost_conf)
 ## Only use 1-rxq because the 82599 with DPDK only does 16 RSS?
 ## XXX: Instead just use 16 RSS RX queues?
 p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=TX_QUEUE_COUNT,
-    size_inc_q=2*QSIZE, size_out_q=QSIZE)
+    size_inc_q=RX_QSIZE, size_out_q=TX_QSIZE)
 
 #TODO: If we want to use 16-wide RSS, then we could merge then together before
 # going out a HashLB

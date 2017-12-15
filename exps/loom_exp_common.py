@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import glob
 import os
 import shlex
 import subprocess
@@ -8,9 +9,109 @@ import yaml
 if 'LOOM_HOME' in os.environ:
     LOOM_HOME = os.environ['LOOM_HOME']
 else:
-    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/bes/git/loom-code/'
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/'
 BESS_HOME = LOOM_HOME + '/code/bess/'
 
+#
+# TCP SmallQs and BQL Functions
+#
+def get_tcp_limit():
+    with open(TCP_BYTE_LIMIT_DIR) as tcpf:
+        limit = tcpf.read()
+    limit.strip()
+    limit = int(limit)
+    return limit
+
+def set_tcp_limit(b):
+    with open(TCP_BYTE_LIMIT_DIR, 'w') as tcpf:
+        tcpf.write('%d\n' % b)
+    assert (get_tcp_limit() == b)
+
+def get_queue_bql_limit_max(config, iface, txqi):
+    sysfs_dir = '/sys/class/net/%s' % iface
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
+    with open(limitfname) as limitf:
+        limit = limitf.read()
+    limit.strip()
+    limit = int(limit)
+    return limit
+
+def set_queue_bql_limit_max(config, iface, txqi, limit):
+    sysfs_dir = '/sys/class/net/%s' % iface
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
+    with open(limitfname, 'w') as limitf:
+        limitf.write('%d\n' % limit)
+    assert (get_queue_bql_limit_max(config, iface, txqi) == limit)
+
+def get_queue_bql_limit_min(config, iface, txqi):
+    sysfs_dir = '/sys/class/net/%s' % iface
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
+    with open(limitfname) as limitf:
+        limit = limitf.read()
+    limit.strip()
+    limit = int(limit)
+    return limit
+
+def set_queue_bql_limit_min(config, iface, txqi, limit):
+    sysfs_dir = '/sys/class/net/%s' % iface
+    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
+    with open(limitfname, 'w') as limitf:
+        limitf.write('%d\n' % limit)
+    assert (get_queue_bql_limit_min(config, iface, txqi) == limit)
+
+def set_all_bql_limit_max(config, iface):
+    for txqi in range(len(get_txqs(iface))):
+        set_queue_bql_limit_max(config, iface, txqi, config.bql_limit_max)
+        set_queue_bql_limit_min(config, iface, txqi, 0)
+
+#
+# CGroup Helpers
+# 
+def config_cgroup(config, iface):
+    cgroup_dir = '/sys/fs/cgroup/net_prio/high_prio'
+
+    mkdir_cmd = 'sudo mkdir %s' % cgroup_dir
+    subprocess.call(mkdir_cmd, shell=True)
+
+    priomap_cmd = 'sudo echo \"%s 3\" > %s/net_prio.ifpriomap' % \
+        (iface, cgroup_dir)
+    subprocess.check_call(priomap_cmd, shell=True)
+
+    check_cgroup(config, iface)
+
+def check_cgroup(config, iface):
+    print 'Default:'
+    default_cmd = 'cat /sys/fs/cgroup/net_prio/net_prio.ifpriomap'
+    print subprocess.check_output(default_cmd, shell=True)
+    print 'High prio:'
+    high_prio_cmd = 'cat /sys/fs/cgroup/net_prio/high_prio/net_prio.ifpriomap'
+    print subprocess.check_output(high_prio_cmd, shell=True)
+
+#
+# More helpers
+# 
+def get_txqs(iface):
+    txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % iface)
+    return txqs
+
+def get_rxqs(iface):
+    rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % iface)
+    return rxqs 
+
+def configure_rfs(config, iface):
+    rxqs = get_rxqs(iface)
+    entries = 65536
+    entries_per_rxq = entries / len(rxqs)
+    cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
+        entries
+    subprocess.check_call(cmd, shell=True)
+    for rxq in rxqs:
+        cmd = 'echo %d | sudo tee /%s/rps_flow_cnt > /dev/null' % (entries_per_rxq, rxq)
+        subprocess.check_call(cmd, shell=True)
+
+#
+# BESS Configuration commands
+#
 def loom_config_bess_kmod(config):
     kmod_dir = BESS_HOME + '/core/kmod'
     kmod_cmd = 'sudo ./install'

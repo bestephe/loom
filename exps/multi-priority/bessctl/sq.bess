@@ -10,9 +10,10 @@ import subprocess
 import sys
 import time
 
-TX_QUEUE_COUNT = multiprocessing.cpu_count()
-RX_QUEUE_COUNT = 16
-QSIZE = 1024
+TX_QUEUE_COUNT = 1
+RX_QUEUE_COUNT = 1
+TX_QSIZE = 1024
+RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 
 # DEBUGGING
@@ -130,15 +131,12 @@ v1_vhost_conf = gen_vhost_conf()
 # Create a vhost as an interface on the host for each tenant
 v1 = config_vport(v1_vhost_conf)
 
-# Create a PMD port (physical) with q-txq and 1-rxq
-## Only use 1-rxq because the 82599 with DPDK only does 16 RSS?
-## XXX: Instead just use 16 RSS RX queues?
+# Create a PMD port (physical) with 1-txq and q-rxq
 p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=TX_QUEUE_COUNT,
-    size_inc_q=2*QSIZE, size_out_q=QSIZE)
+    size_inc_q=RX_QSIZE, size_out_q=TX_QSIZE)
 
-#TODO: If we want to use 16-wide RSS, then we could merge then together before
-# going out a HashLB
-
+# Connect queues instead of ports
+assert(TX_QUEUE_COUNT == 1)
 for i in range(TX_QUEUE_COUNT):
     # V Inc -> P Out (TX)
     v1_qinc = QueueInc(port=v1.name, qid=i)
@@ -146,22 +144,13 @@ for i in range(TX_QUEUE_COUNT):
     v1_qinc -> IPChecksum() -> L4Checksum() -> q_out
     v1_qinc.attach_task(parent='tenant_out_rr')
     
-# P Inc -> HashLB
-#XXX: It seems like providing RSS through HashLB leads to bad network
-# throughput.
-#pq_inc = QueueInc(port=p.name, qid=0)
-#hashlb = HashLB(gates=range(RX_QUEUE_COUNT), mode='l4')
-#pq_inc -> IPChecksum() -> L4Checksum() -> hashlb
-#pq_inc.attach_task(parent='tenant_inc_rr')
-
+assert(RX_QUEUE_COUNT == 1)
 for i in range(RX_QUEUE_COUNT):
     # P Inc -> V Out (RX)
     q_inc = QueueInc(port=p.name, qid=i)
-    q_inc.attach_task(parent='tenant_inc_rr')
-    v1_qout = QueueOut(port=v1.name, qid=i)
-
+    v1_qout =  QueueOut(port=v1.name, qid=i)
     q_inc -> IPChecksum() -> L4Checksum() -> v1_qout
-    #hashlb:i -> v1_qout
+    q_inc.attach_task(parent='tenant_inc_rr')
 
 bess.resume_all()
 

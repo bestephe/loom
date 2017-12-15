@@ -23,8 +23,8 @@ def aton(ip):
 # CloudLab experiment platform specific code:
 def node2id(node):
     node2id_dict = {
-        'node-1.loomtest.opennf-pg0.clemson.cloudlab.us': 1,
-        'node-0.loomtest.opennf-pg0.clemson.cloudlab.us': 2,
+        'node-1.loomtest2.opennf-pg0.clemson.cloudlab.us': 1,
+        'node-0.loomtest2.opennf-pg0.clemson.cloudlab.us': 2,
     }
     return node2id_dict[node]
 node_name = platform.node()

@@ -2,8 +2,8 @@ import multiprocessing
 import scapy.all as scapy
 import os
 
-#queue_count = multiprocessing.cpu_count()
-queue_count = 32
+queue_count = multiprocessing.cpu_count()
+#queue_count = 32
 
 VPORT_NAME = 'loom'
 VPORT_ADDR = '10.10.1.1/24'

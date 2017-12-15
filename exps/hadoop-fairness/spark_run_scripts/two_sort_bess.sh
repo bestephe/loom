@@ -2,7 +2,7 @@
 
 RUNS=1
 
-for i in {2..5}
+for i in {3..5}
 do
     sudo -u ubuntu -H ./spark_run_scripts/spark_all_bess_netconf.sh bess.conf
     sudo tcpdump -i loom1 -w /dev/shm/spark_tcp_flows_loom1.pcap -s 64 src 10.10.1.2 or src 10.10.101.2 or src 10.10.102.2 &

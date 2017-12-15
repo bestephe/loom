@@ -10,14 +10,23 @@ import sys
 import yaml
 from time import sleep
 
-DRIVER_DIR = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/code/ixgbe-5.0.4/'
+sys.path.insert(0, os.path.abspath('..'))
+from loom_exp_common import *
+
+if 'LOOM_HOME' in os.environ:
+    LOOM_HOME = os.environ['LOOM_HOME']
+else:
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/'
+
+DRIVER_DIR = LOOM_HOME + '/code/ixgbe-5.0.4/'
 TCP_BYTE_LIMIT_DIR = '/proc/sys/net/ipv4/tcp_limit_output_bytes'
 TCP_QUEUE_SYSTEM_DEFAULT = 262144
 
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
 QMODEL_MQPRI = 'mq-pri'
-QMODELS = [QMODEL_SQ, QMODEL_MQ, QMODEL_MQPRI]
+QMODEL_BESS = 'bess'
+QMODELS = [QMODEL_SQ, QMODEL_MQ, QMODEL_MQPRI, QMODEL_BESS]
 
 TC_PFIFO = 'pfifo'
 TC_SFQ = 'sfq'
@@ -28,8 +37,12 @@ PRI_CONFIG_DEFAULTS = {
     'tc_type': TC_PFIFO,
 
     'iface': 'eno2',
+    'ifaces': ['loom1', 'loom2'],
+    'iface_addr': '0000:81:00.1',
+    'bessctl': 'bessctl/sq.bess',
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
+    'qdisc': True,
 }
 
 class ServerConfig(object):
@@ -65,58 +78,7 @@ class PriConfig(object):
         d = self.__dict__.copy()
         return d
 
-#
-# TCP SmallQs and BQL Functions
-#
-def get_tcp_limit():
-    with open(TCP_BYTE_LIMIT_DIR) as tcpf:
-        limit = tcpf.read()
-    limit.strip()
-    limit = int(limit)
-    return limit
-
-def set_tcp_limit(b):
-    with open(TCP_BYTE_LIMIT_DIR, 'w') as tcpf:
-        tcpf.write('%d\n' % b)
-    assert (get_tcp_limit() == b)
-
-def get_queue_bql_limit_max(config, txqi):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
-    with open(limitfname) as limitf:
-        limit = limitf.read()
-    limit.strip()
-    limit = int(limit)
-    return limit
-
-def set_queue_bql_limit_max(config, txqi, limit):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
-    with open(limitfname, 'w') as limitf:
-        limitf.write('%d\n' % limit)
-    assert (get_queue_bql_limit_max(config, txqi) == limit)
-
-def get_queue_bql_limit_min(config, txqi):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
-    with open(limitfname) as limitf:
-        limit = limitf.read()
-    limit.strip()
-    limit = int(limit)
-    return limit
-
-def set_queue_bql_limit_min(config, txqi, limit):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
-    with open(limitfname, 'w') as limitf:
-        limitf.write('%d\n' % limit)
-    assert (get_queue_bql_limit_min(config, txqi) == limit)
-
-def set_all_bql_limit_max(config):
-    for txqi in range(len(get_txqs(config))):
-        set_queue_bql_limit_max(config, txqi, config.bql_limit_max)
-        set_queue_bql_limit_min(config, txqi, 0)
-
+# DCB helper function for MQ-PRI
 def verify_dcb(config):
     dcb_check_cmd = 'sudo dcbtool gc %s dcb' % config.iface
     out = subprocess.check_output(dcb_check_cmd, shell=True)
@@ -159,6 +121,14 @@ def pri_config_nic_driver(config):
     # Assign the IP
     ip_cmd = 'sudo ifconfig %s %s netmask 255.255.255.0' % (config.iface, ip)
     subprocess.check_call(ip_cmd, shell=True)
+
+    # Assign additional IPs
+    for ip_part in ['101', '102']:
+        ip_split = ip.split('.')
+        ip_split[2] = ip_part
+        ip_extra = '.'.join(ip_split)
+        ip_cmd = 'sudo ip addr add %s/24 dev %s' % (ip_extra, config.iface)
+        subprocess.check_call(ip_cmd, shell=True)
 
     # Restart lldpad because it might be killed
     lldp_cmd = 'sudo service lldpad restart'
@@ -211,7 +181,7 @@ def pri_config_nic_driver(config):
         cgroup_cmd = 'echo "%s 3" | sudo tee /sys/fs/cgroup/net_prio/high_prio/net_prio.ifpriomap' % config.iface
         subprocess.check_call(cgroup_cmd, shell=True)
     else:
-        # Disable any DCB traffic classes/priorities in case they ahve been
+        # Disable any DCB traffic classes/priorities in case they have been
         # previously enabled
         sleep(1.5) #XXX: dcbtool fails otherwise
         dcb_cmd = 'sudo dcbtool sc %s dcb off' % config.iface
@@ -226,25 +196,6 @@ def pri_config_nic_driver(config):
     lldp_cmd = 'sudo service lldpad stop'
     subprocess.check_call(lldp_cmd, shell=True)
 
-def get_txqs(config):
-    txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % config.iface)
-    return txqs
-
-def get_rxqs(config):
-    rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % config.iface)
-    return rxqs 
-
-def pri_configure_rfs(config):
-    rxqs = get_rxqs(config)
-    entries = 65536
-    entries_per_rxq = entries / len(rxqs)
-    cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
-        entries
-    subprocess.check_call(cmd, shell=True)
-    for rxq in rxqs:
-        cmd = 'echo %d | sudo tee /%s/rps_flow_cnt > /dev/null' % (entries_per_rxq, rxq)
-        subprocess.check_call(cmd, shell=True)
-
 def pri_config_xps(config):
     if config.qmodel == QMODEL_MQ:
         # Use the Intel script to configure XPS
@@ -254,14 +205,14 @@ def pri_config_xps(config):
             shell=True)
 
         # Also configure RFS
-        pri_configure_rfs(config)
+        configure_rfs(config, config.iface)
     else:
         print 'Skipping XPS for qmodel: %s' % config.qmodel
 
         #Note: maybe not necessary.  But it shouldn't hurt to restart irqbalance
         subprocess.call('sudo service irqbalance restart', shell=True)
 
-def pri_config_qdisc(config):
+def pri_config_qdisc(config, iface):
     #XXX: DEBUG:
     #print 'WARNING: Skipping Qdisc config!'
     #return
@@ -270,21 +221,26 @@ def pri_config_qdisc(config):
     root_handle = '1' if config.qmodel == QMODEL_MQPRI else ''
     handle_offset = 5 if config.qmodel == QMODEL_MQPRI else 1
 
-    qcnt = len(get_txqs(config))
+    qcnt = len(get_txqs(iface))
     for i in xrange(handle_offset, qcnt + handle_offset):
         # Configure a prio Qdisc per txq with SFQ children
-        tc_cmd = 'sudo tc qdisc add dev %s parent %s:%x handle %d00: prio' % \
-            (config.iface, root_handle, i, i)
-        subprocess.check_call(tc_cmd, shell=True)
+        try:
+            tc_cmd = 'sudo tc qdisc add dev %s parent %s:%x handle %d00: prio' % \
+                (iface, root_handle, i, i)
+            subprocess.check_call(tc_cmd, shell=True)
+        except subprocess.CalledProcessError:
+            tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: prio' % \
+                (iface, i)
+            subprocess.check_call(tc_cmd, shell=True)
 
         # Configure the prio children.
         for parent in ['%d00:1' % i, '%d00:2' % i, '%d00:3' % i]:
             if config.tc_type == TC_PFIFO:
                 tc_cmd = 'sudo tc qdisc add dev %s parent %s pfifo_fast' % \
-                    (config.iface, parent)
+                    (iface, parent)
             elif config.tc_type == TC_SFQ:
                 tc_cmd = 'sudo tc qdisc add dev %s parent %s sfq limit 32768 perturb 60' % \
-                    (config.iface, parent)
+                    (iface, parent)
             else:
                 raise
             subprocess.check_call(tc_cmd, shell=True)
@@ -296,13 +252,13 @@ def pri_config_qdisc(config):
             for pdir in ['sport', 'dport']:
                 tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
                     'prio 1 u32 match ip %s %d 0xffff flowid %d00:1'
-                tc_cmd = tc_str % (config.iface, i, pdir, p, i)
+                tc_cmd = tc_str % (iface, i, pdir, p, i)
                 subprocess.check_call(tc_cmd, shell=True)
 
         # Create a traffic filter to send the rest of the traffic to priority :2
         tc_str = 'sudo tc filter add dev %s protocol all parent %d00: ' + \
             'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:2'
-        tc_cmd = tc_str % (config.iface, i, i)
+        tc_cmd = tc_str % (iface, i, i)
         subprocess.check_call(tc_cmd, shell=True)
 
 def pri_config_server(config):
@@ -321,10 +277,38 @@ def pri_config_server(config):
     if config.qmodel == QMODEL_MQPRI:
         print 'Skipping Qdisc config for qmodel: %s' % config.qmodel
     else:
-        pri_config_qdisc(config)
+        pri_config_qdisc(config, config.iface)
+
+    # Configure CGroups
+    config_cgroup(config, config.iface)
 
     # Configure BQL
     set_all_bql_limit_max(config)
+
+def pri_config_bess(config):
+    subprocess.call('sudo killall tcpdump', shell=True)
+
+    loom_config_bess(config)
+
+    # Do not configure XPS (for now)
+    subprocess.call('sudo service irqbalance restart', shell=True)
+
+    # Configure all of the interfaces
+    #XXX: This code doesn't work for virtio/Vhost/TAP interfaces
+    for iface in config.ifaces:
+        # Configure Qdisc/TC
+        #TODO: optionally skip Qdisc config
+        if config.qdisc:
+            pri_config_qdisc(config, iface)
+
+        # Configure CGroups
+        config_cgroup(config, iface)
+
+        # Configure RFS
+        configure_rfs(config, iface)
+    
+        # Configure BQL
+        set_all_bql_limit_max(config, iface)
 
 def main():
     # Parse arguments
@@ -343,7 +327,10 @@ def main():
         config = PriConfig()
 
     # Configure the server
-    pri_config_server(config)
+    if config.qmodel == QMODEL_BESS:
+        pri_config_bess(config)
+    else:
+        pri_config_server(config)
 
 if __name__ == '__main__':
     main()

@@ -346,10 +346,13 @@ class ExperimentalScheduler : public Scheduler<CallableTask> {
       auto ret = leaf->task()();
       now = rdtsc();
 
+      //constexpr uint64_t kMaxWait = 1ull << 32;
+      /* 5us @ 2GHz. As a TODO: make more precise cross-platform. */
+      //constexpr uint64_t kMaxWait = 10000ull; 
+      constexpr uint64_t kMaxWait = 80000ull; 
+      constexpr uint64_t kMinWait = 10000ull; 
+
       if (ret.packets == 0 && ret.block) {
-        //constexpr uint64_t kMaxWait = 1ull << 32;
-        /* 5us @ 2GHz. As a TODO: make more precise cross-platform. */
-        constexpr uint64_t kMaxWait = 10000ull; 
         uint64_t wait = std::min(kMaxWait, leaf->wait_cycles() << 1);
         leaf->set_wait_cycles(wait);
 
@@ -366,7 +369,8 @@ class ExperimentalScheduler : public Scheduler<CallableTask> {
         usage[RESOURCE_PACKET] = 0;
         usage[RESOURCE_BIT] = 0;
       } else {
-        leaf->set_wait_cycles((leaf->wait_cycles() + 1) >> 1);
+        uint64_t wait = std::max(kMinWait, (leaf->wait_cycles() + 1) >> 1);
+        leaf->set_wait_cycles(wait);
 
         usage[RESOURCE_COUNT] = 1;
         usage[RESOURCE_CYCLE] = now - this->checkpoint_;
