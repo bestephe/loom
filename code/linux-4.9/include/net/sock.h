@@ -212,6 +212,9 @@ struct sock_common {
 		struct hlist_nulls_node skc_nulls_node;
 	};
 	int			skc_tx_queue_mapping;
+#ifdef CONFIG_LOOM
+	int			skc_tx_sched_queue_mapping;
+#endif
 	union {
 		int		skc_incoming_cpu;
 		u32		skc_rcv_wnd;
@@ -315,6 +318,9 @@ struct sock {
 #define sk_nulls_node		__sk_common.skc_nulls_node
 #define sk_refcnt		__sk_common.skc_refcnt
 #define sk_tx_queue_mapping	__sk_common.skc_tx_queue_mapping
+#ifdef CONFIG_LOOM
+#define sk_tx_sched_queue_mapping	__sk_common.skc_tx_sched_queue_mapping
+#endif
 
 #define sk_dontcopy_begin	__sk_common.skc_dontcopy_begin
 #define sk_dontcopy_end		__sk_common.skc_dontcopy_end
@@ -1611,6 +1617,9 @@ static inline void sk_tx_queue_set(struct sock *sk, int tx_queue)
 static inline void sk_tx_queue_clear(struct sock *sk)
 {
 	sk->sk_tx_queue_mapping = -1;
+#ifdef CONFIG_LOOM
+	sk->sk_tx_sched_queue_mapping = -1;
+#endif
 }
 
 static inline int sk_tx_queue_get(const struct sock *sk)

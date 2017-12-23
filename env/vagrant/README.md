@@ -1,6 +1,17 @@
+## Notes about setting up a vagrant VM that can boot a custom kernel image
+
+### Setup vagrant
+```
+vagrant plugin install vagrant-libvirt
+vagrant plugin install vagrant-mutate
+```
+
+### Download and setup a vagrant box
+
+
 ## Notes about setting up a vagrant VM that uses QEMU and virtio-user
 
-## Various setup commands
+### Various setup commands
 
 Patch ansible to work around a plugin install bug
 ```
