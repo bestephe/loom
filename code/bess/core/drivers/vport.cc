@@ -276,17 +276,21 @@ static int next_cpu;
 
 /* Free an allocated bar, freeing resources in the queues */
 void VPort::FreeBar() {
-  int i;
+  uint32_t i;
   struct sn_conf_space *conf = static_cast<struct sn_conf_space *>(bar_);
 
-  for (i = 0; i < conf->num_txq; i++) {
-    drain_drv_to_sn_q(inc_qs_[i].drv_to_sn);
-    drain_sn_to_drv_q(inc_qs_[i].sn_to_drv);
+  for (i = 0; i < conf->num_tx_ctrlq; i++) {
+    drain_drv_to_sn_q(inc_ctrl_qs_[i].drv_to_sn);
+    drain_sn_to_drv_q(inc_ctrl_qs_[i].sn_to_drv);
+  }
+
+  for (i = 0; i < conf->num_tx_dataq; i++) {
+    drain_drv_to_sn_q(inc_data_qs_[i].drv_to_sn);
 
     /* LOOM. Ugly. */
     /* TODO: Currently TSO is disabled GSO provides good enough performance, so
      * this cleanup code is not needed. */
-    struct txq_private *txq_priv = &inc_qs_[i].txq_priv;
+    struct txq_private *txq_priv = &inc_data_qs_[i].txq_priv;
     while (txq_priv->cur_seg < txq_priv->seg_cnt) {
       bess::Packet::Free(txq_priv->segs[txq_priv->cur_seg]);
       txq_priv->segs[txq_priv->cur_seg] = nullptr;
@@ -295,13 +299,14 @@ void VPort::FreeBar() {
     txq_priv->cur_seg = 0;
     txq_priv->seg_cnt = 0;
 
-    drain_and_free_segpktpool(inc_qs_[i].txq_priv.segpktpool);
-    inc_qs_[i].txq_priv.segpktpool = nullptr; /* Not necessary. */
+    drain_and_free_segpktpool(inc_data_qs_[i].txq_priv.segpktpool);
+    inc_data_qs_[i].txq_priv.segpktpool = nullptr; /* Not necessary. */
   }
 
   for (i = 0; i < conf->num_rxq; i++) {
-    drain_drv_to_sn_q(inc_qs_[i].drv_to_sn);
-    drain_sn_to_drv_q(inc_qs_[i].sn_to_drv);
+    /* Loom: Note: This line of code was wrong (inc_qs_) in the original code. */
+    drain_drv_to_sn_q(out_qs_[i].drv_to_sn);
+    drain_sn_to_drv_q(out_qs_[i].sn_to_drv);
   }
 
 
@@ -317,22 +322,26 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   struct sn_conf_space *conf;
   char *ptr;
 
-  int i;
+  uint32_t i;
 
-  /* LOOM */
+  /* Loom: TODO: from currently unused TSO implementation. */
   struct txq_private *txq_priv;
+
+  /* Loom: TODO: Allow the number of scheduling queues to be configured. */
+  uint32_t num_tx_dataq = 4196;
+  assert(num_tx_dataq <= SN_MAX_TX_DATAQ);
 
   bytes_per_llring = llring_bytes_with_slots(SLOTS_PER_LLRING);
 
   total_bytes = ROUND_TO_64(sizeof(struct sn_conf_space));
-  /* TODO: I changed this to be 3 queues for pktpool. This should be undone
-   * now. */
   total_bytes += num_queues[PACKET_DIR_INC] * 
-                 (ROUND_TO_64(sizeof(struct sn_txq_registers)) +
-                  3 * ROUND_TO_64(bytes_per_llring));
+                 (ROUND_TO_64(sizeof(struct sn_tx_ctrlq_registers)) +
+                  2 * ROUND_TO_64(bytes_per_llring));
   total_bytes += num_queues[PACKET_DIR_OUT] *
                  (ROUND_TO_64(sizeof(struct sn_rxq_registers)) +
                   2 * ROUND_TO_64(bytes_per_llring));
+  total_bytes += num_tx_dataq * 
+                 (ROUND_TO_64(bytes_per_llring));
 
   VLOG(1) << "BAR total_bytes = " << total_bytes;
   bar = rte_zmalloc(nullptr, total_bytes, 64);
@@ -348,7 +357,8 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
 
   bess::utils::Copy(conf->mac_addr, mac_addr, ETH_ALEN);
 
-  conf->num_txq = num_queues[PACKET_DIR_INC];
+  conf->num_tx_ctrlq = num_queues[PACKET_DIR_INC];
+  conf->num_tx_dataq = num_tx_dataq;
   conf->num_rxq = num_queues[PACKET_DIR_OUT];
   conf->link_on = 1;
   conf->promisc_on = 1;
@@ -361,29 +371,22 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
 
   /* See sn_common.h for the llring usage */
 
-  for (i = 0; i < conf->num_txq; i++) {
-    /* TX queue registers */
-    inc_qs_[i].tx_regs = reinterpret_cast<struct sn_txq_registers *>(ptr);
-    ptr += ROUND_TO_64(sizeof(struct sn_txq_registers));
+  for (i = 0; i < conf->num_tx_ctrlq; i++) {
+    /* TX ctrl queue registers */
+    inc_ctrl_qs_[i].tx_regs = reinterpret_cast<struct sn_tx_ctrlq_registers *>(ptr);
+    ptr += ROUND_TO_64(sizeof(struct sn_tx_ctrlq_registers));
 
     /* Driver -> BESS */
     llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
                 SINGLE_P, SINGLE_C);
-    inc_qs_[i].drv_to_sn = reinterpret_cast<struct llring *>(ptr);
+    inc_ctrl_qs_[i].drv_to_sn = reinterpret_cast<struct llring *>(ptr);
     ptr += ROUND_TO_64(bytes_per_llring);
 
     /* BESS -> Driver */
     llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
                 SINGLE_P, SINGLE_C);
     refill_tx_bufs(reinterpret_cast<struct llring *>(ptr));
-    inc_qs_[i].sn_to_drv = reinterpret_cast<struct llring *>(ptr);
-    ptr += ROUND_TO_64(bytes_per_llring);
-
-    /* Pkt Pool */
-    /* Ignore. Used only internally by the driver. */
-    /* LOOM: TODO: Remove pktpool. */
-    llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
-                SINGLE_P, SINGLE_C);
+    inc_ctrl_qs_[i].sn_to_drv = reinterpret_cast<struct llring *>(ptr);
     ptr += ROUND_TO_64(bytes_per_llring);
   }
 
@@ -405,9 +408,20 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
     ptr += ROUND_TO_64(bytes_per_llring);
   }
 
-  /* TODO: Currently TSO is disabled GSO provides good enough performance, so
-   * this initialization code is not needed. */
-  for (i = 0; i < conf->num_txq; i++) {
+  /* Loom: TODO: data queues could be smaller than ctrl queues if memory
+   * becomes a problem. */
+  for (i = 0; i < conf->num_tx_dataq; i++) {
+    /* TX data queue Driver -> BESS */
+    llring_init(reinterpret_cast<struct llring *>(ptr), SLOTS_PER_LLRING,
+                SINGLE_P, SINGLE_C);
+    inc_data_qs_[i].drv_to_sn = reinterpret_cast<struct llring *>(ptr);
+    ptr += ROUND_TO_64(bytes_per_llring);
+  }
+
+  /* Loom: Initialize txq private data used for TSO. */
+  /* TODO: Currently TSO is disabled GSO provides good enough performance (with
+   * Linux 4.9), so this initialization code is not needed. */
+  for (i = 0; i < conf->num_tx_dataq; i++) {
     /* LOOM: Initialize txq private data for TSO/Lookback/etc.
      *  This could be done in its own function, but this function would need to
      *  be a private member of the class as things are currently defined.  */
@@ -415,7 +429,7 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
     size_t ring_sz = 0;
     int ret;
 
-    txq_priv = &inc_qs_[i].txq_priv;
+    txq_priv = &inc_data_qs_[i].txq_priv;
     memset(txq_priv, 0, sizeof(*txq_priv));
 
     /* I'm not sure using an llring as a pool of packets is the best idea here.
@@ -672,7 +686,7 @@ CommandResponse VPort::Init(const bess::pb::VPortArg &arg) {
   }
 
   for (int cpu = 0; cpu < SN_MAX_CPU; cpu++) {
-    map_.cpu_to_txq[cpu] = cpu % num_queues[PACKET_DIR_INC];
+    map_.cpu_to_tx_ctrlq[cpu] = cpu % num_queues[PACKET_DIR_INC];
   }
 
   if (arg.rxq_cpus_size() > 0) {
@@ -821,7 +835,7 @@ static void do_tso(bess::Packet *pkt, uint32_t seqoffset, int first, int last) {
  * inside of BESS different to reduce memory pressure. */
 /* Currently copy+pasta from the old RecvPackets. */
 int VPort::RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt) {
-  struct queue *tx_queue = &inc_qs_[qid];
+  struct tx_data_queue *tx_queue = &inc_data_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
   int cnt;
   int i;
@@ -831,19 +845,17 @@ int VPort::RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt) {
   }
   cnt = llring_sc_dequeue_burst(tx_queue->drv_to_sn, paddr, max_cnt);
 
-  refill_tx_bufs(tx_queue->sn_to_drv);
-
   for (i = 0; i < cnt; i++) {
     bess::Packet *seg;
 
-    struct sn_tx_desc *tx_desc;
+    struct sn_tx_data_desc *tx_desc;
     //struct sn_tx_metadata *tx_meta;
     uint16_t len;
 
     seg = segs[i] = bess::Packet::from_paddr(paddr[i]);
 
     /* This extra work is likely unnecessary */
-    tx_desc = seg->scratchpad<struct sn_tx_desc *>();
+    tx_desc = seg->scratchpad<struct sn_tx_data_desc *>();
     len = tx_desc->total_len;
     //tx_meta = &tx_desc->meta;
 
@@ -862,9 +874,9 @@ int VPort::RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt) {
 bess::Packet *VPort::SegPkt(queue_t qid) {
   bess::Packet *pkt, *seg;
   //struct queue *tx_queue = &inc_qs_[qid];
-  struct txq_private *txq_priv = &inc_qs_[qid].txq_priv;
-  struct sn_tx_desc *tx_desc;
-  struct sn_tx_metadata *tx_meta;
+  struct txq_private *txq_priv = &inc_data_qs_[qid].txq_priv;
+  struct sn_tx_data_desc *tx_desc;
+  struct sn_tx_data_metadata *tx_meta;
 
   assert((txq_priv->cur_seg < txq_priv->seg_cnt) || (txq_priv->seg_cnt == 0));
 
@@ -889,7 +901,7 @@ bess::Packet *VPort::SegPkt(queue_t qid) {
     pkt = seg;
 
     /* Do checksumming if needed. */
-    tx_desc = pkt->scratchpad<struct sn_tx_desc *>();
+    tx_desc = pkt->scratchpad<struct sn_tx_data_desc *>();
     tx_meta = &tx_desc->meta;
     if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
       do_ip_tcp_csum(pkt);
@@ -984,6 +996,8 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
    * free packets are below a low water mark. */
   refill_segpktpool(txq_priv->segpktpool);
 
+  refill_tx_bufs(tx_queue->sn_to_drv);
+
   pkt = this->SegPkt(qid);
   while (cnt < max_cnt && pkt != nullptr) {
     pkts[cnt] = pkt; 
@@ -1002,7 +1016,7 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
 #endif
 
 int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
-  struct queue *tx_queue = &inc_qs_[qid];
+  struct queue *tx_queue = &inc_ctrl_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
   int cnt;
   int refill_cnt;
@@ -1042,7 +1056,7 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
     uint64_t _cpui;
     int ret;
     for (_cpui = 0; _cpui < SN_MAX_CPU; _cpui++) {
-      if (map_.cpu_to_txq[_cpui] == qid) {
+      if (map_.cpu_to_tx_ctrlq[_cpui] == qid) {
         cpu = _cpui;
         break;
       }
@@ -1060,13 +1074,13 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
 
   for (i = 0; i < cnt; i++) {
     bess::Packet *pkt;
-    struct sn_tx_desc *tx_desc;
-    struct sn_tx_metadata *tx_meta;
+    struct sn_tx_data_desc *tx_desc;
+    struct sn_tx_data_metadata *tx_meta;
     uint16_t len;
 
     pkt = pkts[i] = bess::Packet::from_paddr(paddr[i]);
 
-    tx_desc = pkt->scratchpad<struct sn_tx_desc *>();
+    tx_desc = pkt->scratchpad<struct sn_tx_data_desc *>();
     len = tx_desc->total_len;
     tx_meta = &tx_desc->meta;
 

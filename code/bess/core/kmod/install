@@ -6,12 +6,24 @@ if lsmod | grep -q bess; then
 	sudo rmmod bess || exit 0
 fi
 
-make && sudo insmod bess.ko && echo "Module successfully installed!"
+if [ -d /lib/modules/$(uname -r)/build ]
+then
+	MAKE_ARGS="KERNELDIR=/lib/modules/$(uname -r)/build"
+elif [ -d $LOOM_HOME/code/linux-4.9 ]
+then
+	MAKE_ARGS="KERNELDIR=$LOOM_HOME/code/linux-4.9"
+else
+	MAKE_ARGS=""
+fi
+echo MAKE_ARGS $MAKE_ARGS
+
+make $MAKE_ARGS
+sudo insmod bess.ko && echo "Module successfully installed!"
 sudo chmod 0444 /dev/bess
 sudo perf buildid-cache -a bess.ko
 
 # Also configure huge-pages
-#sudo sysctl vm.nr_hugepages=1024
+sudo sysctl vm.nr_hugepages=1024
 
 # Success
 exit 0

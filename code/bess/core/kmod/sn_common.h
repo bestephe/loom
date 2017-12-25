@@ -54,7 +54,8 @@ typedef uint64_t phys_addr_t;
 
 #define SN_MAX_CPU 64
 
-#define SN_MAX_TXQ 64
+#define SN_MAX_TX_CTRLQ 64
+#define SN_MAX_TX_DATAQ 8192
 #define SN_MAX_RXQ 64
 
 #define SN_IOC_CREATE_HOSTNIC 0x8501
@@ -64,7 +65,7 @@ typedef uint64_t phys_addr_t;
 #define SN_IOC_KICK_TX 0x8505
 
 struct sn_ioc_queue_mapping {
-	int cpu_to_txq[SN_MAX_CPU];
+	int cpu_to_tx_ctrlq[SN_MAX_CPU];
 	int rxq_to_cpu[SN_MAX_RXQ];
 };
 
@@ -88,7 +89,8 @@ struct sn_conf_space {
 	char ifname[IFNAMSIZ]; /* in/out argument */
 	uint8_t mac_addr[ETH_ALEN];
 
-	uint16_t num_txq;
+	uint16_t num_tx_ctrlq;
+        uint32_t num_tx_dataq;
 	uint16_t num_rxq;
 
 	/* currently not used */
@@ -107,7 +109,7 @@ struct sn_rxq_registers {
 	uint64_t dropped __attribute__((__aligned__(64)));
 } __attribute__((__aligned__(64)));
 
-struct sn_txq_registers {
+struct sn_tx_ctrlq_registers {
 	/* Set by the kernel driver, to suppress bogus interrupts */
 	volatile uint32_t irq_disabled;
 } __attribute__((__aligned__(64)));
@@ -117,8 +119,14 @@ struct sn_txq_registers {
 
 #define SN_TX_FRAG_MAX_NUM 18 /*(MAX_SKB_FRAGS + 1)*/
 
+/* Driver -> BESS scheduling metadata. Used in both data and ctrl metadata. */
+struct sn_tx_sched_metadata {
+        /* TODO: what should be here? */
+        uint64_t tc;
+};
+
 /* Driver -> BESS metadata for TX packets */
-struct sn_tx_metadata {
+struct sn_tx_data_metadata {
 	/* Both are relative offsets from the beginning of the packet.
 	 * The sender should set csum_start to CSUM_DONT
 	 * if no checksumming is wanted (csum_dest is undefined).*/
@@ -129,12 +137,29 @@ struct sn_tx_metadata {
 
         /* Driver xmit timestamp. */
         uint64_t drv_xmit_ts;
+
+        /* Loom: Scheduling metadata. */
+        struct sn_tx_sched_metadata sch_meta;
 };
 
-struct sn_tx_desc {
+struct sn_tx_data_desc {
 	uint16_t total_len;
 
-	struct sn_tx_metadata meta;
+	struct sn_tx_data_metadata meta;
+};
+
+/* Driver -> BESS metadata for TX CtrlQ updates */
+struct sn_tx_ctrl_metadata {
+        /* Loom: Scheduling metadata. */
+        struct sn_tx_sched_metadata sch_meta;
+
+        /* TODO: Anything else? */
+};
+
+struct sn_tx_ctrl_desc {
+        uint32_t tx_dataq_num;
+
+        struct sn_tx_ctrl_metadata meta;
 };
 
 #define SN_RX_CSUM_UNEXAMINED 0
@@ -169,12 +194,12 @@ struct sn_rx_desc {
 /* BAR layout
  *
  * struct sn_conf_space (set by BESS and currently read-only)
- * TX queue 0 llring (drv -> sn)
- * TX queue 0 llring (sn -> drv)
- * TX queue 0 llring (pkt pool)
- * TX queue 1 llring (drv -> sn)
- * TX queue 1 llring (sn -> drv)
- * TX queue 1 llring (pkt pool)
+ * TX ctrl queue 0 registers
+ * TX ctrl queue 0 llring (drv -> sn)
+ * TX ctrl queue 0 llring (sn -> drv)
+ * TX ctrl queue 1 registers
+ * TX ctrl queue 1 llring (drv -> sn)
+ * TX ctrl queue 1 llring (sn -> drv)
  * ...
  * RX queue 0 registers
  * RX queue 0 llring (drv -> sn)
@@ -183,9 +208,10 @@ struct sn_rx_desc {
  * RX queue 1 llring (drv -> sn)
  * RX queue 1 llring (sn -> drv)
  * ...
+ * TX data queue 0 llring (drv -> sn)
+ * TX data queue 1 llring (drv -> sn)
+ * ...
  */
-/* LOOM Change: to implement BQL and avoid breaking TCP Small Queues, a third
- * llring for use by the driver is used. */
 
 /* TX:
  * BESS feeds buffers to the driver via the sn_to_drv llring, in this order:

@@ -53,7 +53,7 @@ struct sn_tx_buffer {
 	struct sn_tx_buffer_queue {
 		struct sn_queue *queue;
 		struct sk_buff *skb_arr[MAX_BATCH];
-		struct sn_tx_metadata meta_arr[MAX_BATCH];
+		struct sn_tx_data_metadata meta_arr[MAX_BATCH];
 		int cnt;
 	} queue_arr[MAX_TX_BUFFER_QUEUE_CNT];
 };
@@ -174,7 +174,7 @@ int sn_avail_snbs(struct sn_queue *queue)
 
 static int sn_host_do_tx_batch(struct sn_queue *queue,
 		struct sk_buff *skb_arr[],
-		struct sn_tx_metadata meta_arr[],
+		struct sn_tx_data_metadata meta_arr[],
 		int cnt_requested)
 {
 	int cnt_to_send;
@@ -189,7 +189,8 @@ static int sn_host_do_tx_batch(struct sn_queue *queue,
 	cnt_to_send = min(cnt_to_send, MAX_BATCH);
 
 	cnt = alloc_snb_burst(queue, paddr_arr, cnt_to_send);
-	queue->tx.stats.descriptor += cnt_requested - cnt;
+        /* TODO: update stats differently soon. */
+	queue->tx_ctrl.stats.descriptor += cnt_requested - cnt;
 
 	/* LOOM: DEBUG: */
 	if (cnt_requested - cnt > 0) {
@@ -208,7 +209,7 @@ static int sn_host_do_tx_batch(struct sn_queue *queue,
 	for (i = 0; i < cnt; i++) {
 		struct sk_buff *skb = skb_arr[i];
 		phys_addr_t paddr = paddr_arr[i];
-		struct sn_tx_desc *tx_desc;
+		struct sn_tx_data_desc *tx_desc;
 		char *dst_addr;
 
 		int j;
@@ -262,7 +263,7 @@ static void sn_host_flush_tx(void)
 
 		buf_queue = &buf->queue_arr[i];
 		queue = buf_queue->queue;
-		netdev_txq = queue->tx.netdev_txq;
+		netdev_txq = queue->tx_ctrl.netdev_txq;
 
 		lock_required = (netdev_txq->xmit_lock_owner != cpu);
 
@@ -277,8 +278,8 @@ static void sn_host_flush_tx(void)
 		if (lock_required)
 			HARD_TX_UNLOCK(queue->dev->netdev, netdev_txq);
 
-		queue->tx.stats.packets += sent;
-		queue->tx.stats.dropped += buf_queue->cnt - sent;
+		queue->tx_ctrl.stats.packets += sent;
+		queue->tx_ctrl.stats.dropped += buf_queue->cnt - sent;
 
 		/* LOOM: DEBUG. */
 		if ((buf_queue->cnt - sent) > 0) {
@@ -292,7 +293,7 @@ static void sn_host_flush_tx(void)
 			struct sk_buff *skb = buf_queue->skb_arr[j];
 
 			if (j < sent)
-				queue->tx.stats.bytes += skb->len;
+				queue->tx_ctrl.stats.bytes += skb->len;
 
 			dev_kfree_skb(skb);
 		}
@@ -302,7 +303,7 @@ static void sn_host_flush_tx(void)
 }
 
 static void sn_host_buffer_tx(struct sn_queue *queue, struct sk_buff *skb,
-			 struct sn_tx_metadata *tx_meta)
+			 struct sn_tx_data_metadata *tx_meta)
 {
 	struct sn_tx_buffer *buf;
 	struct sn_tx_buffer_queue *buf_queue;
@@ -346,7 +347,7 @@ again:
 }
 
 static int sn_host_do_tx(struct sn_queue *queue, struct sk_buff *skb,
-			 struct sn_tx_metadata *tx_meta)
+			 struct sn_tx_data_metadata *tx_meta)
 {
 	int *polling;
 
@@ -461,7 +462,7 @@ static void sn_dump_queue_mapping(struct sn_device *dev)
 
 	for_each_online_cpu(cpu) {
 		buflen += sprintf(buf + buflen, "%d->%d ", cpu,
-				dev->cpu_to_txq[cpu]);
+				dev->cpu_to_tx_ctrlq[cpu]);
 	}
 
 	log_info("%s\n", buf);
@@ -612,9 +613,9 @@ static int sn_host_ioctl_set_queue_mapping(
 	}
 
 	for (cpu = 0; cpu < SN_MAX_CPU; cpu++) {
-		if (map.cpu_to_txq[cpu] >= dev->num_txq) {
+		if (map.cpu_to_tx_ctrlq[cpu] >= dev->num_tx_ctrlq) {
 			log_err("CPU %d is mapped to a wrong TXQ %d\n",
-					cpu, map.cpu_to_txq[cpu]);
+					cpu, map.cpu_to_tx_ctrlq[cpu]);
 			return -EINVAL;
 		}
 	}
@@ -628,12 +629,12 @@ static int sn_host_ioctl_set_queue_mapping(
 	}
 
 	for_each_possible_cpu(cpu) {
-		dev->cpu_to_txq[cpu] = 0;
+		dev->cpu_to_tx_ctrlq[cpu] = 0;
 		dev->cpu_to_rxqs[cpu][0] = -1;
 	}
 
 	for (cpu = 0; cpu < min(SN_MAX_CPU, NR_CPUS); cpu++)
-		dev->cpu_to_txq[cpu] = map.cpu_to_txq[cpu];
+		dev->cpu_to_tx_ctrlq[cpu] = map.cpu_to_tx_ctrlq[cpu];
 
 	for (rxq = 0; rxq < dev->num_rxq; rxq++) {
 		int cnt;

@@ -65,8 +65,8 @@ static void sn_test_cache_alignment(struct sn_device *dev)
 {
 	int i;
 
-	for (i = 0; i < dev->num_txq; i++) {
-		struct sn_queue *q = dev->tx_queues[i];
+	for (i = 0; i < dev->num_tx_ctrlq; i++) {
+		struct sn_queue *q = dev->tx_ctrl_queues[i];
 
 		if ((((uintptr_t) q->drv_to_sn) % L1_CACHE_BYTES) ||
 		    (((uintptr_t) q->sn_to_drv) % L1_CACHE_BYTES))
@@ -106,7 +106,7 @@ static int sn_alloc_queues(struct sn_device *dev,
 
 	int ret;
 
-	ret = netif_set_real_num_tx_queues(dev->netdev, dev->num_txq);
+	ret = netif_set_real_num_tx_queues(dev->netdev, dev->num_tx_ctrlq);
 	if (ret) {
 		log_err("netif_set_real_num_tx_queues() failed\n");
 		return ret;
@@ -118,7 +118,7 @@ static int sn_alloc_queues(struct sn_device *dev,
 		return ret;
 	}
 
-	num_queues = dev->num_txq + dev->num_rxq;
+	num_queues = dev->num_tx_ctrlq + dev->num_rxq + dev->num_tx_dataq;
 
 	memchunk = kzalloc(sizeof(struct sn_queue) * num_queues, GFP_KERNEL);
 	if (!memchunk)
@@ -126,30 +126,23 @@ static int sn_alloc_queues(struct sn_device *dev,
 
 	queue = memchunk;
 
-	for (i = 0; i < dev->num_txq; i++) {
-		dev->tx_queues[i] = queue;
+	for (i = 0; i < dev->num_tx_ctrlq; i++) {
+		dev->tx_ctrl_queues[i] = queue;
 
 		queue->dev = dev;
 		queue->queue_id = i;
-		queue->tx.opts = *txq_opts;
+		queue->tx_ctrl.opts = *txq_opts;
 
-		queue->tx.netdev_txq = netdev_get_tx_queue(dev->netdev, i);
+		queue->tx_ctrl.netdev_txq = netdev_get_tx_queue(dev->netdev, i);
 
-		queue->tx.tx_regs = (struct sn_txq_registers *)p;
-		p += sizeof(struct sn_txq_registers);
+		queue->tx_ctrl.tx_regs = (struct sn_tx_ctrlq_registers *)p;
+		p += sizeof(struct sn_tx_ctrlq_registers);
 
 		queue->drv_to_sn = (struct llring *)p;
 		p += llring_bytes(queue->drv_to_sn);
 
 		queue->sn_to_drv = (struct llring *)p;
 		p += llring_bytes(queue->sn_to_drv);
-
-                /* LOOM: TODO: Currently, the pktpool is not used for anything.
-                 * I think I solved the problem the pktpool was supposed to
-                 * solve with TX interrupts.  I think the pktpool code should
-                 * be deleted now. */
-		queue->pktpool = (struct llring *)p;
-		p += llring_bytes(queue->pktpool);
 
 		queue++;
 	}
@@ -173,6 +166,20 @@ static int sn_alloc_queues(struct sn_device *dev,
 		queue++;
 	}
 
+	for (i = 0; i < dev->num_tx_dataq; i++) {
+		dev->tx_data_queues[i] = queue;
+
+		queue->dev = dev;
+		/* Loom: should data queues have some offset for queue ids? */
+		queue->queue_id = i;
+		queue->tx_data.opts = *txq_opts;
+
+		queue->drv_to_sn = (struct llring *)p;
+		p += llring_bytes(queue->drv_to_sn);
+
+		queue++;
+	}
+
 	if ((uintptr_t)p != (uintptr_t)rings + rings_size) {
 		log_err("Invalid ring space size: %llu, not %llu, at%p)\n",
 				rings_size,
@@ -191,8 +198,8 @@ static int sn_alloc_queues(struct sn_device *dev,
 		spin_lock_init(&dev->rx_queues[i]->rx.lock);
 	}
 
-	for (i = 0; i < dev->num_txq; i++) {
-		netif_napi_add(dev->netdev, &dev->tx_queues[i]->tx.napi,
+	for (i = 0; i < dev->num_tx_ctrlq; i++) {
+		netif_napi_add(dev->netdev, &dev->tx_ctrl_queues[i]->tx_ctrl.napi,
 				sn_poll_tx, NAPI_POLL_WEIGHT);
 	}
 
@@ -213,13 +220,13 @@ static void sn_free_queues(struct sn_device *dev)
 	}
 
 
-	for (i = 0; i < dev->num_txq; i++) {
-		netif_napi_del(&dev->tx_queues[i]->tx.napi);
+	for (i = 0; i < dev->num_tx_ctrlq; i++) {
+		netif_napi_del(&dev->tx_ctrl_queues[i]->tx_ctrl.napi);
 	}
 
 	/* Queues are allocated in batch,
 	 * and the tx_queues[0] is its address */
-	kfree(dev->tx_queues[0]);
+	kfree(dev->tx_ctrl_queues[0]);
 }
 
 /* Interface up */
@@ -233,10 +240,10 @@ static int sn_open(struct net_device *netdev)
 	for (i = 0; i < dev->num_rxq; i++)
 		sn_enable_interrupt(dev->rx_queues[i]);
 
-	for (i = 0; i < dev->num_txq; i++)
-		napi_enable(&dev->tx_queues[i]->tx.napi);
-	for (i = 0; i < dev->num_txq; i++)
-		sn_enable_interrupt_tx(dev->tx_queues[i]);
+	for (i = 0; i < dev->num_tx_ctrlq; i++)
+		napi_enable(&dev->tx_ctrl_queues[i]->tx_ctrl.napi);
+	for (i = 0; i < dev->num_tx_ctrlq; i++)
+		sn_enable_interrupt_tx(dev->tx_ctrl_queues[i]);
 
 	return 0;
 }
@@ -250,8 +257,8 @@ static int sn_close(struct net_device *netdev)
 	for (i = 0; i < dev->num_rxq; i++)
 		napi_disable(&dev->rx_queues[i]->rx.napi);
 
-	for (i = 0; i < dev->num_txq; i++)
-		napi_disable(&dev->tx_queues[i]->tx.napi);
+	for (i = 0; i < dev->num_tx_ctrlq; i++)
+		napi_disable(&dev->tx_ctrl_queues[i]->tx_ctrl.napi);
 
 	return 0;
 }
@@ -291,7 +298,7 @@ static void sn_enable_interrupt_tx(struct sn_queue *tx_queue)
 	/* LOOM: DEBUG: TODO: Less extreme synchronization */
 	//smp_mb();
 	__sync_synchronize();
-	tx_queue->tx.tx_regs->irq_disabled = 0;
+	tx_queue->tx_ctrl.tx_regs->irq_disabled = 0;
 	__sync_synchronize();
 	//smp_mb();
 
@@ -332,7 +339,7 @@ static void sn_disable_interrupt_tx(struct sn_queue *tx_queue)
 	//trace_printk("%s: sn_disable_interrupt_tx on tx_queue %d\n",
 	//	 tx_queue->dev->netdev->name, tx_queue->queue_id);
 
-	tx_queue->tx.tx_regs->irq_disabled = 1;
+	tx_queue->tx_ctrl.tx_regs->irq_disabled = 1;
 }
 
 static void sn_process_rx_metadata(struct sk_buff *skb,
@@ -385,13 +392,13 @@ static void sn_process_loopback(struct sn_device *dev,
 	int lock_required;
 
 	cpu = raw_smp_processor_id();
-	qid = dev->cpu_to_txq[cpu];
-	tx_queue = dev->tx_queues[qid];
+	qid = dev->cpu_to_tx_ctrlq[cpu];
+	tx_queue = dev->tx_ctrl_queues[qid];
 
-	lock_required = (tx_queue->tx.netdev_txq->xmit_lock_owner != cpu);
+	lock_required = (tx_queue->tx_ctrl.netdev_txq->xmit_lock_owner != cpu);
 
 	if (lock_required)
-		HARD_TX_LOCK(dev->netdev, tx_queue->tx.netdev_txq, cpu);
+		HARD_TX_LOCK(dev->netdev, tx_queue->tx_ctrl.netdev_txq, cpu);
 
 	for (i = 0; i < cnt; i++) {
 		if (!skbs[i])
@@ -402,7 +409,7 @@ static void sn_process_loopback(struct sn_device *dev,
 	}
 
 	if (lock_required)
-		HARD_TX_UNLOCK(dev->netdev, tx_queue->tx.netdev_txq);
+		HARD_TX_UNLOCK(dev->netdev, tx_queue->tx_ctrl.netdev_txq);
 }
 
 static int sn_poll_action_batch(struct sn_queue *rx_queue, int budget)
@@ -613,7 +620,7 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 	netif_stop_subqueue(netdev, queue->queue_id);
 	sn_enable_interrupt_tx(queue);
 
-	queue->tx.stats.stop_queue++;
+	queue->tx_ctrl.stats.stop_queue++;
 
 	/* TODO: Which sync function? */
 	smp_mb();
@@ -633,7 +640,7 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 	/* TODO: Disable the interrupt again? */
 	sn_disable_interrupt_tx(queue);
 
-	queue->tx.stats.restart_queue++;
+	queue->tx_ctrl.stats.restart_queue++;
 
 	return 0;
 }
@@ -646,9 +653,9 @@ static int sn_poll_tx(struct napi_struct *napi, int budget)
 
 	int ret;
 
-	tx_queue = container_of(napi, struct sn_queue, tx.napi);
+	tx_queue = container_of(napi, struct sn_queue, tx_ctrl.napi);
 
-	tx_queue->tx.stats.polls++;
+	tx_queue->tx_ctrl.stats.polls++;
 
 	/* LOOM: DEBUG */
 	//log_info("%s: sn_poll_tx on tx_queue %d\n",
@@ -666,7 +673,7 @@ static int sn_poll_tx(struct napi_struct *napi, int budget)
 	if (__netif_subqueue_stopped(tx_queue->dev->netdev, tx_queue->queue_id) &&
 	    sn_avail_snbs(tx_queue) > 0) {
 		netif_wake_subqueue(tx_queue->dev->netdev, tx_queue->queue_id);
-		tx_queue->tx.stats.restart_queue++;
+		tx_queue->tx_ctrl.stats.restart_queue++;
 
 		napi_complete(napi);
 
@@ -710,7 +717,7 @@ static int sn_poll_tx(struct napi_struct *napi, int budget)
 }
 
 static void sn_set_tx_metadata(struct sk_buff *skb,
-			       struct sn_tx_metadata *tx_meta)
+			       struct sn_tx_data_metadata *tx_meta)
 {
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		tx_meta->csum_start = skb_checksum_start_offset(skb);
@@ -731,7 +738,7 @@ static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
 					   struct sn_device* dev,
 					   struct sk_buff* skb)
 {
-	struct sn_tx_metadata tx_meta;
+	struct sn_tx_data_metadata tx_meta;
 	int ret = NET_XMIT_DROP;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
@@ -741,16 +748,16 @@ static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
 			goto skip_send;
 	}
 #else
-	if (queue->tx.opts.tci) {
+	if (queue->tx_ctrl.opts.tci) {
 		skb = vlan_insert_tag(skb, htons(ETH_P_8021Q),
-				queue->tx.opts.tci);
+				queue->tx_ctrl.opts.tci);
 		if (unlikely(!skb))
 			goto skip_send;
 	}
 
-	if (queue->tx.opts.outer_tci) {
+	if (queue->tx_ctrl.opts.outer_tci) {
 		skb = vlan_insert_tag(skb, htons(ETH_P_8021AD),
-				queue->tx.opts.outer_tci);
+				queue->tx_ctrl.opts.outer_tci);
 		if (unlikely(!skb))
 			goto skip_send;
 	}
@@ -769,17 +776,17 @@ static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
 skip_send:
 	switch (ret) {
 	case NET_XMIT_CN:
-		queue->tx.stats.throttled++;
+		queue->tx_ctrl.stats.throttled++;
 		/* fall through */
 
 	case NETDEV_TX_OK:
-		queue->tx.stats.packets++;
-		queue->tx.stats.bytes += skb->len;
+		queue->tx_ctrl.stats.packets++;
+		queue->tx_ctrl.stats.bytes += skb->len;
 		break;
 
 	case NETDEV_TX_BUSY:
 		sn_maybe_stop_tx(queue);
-		queue->tx.stats.busy++;
+		queue->tx_ctrl.stats.busy++;
 		/* should not free skb */
 		return NETDEV_TX_BUSY;
 
@@ -789,7 +796,7 @@ skip_send:
 		log_info("%s: dropped packet tx_queue=%d\n",
 			 queue->dev->netdev->name, queue->queue_id);
 
-		queue->tx.stats.dropped++;
+		queue->tx_ctrl.stats.dropped++;
 		break;
 
 	case SN_NET_XMIT_BUFFERED:
@@ -825,13 +832,13 @@ static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 		return NET_XMIT_DROP;
 	}
 
-	if (unlikely(txq >= dev->num_txq)) {
+	if (unlikely(txq >= dev->num_tx_ctrlq)) {
 		log_err("invalid txq=%u\n", txq);
 		dev_kfree_skb(skb);
 		return NET_XMIT_DROP;
 	}
 
-	queue = dev->tx_queues[txq];
+	queue = dev->tx_ctrl_queues[txq];
 	return sn_send_tx_queue(queue, dev, skb);
 }
 
@@ -851,7 +858,7 @@ static u16 sn_select_queue(struct net_device *netdev,
 {
 	struct sn_device *dev = netdev_priv(netdev);
 
-	return dev->cpu_to_txq[raw_smp_processor_id()];
+	return dev->cpu_to_tx_ctrlq[raw_smp_processor_id()];
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
@@ -867,10 +874,10 @@ static void sn_get_stats64(struct net_device *netdev,
 
 	int i;
 
-	for (i = 0; i < dev->num_txq; i++) {
-		storage->tx_packets 	+= dev->tx_queues[i]->tx.stats.packets;
-		storage->tx_bytes 	+= dev->tx_queues[i]->tx.stats.bytes;
-		storage->tx_dropped 	+= dev->tx_queues[i]->tx.stats.dropped;
+	for (i = 0; i < dev->num_tx_ctrlq; i++) {
+		storage->tx_packets 	+= dev->tx_ctrl_queues[i]->tx_ctrl.stats.packets;
+		storage->tx_bytes 	+= dev->tx_ctrl_queues[i]->tx_ctrl.stats.bytes;
+		storage->tx_dropped 	+= dev->tx_ctrl_queues[i]->tx_ctrl.stats.dropped;
 	}
 
 	for (i = 0; i < dev->num_rxq; i++) {
@@ -966,12 +973,12 @@ static void sn_set_default_queue_mapping(struct sn_device *dev)
 	int rxq;
 
 	for_each_possible_cpu(cpu) {
-		dev->cpu_to_txq[cpu] = 0;
+		dev->cpu_to_tx_ctrlq[cpu] = 0;
 		dev->cpu_to_rxqs[cpu][0] = -1;
 	}
 
 	for_each_online_cpu(cpu) {
-		dev->cpu_to_txq[cpu] = cpu % dev->num_txq;
+		dev->cpu_to_tx_ctrlq[cpu] = cpu % dev->num_tx_ctrlq;
 	}
 
 	for (rxq = 0; rxq < dev->num_rxq; rxq++) {
@@ -1017,19 +1024,25 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 		return -EINVAL;
 	}
 
-	if (conf->num_txq < 1 || conf->num_rxq < 1 ||
-			conf->num_txq > MAX_QUEUES ||
+	if (conf->num_tx_ctrlq < 1 || conf->num_tx_dataq < 1 ||
+			conf->num_rxq < 1 ||
+			conf->num_tx_ctrlq > MAX_QUEUES ||
+			conf->num_tx_dataq > SN_MAX_TX_DATAQ ||
 			conf->num_rxq > MAX_QUEUES)
 	{
-		log_err("invalid ioctl arguments: num_txq=%d, num_rxq=%d\n",
-				conf->num_txq, conf->num_rxq);
+		log_err("invalid ioctl arguments: num_tx_ctrlq=%d, "
+				"num_tx_dataq=%d, num_rxq=%d\n",
+				conf->num_tx_ctrlq, conf->num_tx_dataq,
+				conf->num_rxq);
 		return -EINVAL;
 	}
-	log_err("ioctl arguments: num_txq=%d, num_rxq=%d\n",
-			conf->num_txq, conf->num_rxq);
+	log_err("ioctl arguments: num_tx_ctrlq=%d, "
+			"num_tx_dataq=%d, num_rxq=%d\n",
+			conf->num_tx_ctrlq, conf->num_tx_dataq,
+			conf->num_rxq);
 
 	netdev = alloc_etherdev_mqs(sizeof(struct sn_device),
-			conf->num_txq, conf->num_rxq);
+			conf->num_tx_ctrlq, conf->num_rxq);
 	if (!netdev) {
 		log_err("alloc_netdev_mqs() failed\n");
 		return -ENOMEM;
@@ -1049,7 +1062,8 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 
 	dev = netdev_priv(netdev);
 	dev->netdev = netdev;
-	dev->num_txq = conf->num_txq;
+	dev->num_tx_ctrlq = conf->num_tx_ctrlq;
+	dev->num_tx_dataq = conf->num_tx_dataq;
 	dev->num_rxq = conf->num_rxq;
 
 	sn_set_default_queue_mapping(dev);
@@ -1219,30 +1233,30 @@ void sn_trigger_softirq_tx(void *info)
 	//log_info("%s: sn_trigger_softirq_tx on cpu %d\n",
 	//	 dev->netdev->name, cpu);
 
-	if (unlikely(dev->cpu_to_txq[cpu] == -1)) {
-		struct sn_queue *tx_queue = dev->tx_queues[0];
+	if (unlikely(dev->cpu_to_tx_ctrlq[cpu] == -1)) {
+		struct sn_queue *tx_ctrl_queue = dev->tx_ctrl_queues[0];
 
                 /* LOOM: DEBUG: */
                 //trace_printk("%s: sn_trigger_softirq_tx cpu has no txq?!? "
-		//	"for cpu %d queue %d\n", tx_queue->dev->netdev->name,
-		//	cpu, tx_queue->queue_id);
+		//	"for cpu %d queue %d\n", tx_ctrl_queue->dev->netdev->name,
+		//	cpu, tx_ctrl_queue->queue_id);
 
-		tx_queue->tx.stats.interrupts++;
-		napi_schedule(&tx_queue->tx.napi);
+		tx_ctrl_queue->tx_ctrl.stats.interrupts++;
+		napi_schedule(&tx_ctrl_queue->tx_ctrl.napi);
 
 	} else {
                 /* LOOM: TODO: In the future, multiple TX queues may be mapped
                  * to one core. Awake them all. */
-		int txq = dev->cpu_to_txq[cpu];
-		struct sn_queue *tx_queue = dev->tx_queues[txq];
+		int txq = dev->cpu_to_tx_ctrlq[cpu];
+		struct sn_queue *tx_ctrl_queue = dev->tx_ctrl_queues[txq];
 
                 /* LOOM: DEBUG: */
                 //trace_printk("%s: sn_trigger_softirq_tx "
-		//	"for cpu %d queue %d\n", tx_queue->dev->netdev->name,
-		//	cpu, tx_queue->queue_id);
+		//	"for cpu %d queue %d\n", tx_ctrl_queue->dev->netdev->name,
+		//	cpu, tx_ctrl_queue->queue_id);
 
-		tx_queue->tx.stats.interrupts++;
-		napi_schedule(&tx_queue->tx.napi);
+		tx_ctrl_queue->tx_ctrl.stats.interrupts++;
+		napi_schedule(&tx_ctrl_queue->tx_ctrl.napi);
 	}
 }
 
@@ -1265,15 +1279,15 @@ void sn_trigger_softirq_with_qid(void *info, int rxq)
 void sn_trigger_softirq_with_qid_tx(void *info, int txq)
 {
 	struct sn_device *dev = info;
-	struct sn_queue *tx_queue;
+	struct sn_queue *tx_ctrl_queue;
 
-	if (txq < 0 || txq >= dev->num_txq) {
+	if (txq < 0 || txq >= dev->num_tx_ctrlq) {
 		log_err("invalid txq %d\n", txq);
 		return;
 	}
 
-	tx_queue = dev->tx_queues[txq];
+	tx_ctrl_queue = dev->tx_ctrl_queues[txq];
 
-	tx_queue->tx.stats.interrupts++;
-	napi_schedule(&tx_queue->tx.napi);
+	tx_ctrl_queue->tx_ctrl.stats.interrupts++;
+	napi_schedule(&tx_ctrl_queue->tx_ctrl.napi);
 }

@@ -32,7 +32,7 @@
 #include "sn_kernel.h"
 #include "../snbuf_layout.h"
 
-#define NUM_STATS_PER_TX_QUEUE (sizeof(struct sn_queue_tx_stats) / sizeof(u64))
+#define NUM_STATS_PER_TX_CTRL_QUEUE (sizeof(struct sn_queue_tx_ctrl_stats) / sizeof(u64))
 #define NUM_STATS_PER_RX_QUEUE (sizeof(struct sn_queue_rx_stats) / sizeof(u64))
 
 static int sn_ethtool_get_sset_count(struct net_device *netdev, int sset)
@@ -41,7 +41,7 @@ static int sn_ethtool_get_sset_count(struct net_device *netdev, int sset)
 
 	switch(sset) {
 	case ETH_SS_STATS:
-		return NUM_STATS_PER_TX_QUEUE * dev->num_txq +
+		return NUM_STATS_PER_TX_CTRL_QUEUE * dev->num_tx_ctrlq +
 			NUM_STATS_PER_RX_QUEUE * dev->num_rxq;
 	default:
 		return -EOPNOTSUPP;
@@ -54,7 +54,7 @@ static void sn_ethtool_get_strings(struct net_device *netdev,
 	struct sn_device *dev = netdev_priv(netdev);
 	int i;
 
-	BUILD_BUG_ON(NUM_STATS_PER_TX_QUEUE != 10);
+	BUILD_BUG_ON(NUM_STATS_PER_TX_CTRL_QUEUE != 10);
 	BUILD_BUG_ON(NUM_STATS_PER_RX_QUEUE != 6);
 
 	if (sset != ETH_SS_STATS)
@@ -63,7 +63,7 @@ static void sn_ethtool_get_strings(struct net_device *netdev,
 	/* Use similar naming to ixgbe,
 	 * so that we can reuse the same monitoring script */
 
-	for (i = 0; i < dev->num_txq; i++) {
+	for (i = 0; i < dev->num_tx_ctrlq; i++) {
 		sprintf(p, "tx_queue_%u_packets", i);
 		p += ETH_GSTRING_LEN;
 		sprintf(p, "tx_queue_%u_bytes", i);
@@ -109,21 +109,21 @@ static void sn_ethtool_get_ethtool_stats(struct net_device *netdev,
 	struct sn_device *dev = netdev_priv(netdev);
 	int i;
 
-	BUILD_BUG_ON(NUM_STATS_PER_TX_QUEUE != 10);
+	BUILD_BUG_ON(NUM_STATS_PER_TX_CTRL_QUEUE != 10);
 	BUILD_BUG_ON(NUM_STATS_PER_RX_QUEUE != 6);
 
-	for (i = 0; i < dev->num_txq; i++) {
-		data[0] = dev->tx_queues[i]->tx.stats.packets;
-		data[1] = dev->tx_queues[i]->tx.stats.bytes;
-		data[2] = dev->tx_queues[i]->tx.stats.dropped;
-		data[3] = dev->tx_queues[i]->tx.stats.throttled;
-		data[4] = dev->tx_queues[i]->tx.stats.descriptor;
-		data[5] = dev->tx_queues[i]->tx.stats.polls;
-		data[6] = dev->tx_queues[i]->tx.stats.interrupts;
-		data[7] = dev->tx_queues[i]->tx.stats.busy;
-		data[8] = dev->tx_queues[i]->tx.stats.stop_queue;
-		data[9] = dev->tx_queues[i]->tx.stats.restart_queue;
-		data += NUM_STATS_PER_TX_QUEUE;
+	for (i = 0; i < dev->num_tx_ctrlq; i++) {
+		data[0] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.packets;
+		data[1] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.bytes;
+		data[2] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.dropped;
+		data[3] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.throttled;
+		data[4] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.descriptor;
+		data[5] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.polls;
+		data[6] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.interrupts;
+		data[7] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.busy;
+		data[8] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.stop_queue;
+		data[9] = dev->tx_ctrl_queues[i]->tx_ctrl.stats.restart_queue;
+		data += NUM_STATS_PER_TX_CTRL_QUEUE;
 	}
 
 	for (i = 0; i < dev->num_rxq; i++) {

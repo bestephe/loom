@@ -3,7 +3,7 @@
 #vmlinuz=/boot/vmlinuz-4.9.10-loom
 vmlinuz=../../code/linux-4.9/arch/x86_64/boot/bzImage
 initrd=/boot/initrd.img-4.9.10-loom
-num_cpus=4
+num_cpus=6
 
 # Allow for unsafe interrupt assignment
 echo 1 | sudo tee /sys/module/kvm/parameters/allow_unsafe_assigned_interrupts 

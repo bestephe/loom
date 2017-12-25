@@ -34,6 +34,11 @@
 #include "../kmod/sn_common.h"
 #include "../port.h"
 
+static_assert(SN_MAX_TX_CTRLQ <= MAX_QUEUES_PER_DIR,
+        "Cannot have more ctrl queues than max queues");
+static_assert(SN_MAX_RXQ <= MAX_QUEUES_PER_DIR,
+        "Cannot have more rxqs queues than max queues");
+
 class VPort final : public Port {
  public:
   VPort() : fd_(), bar_(), map_(), netns_fd_(), container_pid_() {}
@@ -47,6 +52,7 @@ class VPort final : public Port {
 
  private:
   /* Loom. Currently used to save TSO state. Maybe more in the future. */
+  /* Loom: This code is not used at the current moment. */
   struct txq_private {
     /* Current batch of segments. */
     int seg_cnt;
@@ -69,16 +75,18 @@ class VPort final : public Port {
   struct queue {
     union {
       struct sn_rxq_registers *rx_regs;
-      struct sn_txq_registers *tx_regs;
+      struct sn_tx_ctrlq_registers *tx_regs;
     };
-
-    /* Loom. Probably in the wrong place? */
-    struct txq_private txq_priv;
 
     struct llring *drv_to_sn;
     struct llring *sn_to_drv;
-    /* Third tx queue ignored by the driver for now. */
-    /* struct llring *pktpool; */ 
+  };
+
+  struct tx_data_queue {
+    /* Loom. Used for TSO (Not used right now). Probably in the wrong place? */
+    struct txq_private txq_priv;
+
+    struct llring *drv_to_sn;
   };
 
   void FreeBar();
@@ -97,8 +105,9 @@ class VPort final : public Port {
   char ifname_[IFNAMSIZ]; /* could be different from Name() */
   void *bar_;
 
-  struct queue inc_qs_[MAX_QUEUES_PER_DIR];
+  struct queue inc_ctrl_qs_[MAX_QUEUES_PER_DIR];
   struct queue out_qs_[MAX_QUEUES_PER_DIR];
+  struct tx_data_queue inc_data_qs_[SN_MAX_TX_DATAQ];
 
   struct sn_ioc_queue_mapping map_;
 

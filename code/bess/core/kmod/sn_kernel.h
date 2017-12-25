@@ -49,6 +49,11 @@
 #define LOOM
 
 #define MAX_QUEUES (128)
+/* TODO: BUILD_BUG_ON_MSG instead? */
+_Static_assert(SN_MAX_TX_CTRLQ <= MAX_QUEUES,
+        "Cannot have more ctrl queues than max queues");
+_Static_assert(SN_MAX_RXQ <= MAX_QUEUES,
+        "Cannot have more rxqs queues than max queues");
 
 #define MAX_BATCH (32)
 
@@ -64,13 +69,10 @@ struct sn_queue {
 
 	struct llring *drv_to_sn;
 	struct llring *sn_to_drv;
-        /* TODO: LOOM: I don't think I want a 3rd queue for a pktpool anymore.
-         * I should go and remove this. */
-        struct llring *pktpool;
 
 	union {
 		struct {
-			struct sn_queue_tx_stats {
+			struct sn_queue_tx_ctrl_stats {
 				u64 packets;
 				u64 bytes;
 				u64 dropped;
@@ -83,12 +85,32 @@ struct sn_queue {
 				u64 restart_queue;
 			} stats;
 
-			struct sn_txq_registers *tx_regs;
+			struct sn_tx_ctrlq_registers *tx_regs;
 			struct napi_struct napi;
 			struct netdev_queue *netdev_txq;
 
 			struct tx_queue_opts opts;
-		} tx;
+		} tx_ctrl;
+
+		struct {
+			struct sn_queue_tx_data_stats {
+				u64 packets;
+				u64 bytes;
+				u64 dropped;
+				u64 throttled;
+				u64 descriptor;
+				u64 polls;
+				u64 interrupts;
+				u64 busy;
+				u64 stop_queue;
+				u64 restart_queue;
+			} stats;
+
+			struct tx_queue_opts opts;
+
+			/* TODO: More tx_data queue data.
+			 *  Socket -> dataQ mapping seems useful. */
+		} tx_data;
 
 		struct {
 			struct sn_queue_rx_stats {
@@ -115,7 +137,7 @@ struct sn_ops {
 	 * The caller sets tx_meta, and the callee is responsible to
 	 * transmit it along with the packet data. */
 	int (*do_tx)(struct sn_queue *tx_queue, struct sk_buff *skb,
-		     struct sn_tx_metadata *tx_meta);
+		     struct sn_tx_data_metadata *tx_meta);
 
 	/* Receives a packet and returns an skb (NULL if no pending packet).
 	 * The callee fills the given rx_meta, then the caller will take care
@@ -137,14 +159,16 @@ struct sn_ops {
 struct sn_device {
 	struct net_device *netdev;
 
-	int num_txq;
+	int num_tx_ctrlq;
 	int num_rxq;
+	int num_tx_dataq;
 
-	struct sn_queue *tx_queues[MAX_QUEUES];
+	struct sn_queue *tx_ctrl_queues[MAX_QUEUES];
 	struct sn_queue *rx_queues[MAX_QUEUES];
+	struct sn_queue *tx_data_queues[SN_MAX_TX_DATAQ];
 
 	/* cpu -> txq mapping */
-	int cpu_to_txq[NR_CPUS];
+	int cpu_to_tx_ctrlq[NR_CPUS];
 
 	/* cpu -> rxq array terminating with -1 */
 	int cpu_to_rxqs[NR_CPUS][MAX_QUEUES + 1];
