@@ -52,6 +52,7 @@ struct sn_tx_buffer {
 
 	struct sn_tx_buffer_queue {
 		struct sn_queue *queue;
+		struct sn_queue *data_queue_arr[MAX_BATCH];
 		struct sk_buff *skb_arr[MAX_BATCH];
 		struct sn_tx_data_metadata meta_arr[MAX_BATCH];
 		int cnt;
@@ -172,7 +173,8 @@ int sn_avail_snbs(struct sn_queue *queue)
 	return cnt;
 }
 
-static int sn_host_do_tx_batch(struct sn_queue *queue,
+static int sn_host_do_tx_batch(struct sn_queue *ctrl_queue,
+		struct sn_queue *data_queue[],
 		struct sk_buff *skb_arr[],
 		struct sn_tx_data_metadata meta_arr[],
 		int cnt_requested)
@@ -185,22 +187,22 @@ static int sn_host_do_tx_batch(struct sn_queue *queue,
 	phys_addr_t paddr_arr[MAX_BATCH];
 
 	cnt_to_send = min(cnt_requested,
-			(int)llring_free_count(queue->drv_to_sn));
+			(int)llring_free_count(ctrl_queue->drv_to_sn));
 	cnt_to_send = min(cnt_to_send, MAX_BATCH);
 
-	cnt = alloc_snb_burst(queue, paddr_arr, cnt_to_send);
+	cnt = alloc_snb_burst(ctrl_queue, paddr_arr, cnt_to_send);
         /* TODO: update stats differently soon. */
-	queue->tx_ctrl.stats.descriptor += cnt_requested - cnt;
+	ctrl_queue->tx_ctrl.stats.descriptor += cnt_requested - cnt;
 
 	/* LOOM: DEBUG: */
 	if (cnt_requested - cnt > 0) {
 		log_info("%s: cnt_requested: %d, cnt_to_send: %d, "
 			 "MAX_BATCH: %d, cnt: %d, sn_avail_snbs: %d, "
 			 "sn_to_drv: %d, drv_to_sn: %d\n",
-			 queue->dev->netdev->name, cnt_requested,
-			 cnt_to_send, MAX_BATCH, cnt, sn_avail_snbs(queue),
-			 llring_count(queue->sn_to_drv),
-			 llring_free_count(queue->drv_to_sn));
+			 ctrl_queue->dev->netdev->name, cnt_requested,
+			 cnt_to_send, MAX_BATCH, cnt, sn_avail_snbs(ctrl_queue),
+			 llring_count(ctrl_queue->sn_to_drv),
+			 llring_free_count(ctrl_queue->drv_to_sn));
 	}
 
 	if (cnt == 0)
@@ -232,12 +234,12 @@ static int sn_host_do_tx_batch(struct sn_queue *queue,
 		}
 	}
 
-	ret = llring_sp_enqueue_burst(queue->drv_to_sn, paddr_arr, cnt);
+	ret = llring_sp_enqueue_burst(ctrl_queue->drv_to_sn, paddr_arr, cnt);
 	if (ret < cnt && net_ratelimit()) {
 		/* It should never happen since we cap cnt with llring_count().
 		 * If it does, snbufs leak. Ouch. */
-		log_err("%s: queue %d is overflowing!\n",
-				queue->dev->netdev->name, queue->queue_id);
+		log_err("%s: ctrl_queue %d is overflowing!\n",
+				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
 	}
 
 	return ret;
@@ -253,7 +255,7 @@ static void sn_host_flush_tx(void)
 
 	for (i = 0; i < buf->tx_queue_cnt; i++) {
 		struct sn_tx_buffer_queue *buf_queue;
-		struct sn_queue *queue;
+		struct sn_queue *ctrl_queue;
 		struct netdev_queue *netdev_txq;
 
 		int lock_required;
@@ -262,38 +264,39 @@ static void sn_host_flush_tx(void)
 		int j;
 
 		buf_queue = &buf->queue_arr[i];
-		queue = buf_queue->queue;
-		netdev_txq = queue->tx_ctrl.netdev_txq;
+		ctrl_queue = buf_queue->queue;
+		netdev_txq = ctrl_queue->tx_ctrl.netdev_txq;
 
 		lock_required = (netdev_txq->xmit_lock_owner != cpu);
 
 		if (lock_required)
-			HARD_TX_LOCK(queue->dev->netdev, netdev_txq, cpu);
+			HARD_TX_LOCK(ctrl_queue->dev->netdev, netdev_txq, cpu);
 
-		sent = sn_host_do_tx_batch(queue,
+		sent = sn_host_do_tx_batch(ctrl_queue,
+				buf_queue->data_queue_arr,
 				buf_queue->skb_arr,
 				buf_queue->meta_arr,
 				buf_queue->cnt);
 
 		if (lock_required)
-			HARD_TX_UNLOCK(queue->dev->netdev, netdev_txq);
+			HARD_TX_UNLOCK(ctrl_queue->dev->netdev, netdev_txq);
 
-		queue->tx_ctrl.stats.packets += sent;
-		queue->tx_ctrl.stats.dropped += buf_queue->cnt - sent;
+		ctrl_queue->tx_ctrl.stats.packets += sent;
+		ctrl_queue->tx_ctrl.stats.dropped += buf_queue->cnt - sent;
 
 		/* LOOM: DEBUG. */
 		if ((buf_queue->cnt - sent) > 0) {
-			log_info("%s: dropped %d packets tx_queue=%d\n",
-				 queue->dev->netdev->name,
+			log_info("%s: dropped %d packets tx_ctrl_queue=%d\n",
+				 ctrl_queue->dev->netdev->name,
 				 (buf_queue->cnt - sent),
-				 queue->queue_id);
+				 ctrl_queue->queue_id);
 		}
 
 		for (j = 0; j < buf_queue->cnt; j++) {
 			struct sk_buff *skb = buf_queue->skb_arr[j];
 
 			if (j < sent)
-				queue->tx_ctrl.stats.bytes += skb->len;
+				ctrl_queue->tx_ctrl.stats.bytes += skb->len;
 
 			dev_kfree_skb(skb);
 		}
@@ -302,8 +305,8 @@ static void sn_host_flush_tx(void)
 	buf->tx_queue_cnt = 0;
 }
 
-static void sn_host_buffer_tx(struct sn_queue *queue, struct sk_buff *skb,
-			 struct sn_tx_data_metadata *tx_meta)
+static void sn_host_buffer_tx(struct sn_queue *ctrl_queue, struct sn_queue *data_queue,
+			 struct sk_buff *skb, struct sn_tx_data_metadata *tx_meta)
 {
 	struct sn_tx_buffer *buf;
 	struct sn_tx_buffer_queue *buf_queue;
@@ -315,7 +318,7 @@ again:
 	buf_queue = NULL;
 
 	for (i = 0; i < buf->tx_queue_cnt; i++)
-		if (buf->queue_arr[i].queue == queue)
+		if (buf->queue_arr[i].queue == ctrl_queue)
 			buf_queue = &buf->queue_arr[i];
 
 	if (!buf_queue) {
@@ -327,9 +330,10 @@ again:
 		buf_queue = &buf->queue_arr[buf->tx_queue_cnt++];
 
 		buf_queue->cnt = 0;
-		buf_queue->queue = queue;
+		buf_queue->queue = ctrl_queue;
 	}
 
+	buf_queue->data_queue_arr[buf_queue->cnt] = data_queue;
 	buf_queue->skb_arr[buf_queue->cnt] = skb;
 	buf_queue->meta_arr[buf_queue->cnt] = *tx_meta;
 	buf_queue->cnt++;
@@ -340,14 +344,14 @@ again:
 	//	 sn_avail_snbs(queue), queue->queue_id);
 
 	if (buf_queue->cnt == MAX_BATCH ||
-	    buf_queue->cnt >= sn_avail_snbs(queue))
+	    buf_queue->cnt >= sn_avail_snbs(ctrl_queue))
 		sn_host_flush_tx();
 
-	sn_maybe_stop_tx(queue);
+	sn_maybe_stop_tx(ctrl_queue);
 }
 
-static int sn_host_do_tx(struct sn_queue *queue, struct sk_buff *skb,
-			 struct sn_tx_data_metadata *tx_meta)
+static int sn_host_do_tx(struct sn_queue *ctrl_queue, struct sn_queue *data_queue,
+			 struct sk_buff *skb, struct sn_tx_data_metadata *tx_meta)
 {
 	int *polling;
 
@@ -355,18 +359,18 @@ static int sn_host_do_tx(struct sn_queue *queue, struct sk_buff *skb,
 
 	polling = this_cpu_ptr(&in_batched_polling);
 
-	/* LOOM: why is tx disallowed when the RX side is polling?  They seem
+	/* Loom: why is tx disallowed when the RX side is polling?  They seem
 	 * orthogonal. */
 	if (*polling) {
-		sn_host_buffer_tx(queue, skb, tx_meta);
+		sn_host_buffer_tx(ctrl_queue, data_queue, skb, tx_meta);
 		return SN_NET_XMIT_BUFFERED;
 	}
 
-	ret = sn_host_do_tx_batch(queue, &skb, tx_meta, 1);
+	ret = sn_host_do_tx_batch(ctrl_queue, &data_queue, &skb, tx_meta, 1);
 
-	/* LOOM: Check if the queue should be stopped because there are not any
+	/* Loom: Check if the queue should be stopped because there are not any
 	 * snb's left. */
-	sn_maybe_stop_tx(queue);
+	sn_maybe_stop_tx(ctrl_queue);
 
 	return (ret == 1) ? NETDEV_TX_OK : NETDEV_TX_BUSY;
 }

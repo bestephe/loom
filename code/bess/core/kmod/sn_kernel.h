@@ -132,12 +132,18 @@ struct sn_queue {
 	};
 } ____cacheline_aligned_in_smp;
 
+struct sn_queue_assignment_state {
+	atomic_t next_dataq;
+} ____cacheline_aligned_in_smp;
+
 struct sn_ops {
 	/* Returns NET_XMIT_SUCCESS, NET_XMIT_CN, or NET_XMIT_DROP.
 	 * The caller sets tx_meta, and the callee is responsible to
 	 * transmit it along with the packet data. */
-	int (*do_tx)(struct sn_queue *tx_queue, struct sk_buff *skb,
-		     struct sn_tx_data_metadata *tx_meta);
+	/* This has changed. It can instead return NET_XMIT_BUSY. */
+	int (*do_tx)(struct sn_queue *tx_ctrl_queue, struct sn_queue *tx_data_queue,
+		     struct sk_buff *skb, struct sn_tx_data_metadata *tx_meta);
+	/* Loom: TODO: sn_tx_ctrl_metadata as well. */
 
 	/* Receives a packet and returns an skb (NULL if no pending packet).
 	 * The callee fills the given rx_meta, then the caller will take care
@@ -172,6 +178,9 @@ struct sn_device {
 
 	/* cpu -> rxq array terminating with -1 */
 	int cpu_to_rxqs[NR_CPUS][MAX_QUEUES + 1];
+
+	/* queue assignment state */
+	struct sn_queue_assignment_state qa_state;
 
 	struct sn_ops *ops;
 };

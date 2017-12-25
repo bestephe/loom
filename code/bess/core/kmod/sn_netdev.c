@@ -33,6 +33,9 @@
 #include <linux/if_vlan.h>
 #include <linux/timex.h>
 
+/* Loom: For queue assignment hack. */
+#include <net/sock.h>
+
 #ifndef UTS_RELEASE
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)
 #include <linux/utsrelease.h>
@@ -374,7 +377,8 @@ static void sn_process_rx_metadata(struct sk_buff *skb,
 	}
 }
 
-static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
+static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *ctrl_queue,
+					   struct sn_queue* data_queue,
 					   struct sn_device* dev,
 					   struct sk_buff* skb);
 
@@ -383,33 +387,37 @@ DEFINE_PER_CPU(int, in_batched_polling);
 static void sn_process_loopback(struct sn_device *dev,
 		struct sk_buff *skbs[], int cnt)
 {
-	struct sn_queue *tx_queue;
+	struct sn_queue *tx_ctrl_queue;
+	struct sn_queue *tx_data_queue;
 
-	int qid;
+	int ctrl_qid;
+	int data_qid;
 	int cpu;
 	int i;
 
 	int lock_required;
 
 	cpu = raw_smp_processor_id();
-	qid = dev->cpu_to_tx_ctrlq[cpu];
-	tx_queue = dev->tx_ctrl_queues[qid];
+	ctrl_qid = dev->cpu_to_tx_ctrlq[cpu];
+	data_qid = 0; /* Loom: Assume loopback is infrequent. Revisit later. */
+	tx_ctrl_queue = dev->tx_ctrl_queues[ctrl_qid];
+	tx_data_queue = dev->tx_data_queues[data_qid];
 
-	lock_required = (tx_queue->tx_ctrl.netdev_txq->xmit_lock_owner != cpu);
+	lock_required = (tx_ctrl_queue->tx_ctrl.netdev_txq->xmit_lock_owner != cpu);
 
 	if (lock_required)
-		HARD_TX_LOCK(dev->netdev, tx_queue->tx_ctrl.netdev_txq, cpu);
+		HARD_TX_LOCK(dev->netdev, tx_ctrl_queue->tx_ctrl.netdev_txq, cpu);
 
 	for (i = 0; i < cnt; i++) {
 		if (!skbs[i])
 			continue;
 
 		/* Ignoring return value here */
-		sn_send_tx_queue(tx_queue, dev, skbs[i]);
+		sn_send_tx_queue(tx_ctrl_queue, tx_data_queue, dev, skbs[i]);
 	}
 
 	if (lock_required)
-		HARD_TX_UNLOCK(dev->netdev, tx_queue->tx_ctrl.netdev_txq);
+		HARD_TX_UNLOCK(dev->netdev, tx_ctrl_queue->tx_ctrl.netdev_txq);
 }
 
 static int sn_poll_action_batch(struct sn_queue *rx_queue, int budget)
@@ -734,7 +742,8 @@ static void sn_set_tx_metadata(struct sk_buff *skb,
         //tx_meta->drv_xmit_ts = get_cycles();
 }
 
-static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
+static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *ctrl_queue,
+					   struct sn_queue* data_queue,
 					   struct sn_device* dev,
 					   struct sk_buff* skb)
 {
@@ -742,51 +751,51 @@ static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *queue,
 	int ret = NET_XMIT_DROP;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,10,0)
-	if (queue->tx.opts.tci) {
+	if (ctrl_queue->tx.opts.tci) {
 		skb = vlan_insert_tag(skb, queue->tx.opts.tci);
 		if (unlikely(!skb))
 			goto skip_send;
 	}
 #else
-	if (queue->tx_ctrl.opts.tci) {
+	if (ctrl_queue->tx_ctrl.opts.tci) {
 		skb = vlan_insert_tag(skb, htons(ETH_P_8021Q),
-				queue->tx_ctrl.opts.tci);
+				ctrl_queue->tx_ctrl.opts.tci);
 		if (unlikely(!skb))
 			goto skip_send;
 	}
 
-	if (queue->tx_ctrl.opts.outer_tci) {
+	if (ctrl_queue->tx_ctrl.opts.outer_tci) {
 		skb = vlan_insert_tag(skb, htons(ETH_P_8021AD),
-				queue->tx_ctrl.opts.outer_tci);
+				ctrl_queue->tx_ctrl.opts.outer_tci);
 		if (unlikely(!skb))
 			goto skip_send;
 	}
 #endif
 
-        /* LOOM: TODO: I don't feel like orphaning the skb is necessary here.
+        /* Loom: TODO: I don't feel like orphaning the skb is necessary here.
 	 * In particular, I feel like this breaks TCP Small Queues (although so
 	 * does tricking Linux into not using Qdisc). */
-	/* LOOM: Given the addition of NETDEV_TX_BUSY, this especially makes me
-	 * concerned given that the skb may not always be freed. */
+	/* Loom: Given the addition of NETDEV_TX_BUSY, this makes me concerned
+	 * given that the skb may not always be freed. */
 	skb_orphan(skb);
 
 	sn_set_tx_metadata(skb, &tx_meta);
-	ret = dev->ops->do_tx(queue, skb, &tx_meta);
+	ret = dev->ops->do_tx(ctrl_queue, data_queue, skb, &tx_meta);
 
 skip_send:
 	switch (ret) {
 	case NET_XMIT_CN:
-		queue->tx_ctrl.stats.throttled++;
+		ctrl_queue->tx_ctrl.stats.throttled++;
 		/* fall through */
 
 	case NETDEV_TX_OK:
-		queue->tx_ctrl.stats.packets++;
-		queue->tx_ctrl.stats.bytes += skb->len;
+		ctrl_queue->tx_ctrl.stats.packets++;
+		ctrl_queue->tx_ctrl.stats.bytes += skb->len;
 		break;
 
 	case NETDEV_TX_BUSY:
-		sn_maybe_stop_tx(queue);
-		queue->tx_ctrl.stats.busy++;
+		sn_maybe_stop_tx(ctrl_queue);
+		ctrl_queue->tx_ctrl.stats.busy++;
 		/* should not free skb */
 		return NETDEV_TX_BUSY;
 
@@ -794,9 +803,9 @@ skip_send:
 	case NET_XMIT_DROP:
 		/* LOOM: DEBUG. */
 		log_info("%s: dropped packet tx_queue=%d\n",
-			 queue->dev->netdev->name, queue->queue_id);
+			 ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
 
-		queue->tx_ctrl.stats.dropped++;
+		ctrl_queue->tx_ctrl.stats.dropped++;
 		break;
 
 	case SN_NET_XMIT_BUFFERED:
@@ -808,17 +817,39 @@ skip_send:
 	return ret;
 }
 
+/* Loom: TODO: More sophisticated algorithm. */
+static u32 sn_select_data_queue(struct sn_device *dev, struct sk_buff *skb)
+{
+	u32 sched_qi;
+
+	atomic_t *nqm = &dev->qa_state.next_dataq;
+	sched_qi = atomic_add_return(1, nqm) % 
+		dev->num_tx_dataq;
+
+	return sched_qi;
+}
+
 /* As a soft device without qdisc,
  * this function returns NET_XMIT_* instead of NETDEV_TX_* */
-/* TODO: LOOM: I want qdisc, so I should probably change the return value. */
+/* Loom: I want qdisc, so I changed the return value. */
 static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct sn_device *dev = netdev_priv(netdev);
-	struct sn_queue *queue;
+	struct sn_queue *ctrl_queue;
+	struct sn_queue *data_queue;
 
-	u16 txq = skb->queue_mapping;
+	u16 tx_ctrlq = skb->queue_mapping;
+	u32 tx_dataq;
 
-	/* log_info("txq=%d cpu=%d\n", txq, raw_smp_processor_id()); */
+	if (skb->sk && skb->sk->sk_tx_sched_queue_mapping >= 0) {
+		tx_dataq = skb->sk->sk_tx_sched_queue_mapping;
+	} else {
+		/* An skb could be assigned a scheduling queue in
+		 * netdev_pick_tx. */
+		tx_dataq = sn_select_data_queue(dev, skb);
+	}
+
+	/* log_info("tx_ctrlq=%d cpu=%d\n", txq, raw_smp_processor_id()); */
 
 	if (unlikely(skb->len > SNBUF_DATA)) {
 		log_err("too large skb! (%d)\n", skb->len);
@@ -832,14 +863,21 @@ static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 		return NET_XMIT_DROP;
 	}
 
-	if (unlikely(txq >= dev->num_tx_ctrlq)) {
-		log_err("invalid txq=%u\n", txq);
+	if (unlikely(tx_ctrlq >= dev->num_tx_ctrlq)) {
+		log_err("invalid tx_ctrlq=%u\n", tx_ctrlq);
 		dev_kfree_skb(skb);
 		return NET_XMIT_DROP;
 	}
 
-	queue = dev->tx_ctrl_queues[txq];
-	return sn_send_tx_queue(queue, dev, skb);
+	if (unlikely(tx_dataq >= dev->num_tx_dataq)) {
+		log_err("invalid tx_dataq=%u\n", tx_dataq);
+		dev_kfree_skb(skb);
+		return NET_XMIT_DROP;
+	}
+
+	ctrl_queue = dev->tx_ctrl_queues[tx_ctrlq];
+	data_queue = dev->tx_data_queues[tx_dataq];
+	return sn_send_tx_queue(ctrl_queue, data_queue, dev, skb);
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0)
@@ -857,6 +895,31 @@ static u16 sn_select_queue(struct net_device *netdev,
 #endif
 {
 	struct sn_device *dev = netdev_priv(netdev);
+	struct sock *sk = skb->sk;
+
+	/* Loom: Note/Hack: this function is used to also pick the
+	 * data/scheduling queue used.
+	 * - This could be done in a local hash table to avoid using a modified
+	 *   kernel.
+	 * - A more intelligent queue selection algorithm will probably be
+	 *   appropriate.
+	 *   - The current implementation does not avoid oversubscribing
+	 *     queues.
+	 *   - Per-CPU scheduling queues?
+	 *   - Use a bitmask?
+	 */
+	if (sk) {
+		/* This could be a separate function call (ndo) from
+		 * netdev_pick_tx */
+		int sched_qi = sk->sk_tx_sched_queue_mapping;
+		if (sched_qi < 0) {
+			sched_qi = sn_select_data_queue(dev, skb);
+			sk->sk_tx_sched_queue_mapping = sched_qi;
+
+			trace_printk("Set sched queue for sk (%p) to %d\n",
+				sk, sk->sk_tx_sched_queue_mapping);
+		}
+	}
 
 	return dev->cpu_to_tx_ctrlq[raw_smp_processor_id()];
 }
@@ -1068,9 +1131,15 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 
 	sn_set_default_queue_mapping(dev);
 
+	/* Queue assingnment state. */
+	/* set to -1 instead so the first allocated queue is 0? */
+	atomic_set(&dev->qa_state.next_dataq, 0);
+
 	/* This will disable the default qdisc (mq or pfifo_fast) on the
 	 * interface. We don't need qdisc since BESS already has its own.
 	 * Also see attach_default_qdiscs() in sch_generic.c */
+	/* Loom: I believe that the above comment is incorrect.  Queuing should
+	 * be done at the edge and not inside the virtual switch. */
 	//netdev->tx_queue_len = 0;
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,11,9))
