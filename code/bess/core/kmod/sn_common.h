@@ -96,6 +96,7 @@ struct sn_conf_space {
 	/* currently not used */
 	uint8_t link_on;
 	uint8_t promisc_on;
+        uint8_t dataq_on;
 
 	struct tx_queue_opts txq_opts;
 	struct rx_queue_opts rxq_opts;
@@ -122,8 +123,8 @@ struct sn_tx_ctrlq_registers {
 /* Driver -> BESS scheduling metadata. Used in both data and ctrl metadata. */
 struct sn_tx_sched_metadata {
         /* TODO: what should be here? */
-        uint64_t tc;
-};
+        uint64_t tc; /* Make smaller in size. */
+} __attribute__((packed)); /* TODO: packed or not packed? */
 
 /* Driver -> BESS metadata for TX packets */
 struct sn_tx_data_metadata {
@@ -154,13 +155,23 @@ struct sn_tx_ctrl_metadata {
         struct sn_tx_sched_metadata sch_meta;
 
         /* TODO: Anything else? */
-};
+} __attribute__((packed)); /* TODO: packed or not packed? */
 
+/* Loom: TODO: Different Ctrl descriptor types (PUSH-mode, blueflame, inlining, etc.) */
+#define SN_CTRL_DESC_COOKIE (0x55555888)
+
+/* Loom: TODO: different types of ctrl descriptors. */
 struct sn_tx_ctrl_desc {
-        uint32_t tx_dataq_num;
+	uint32_t cookie; /* TODO: size? uint16_t? */
+        uint32_t dataq_num;
 
         struct sn_tx_ctrl_metadata meta;
-};
+} __attribute__((packed, aligned(sizeof(llring_addr_t)))); /* TODO: packed or not packed? */
+/* I feel like aligned may be wrong or bad for portability */
+
+/* TODO: BUILD_BUG_ON_MSG instead? */
+#define SN_OBJ_PER_TX_CTRL_DESC (sizeof(struct sn_tx_ctrl_desc) / sizeof(llring_addr_t))
+#define SN_CTRL_DESC_CNT_IN_OBJ(cnt) (cnt * SN_OBJ_PER_TX_CTRL_DESC)
 
 #define SN_RX_CSUM_UNEXAMINED 0
 #define SN_RX_CSUM_UNKNOWN_P 1 /* unknown protocol */

@@ -38,10 +38,12 @@ static_assert(SN_MAX_TX_CTRLQ <= MAX_QUEUES_PER_DIR,
         "Cannot have more ctrl queues than max queues");
 static_assert(SN_MAX_RXQ <= MAX_QUEUES_PER_DIR,
         "Cannot have more rxqs queues than max queues");
+static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
+	"Tx Ctrl desc must be a multiple of the pointer size");
 
 class VPort final : public Port {
  public:
-  VPort() : fd_(), bar_(), map_(), netns_fd_(), container_pid_() {}
+  VPort() : fd_(), bar_(), map_(), netns_fd_(), container_pid_(), use_tx_dataq_(), num_tx_dataqs_() {}
   void InitDriver() override;
 
   CommandResponse Init(const bess::pb::VPortArg &arg);
@@ -95,10 +97,19 @@ class VPort final : public Port {
   int SetIPAddrSingle(const std::string &ip_addr);
   CommandResponse SetIPAddr(const bess::pb::VPortArg &arg);
 
-  /* LOOM: Apologies for putting things in the wrong places. */
+  /* Loom: Apologies for putting things in the wrong places. */
   /* Note: The aren't used any more */
   int RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt);
   bess::Packet *SegPkt(queue_t qid);
+
+  /* Loom: To use "struct queue *". This could be cleaner. */
+  int DequeueCtrlDesc(struct queue *tx_ctrl_queue,
+                      struct sn_tx_ctrl_desc *ctrl_desc_arr,
+                      int max_cnt);
+
+  /* Using data queues is optional */
+  int RecvPacketsOld(queue_t qid, bess::Packet **pkts, int max_cnt);
+  int RecvPacketsDataQ(queue_t qid, bess::Packet **pkts, int max_cnt);
 
   int fd_;
 
@@ -113,6 +124,9 @@ class VPort final : public Port {
 
   int netns_fd_;
   int container_pid_;
+
+  bool use_tx_dataq_;
+  int num_tx_dataqs_;
 };
 
 #endif  // BESS_DRIVERS_VPORT_H_

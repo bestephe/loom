@@ -1,6 +1,9 @@
 import scapy.all as scapy
 import os
 
+use_tx_dataq = int($BESS_USE_TX_DATAQ!'0')
+num_tx_dataqs = 4096 if use_tx_dataq else 0
+
 C1_NAME = 'loom_test1'
 VPORT_C1_NAME = 'loom1'
 VPORT_C1_ADDR = '10.10.1.1/24'
@@ -17,8 +20,10 @@ bess.reset_all()
 bess.resume_all()
 
 # Create a vport as an interface on the host
-c1_v = VPort(ifname=VPORT_C1_NAME, docker=C1_NAME, ip_addrs=[VPORT_C1_ADDR])
-c2_v = VPort(ifname=VPORT_C2_NAME, docker=C2_NAME, ip_addrs=[VPORT_C2_ADDR])
+c1_v = VPort(ifname=VPORT_C1_NAME, docker=C1_NAME, ip_addrs=[VPORT_C1_ADDR],
+    use_tx_dataq=use_tx_dataq, num_tx_dataqs=num_tx_dataqs)
+c2_v = VPort(ifname=VPORT_C2_NAME, docker=C2_NAME, ip_addrs=[VPORT_C2_ADDR],
+    use_tx_dataq=use_tx_dataq, num_tx_dataqs=num_tx_dataqs)
 
 # Connect the ports
 #TODO: Configure queues instead of ports

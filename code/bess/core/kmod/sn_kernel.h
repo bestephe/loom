@@ -46,6 +46,7 @@
 	       __LINE__, ##__VA_ARGS__)
 
 /* Used to enable Loom specific changes. */
+/* XXX: Not really used. Right now, this only determines GSO/CSUM, etc. */
 #define LOOM
 
 #define MAX_QUEUES (128)
@@ -54,6 +55,8 @@ _Static_assert(SN_MAX_TX_CTRLQ <= MAX_QUEUES,
         "Cannot have more ctrl queues than max queues");
 _Static_assert(SN_MAX_RXQ <= MAX_QUEUES,
         "Cannot have more rxqs queues than max queues");
+_Static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
+	"Tx Ctrl desc must be a multiple of the pointer size");
 
 #define MAX_BATCH (32)
 
@@ -168,6 +171,7 @@ struct sn_device {
 	int num_tx_ctrlq;
 	int num_rxq;
 	int num_tx_dataq;
+	uint8_t dataq_on;
 
 	struct sn_queue *tx_ctrl_queues[MAX_QUEUES];
 	struct sn_queue *rx_queues[MAX_QUEUES];
@@ -194,6 +198,7 @@ void sn_trigger_softirq_tx(void *info); /* info is (struct sn_device *) */
 void sn_trigger_softirq_with_qid(void *info, int rxq);
 void sn_trigger_softirq_with_qid_tx(void *info, int txq);
 int sn_avail_snbs(struct sn_queue *queue);
+int sn_avail_ctrl_desc(struct sn_queue *ctrl_queue);
 int sn_maybe_stop_tx(struct sn_queue *queue);
 
 #endif

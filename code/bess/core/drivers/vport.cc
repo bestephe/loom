@@ -328,8 +328,7 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   struct txq_private *txq_priv;
 
   /* Loom: TODO: Allow the number of scheduling queues to be configured. */
-  uint32_t num_tx_dataq = 4196;
-  assert(num_tx_dataq <= SN_MAX_TX_DATAQ);
+  assert(num_tx_dataqs_ <= SN_MAX_TX_DATAQ);
 
   bytes_per_llring = llring_bytes_with_slots(SLOTS_PER_LLRING);
 
@@ -340,7 +339,7 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   total_bytes += num_queues[PACKET_DIR_OUT] *
                  (ROUND_TO_64(sizeof(struct sn_rxq_registers)) +
                   2 * ROUND_TO_64(bytes_per_llring));
-  total_bytes += num_tx_dataq * 
+  total_bytes += num_tx_dataqs_ * 
                  (ROUND_TO_64(bytes_per_llring));
 
   VLOG(1) << "BAR total_bytes = " << total_bytes;
@@ -358,10 +357,11 @@ void *VPort::AllocBar(struct tx_queue_opts *txq_opts,
   bess::utils::Copy(conf->mac_addr, mac_addr, ETH_ALEN);
 
   conf->num_tx_ctrlq = num_queues[PACKET_DIR_INC];
-  conf->num_tx_dataq = num_tx_dataq;
+  conf->num_tx_dataq = num_tx_dataqs_;
   conf->num_rxq = num_queues[PACKET_DIR_OUT];
   conf->link_on = 1;
   conf->promisc_on = 1;
+  conf->dataq_on = use_tx_dataq_;
 
   conf->txq_opts = *txq_opts;
   conf->rxq_opts = *rxq_opts;
@@ -614,6 +614,8 @@ CommandResponse VPort::Init(const bess::pb::VPortArg &arg) {
   fd_ = -1;
   netns_fd_ = -1;
   container_pid_ = 0;
+  use_tx_dataq_ = false;
+  num_tx_dataqs_ = 4096; /* Loom: TODO: This should probably default to 0. */
 
   if (arg.ifname().length() >= IFNAMSIZ) {
     err = CommandFailure(EINVAL,
@@ -649,6 +651,10 @@ CommandResponse VPort::Init(const bess::pb::VPortArg &arg) {
     err = CommandFailure(EINVAL, "Must specify as many cores as rxqs");
     goto fail;
   }
+
+  /* Save user configured arguments. */
+  use_tx_dataq_ = arg.use_tx_dataq();
+  num_tx_dataqs_ = arg.num_tx_dataqs();
 
   fd_ = open("/dev/bess", O_RDONLY);
   if (fd_ == -1) {
@@ -1016,19 +1022,81 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
 #endif
 
 int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
-  struct queue *tx_queue = &inc_ctrl_qs_[qid];
+  if (use_tx_dataq_) {
+    return RecvPacketsDataQ(qid, pkts, max_cnt);
+  } else {
+    return RecvPacketsOld(qid, pkts, max_cnt);
+  }
+}
+
+int VPort::DequeueCtrlDesc(struct queue *tx_ctrl_queue,
+                             struct sn_tx_ctrl_desc *ctrl_desc_arr,
+                             int max_cnt)
+{
+  int dequeue_obj_cnt;
+  int ctrl_desc_cnt = 0;
+  int ret;
+  int i;
+
+  /* Loom: DEBUG */
+  if (llring_count(tx_ctrl_queue->drv_to_sn) > 0) {
+    PLOG(INFO) << bess::utils::Format("DequeueCtrlDesc: ctrl_queue ring "
+      "count: %d", llring_count(tx_ctrl_queue->drv_to_sn));
+  }
+
+  ctrl_desc_cnt = std::min(max_cnt, (int)(llring_count(tx_ctrl_queue->drv_to_sn) / SN_OBJ_PER_TX_CTRL_DESC));
+  dequeue_obj_cnt = ctrl_desc_cnt * SN_OBJ_PER_TX_CTRL_DESC;
+
+  if (dequeue_obj_cnt == 0) {
+    return 0;
+  }
+
+  if (llring_count(tx_ctrl_queue->drv_to_sn) % SN_OBJ_PER_TX_CTRL_DESC != 0) {
+    PLOG(ERROR) << bess::utils::Format("Unexpected number of objs: %d", 
+      llring_count(tx_ctrl_queue->drv_to_sn));
+  }
+
+  ret = llring_mc_dequeue_bulk(tx_ctrl_queue->drv_to_sn,
+    (llring_addr_t *)ctrl_desc_arr, dequeue_obj_cnt);
+  if (ret != 0) {
+    ctrl_desc_cnt = 0;
+    PLOG(ERROR) << bess::utils::Format("Unable to dequeue %d objs from "
+      "tx_ctrl_queue TODO", dequeue_obj_cnt);
+  }
+
+  /* Loom: DEBUG: Just print the ctrl descriptors for now. */
+  for (i = 0; i < ctrl_desc_cnt; i++) {
+    struct sn_tx_ctrl_desc *ctrl_desc = &ctrl_desc_arr[i];
+
+    PLOG(INFO) << bess::utils::Format("tx_ctrl_desc: cookie: %x, dataq: %d",
+      ctrl_desc->cookie, ctrl_desc->dataq_num);
+  }
+
+  return ctrl_desc_cnt;
+}
+
+int VPort::RecvPacketsDataQ(queue_t qid, bess::Packet **pkts, int max_cnt) {
+  struct queue *tx_ctrl_queue = &inc_ctrl_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
+  struct sn_tx_ctrl_desc ctrl_desc_arr[bess::PacketBatch::kMaxBurst];
   int cnt;
+  int ctrl_desc_cnt;
   int refill_cnt;
   int i;
 
   if (static_cast<size_t>(max_cnt) > bess::PacketBatch::kMaxBurst) {
     max_cnt = bess::PacketBatch::kMaxBurst;
   }
-  cnt = llring_sc_dequeue_burst(tx_queue->drv_to_sn, paddr, max_cnt);
 
-  refill_cnt = refill_tx_bufs(tx_queue->sn_to_drv);
+  /* Loom: TODO: different max_cnt? */
+  ctrl_desc_cnt = DequeueCtrlDesc(tx_ctrl_queue, ctrl_desc_arr, max_cnt);
+
+  refill_cnt = refill_tx_bufs(tx_ctrl_queue->sn_to_drv);
   refill_cnt = refill_cnt; /* XXX: avoid warnings. */
+
+  /* Loom: DEBUG: lets just test up to here for now... */
+  cnt = 0;
+  return 0;
 
   /* TODO: generic notification architecture */
   /* TODO: Move triggering a tx interrupt to its own function? */
@@ -1042,8 +1110,94 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   //LOG(INFO) << bess::utils::Format("VPort RecvPackets for txq: %d", qid);
 
   /* If the driver is requesting a TX interrupt, generate one. */
-  if (__sync_bool_compare_and_swap(&tx_queue->tx_regs->irq_disabled, 0, 1)) {
-  //if (1) {
+  if (__sync_bool_compare_and_swap(&tx_ctrl_queue->tx_regs->irq_disabled, 0, 1)) {
+
+    /* TODO: trigger interrupts for specific queues.  The major question is on
+     * which cores should napi_schedule be called from. */
+    /* TODO: this would be better done with queues instead of cores.  However,
+     * the SN kmod should still then be responsible for kicking the interrupt
+     * on the appropriate core. */
+    /* TODO: In addition to a cpu_to_txq queue mapping, we should also maintain
+     * a txq_to_cpu mapping to make this part better. */
+    uint64_t cpu = 0;
+    uint64_t _cpui;
+    int ret;
+    for (_cpui = 0; _cpui < SN_MAX_CPU; _cpui++) {
+      if (map_.cpu_to_tx_ctrlq[_cpui] == qid) {
+        cpu = _cpui;
+        break;
+      }
+    }
+    uint64_t cpumask = (1ull << cpu);
+
+    //LOG(INFO) << bess::utils::Format("ioctl(KICK_TX) for cpu: %d, txq: %d, cpumask: %x",
+    //    cpu, qid, cpumask);
+
+    ret = ioctl(fd_, SN_IOC_KICK_TX, cpumask);
+    if (ret) {
+      PLOG(ERROR) << "ioctl(KICK_TX)";
+    }
+  }
+
+  for (i = 0; i < cnt; i++) {
+    bess::Packet *pkt;
+    struct sn_tx_data_desc *tx_desc;
+    struct sn_tx_data_metadata *tx_meta;
+    uint16_t len;
+
+    pkt = pkts[i] = bess::Packet::from_paddr(paddr[i]);
+
+    tx_desc = pkt->scratchpad<struct sn_tx_data_desc *>();
+    len = tx_desc->total_len;
+    tx_meta = &tx_desc->meta;
+
+    pkt->set_data_off(SNBUF_HEADROOM);
+    pkt->set_total_len(len);
+    pkt->set_data_len(len);
+
+    /* TODO: process sn_tx_metadata */
+
+    /* TODO: Set tx_meta as pkt metadata. */
+
+    /* Metadata: Process checksumming */
+    //if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
+    //  //do_ip_csum(pkt, tx_meta->csum_start, tx_meta->csum_dest);
+    //  do_ip_tcp_csum(pkt);
+    //}
+
+    /* LOOM: TODO: What additional information should be added to metadata? */
+  }
+
+  return cnt;
+}
+
+int VPort::RecvPacketsOld(queue_t qid, bess::Packet **pkts, int max_cnt) {
+  struct queue *tx_ctrl_queue = &inc_ctrl_qs_[qid];
+  phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
+  int cnt;
+  int ctrl_desc_cnt;
+  int refill_cnt;
+  int i;
+
+  if (static_cast<size_t>(max_cnt) > bess::PacketBatch::kMaxBurst) {
+    max_cnt = bess::PacketBatch::kMaxBurst;
+  }
+  cnt = llring_sc_dequeue_burst(tx_ctrl_queue->drv_to_sn, paddr, max_cnt);
+
+  refill_cnt = refill_tx_bufs(tx_ctrl_queue->sn_to_drv);
+  refill_cnt = refill_cnt; /* XXX: avoid warnings. */
+
+  /* TODO: generic notification architecture */
+  /* TODO: Move triggering a tx interrupt to its own function? */
+  /* LOOM: TODO: the original concept was to cause a TX interrupt only when
+   * both additional buffers were refilled AND the kmod had not disabled
+   * interrupts. However, this has problems with race conditions.*/
+
+  /* LOOM: DEBUG */
+  //LOG(INFO) << bess::utils::Format("VPort RecvPackets for txq: %d", qid);
+
+  /* If the driver is requesting a TX interrupt, generate one. */
+  if (__sync_bool_compare_and_swap(&tx_ctrl_queue->tx_regs->irq_disabled, 0, 1)) {
 
     /* TODO: trigger interrupts for specific queues.  The major question is on
      * which cores should napi_schedule be called from. */

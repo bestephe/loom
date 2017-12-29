@@ -38,6 +38,8 @@ static void
 sn_dump_queue_mapping(struct sn_device *dev) __attribute__((unused));
 
 #define BUFS_PER_CPU 32
+/* Loom: TODO: More? */
+//#define BUFS_PER_CPU 64
 struct snb_cache {
 	phys_addr_t paddr[BUFS_PER_CPU];
 	int cnt;
@@ -173,8 +175,32 @@ int sn_avail_snbs(struct sn_queue *queue)
 	return cnt;
 }
 
-static int sn_host_do_tx_batch(struct sn_queue *ctrl_queue,
-		struct sn_queue *data_queue[],
+int sn_avail_ctrl_desc(struct sn_queue *ctrl_queue)
+{
+	int ring_free_cnt = (int)llring_free_count(ctrl_queue->drv_to_sn);
+	int avail_ctrl_desc = SN_CTRL_DESC_CNT_IN_OBJ(ring_free_cnt);
+
+	/* Loom: DEBUG */
+	trace_printk("%s: sn_avail_ctrl_desc: avail_ctrl_desc: %d!\n",
+		ctrl_queue->dev->netdev->name, avail_ctrl_desc);
+
+	return avail_ctrl_desc;
+}
+
+
+/* Loom: TODO: more arguments. E.g., for scheduling metadata, for number of
+ * enqueued packets/segments. */
+static void sn_set_ctrl_desc(struct sn_tx_ctrl_desc *ctrl_desc,
+		uint32_t dataq_num)
+{
+	ctrl_desc->cookie = SN_CTRL_DESC_COOKIE;
+	ctrl_desc->dataq_num = dataq_num;
+
+	/* Loom: TODO: ctrl metadata */
+	memset(&ctrl_desc->meta, 0x0, sizeof(ctrl_desc->meta));
+}
+
+static int sn_host_do_tx_batch_old(struct sn_queue *ctrl_queue,
 		struct sk_buff *skb_arr[],
 		struct sn_tx_data_metadata meta_arr[],
 		int cnt_requested)
@@ -196,9 +222,16 @@ static int sn_host_do_tx_batch(struct sn_queue *ctrl_queue,
 
 	/* LOOM: DEBUG: */
 	if (cnt_requested - cnt > 0) {
-		log_info("%s: cnt_requested: %d, cnt_to_send: %d, "
-			 "MAX_BATCH: %d, cnt: %d, sn_avail_snbs: %d, "
-			 "sn_to_drv: %d, drv_to_sn: %d\n",
+		log_err("%s: unable to send all desc. cnt_requested: %d, "
+			 "cnt_to_send: %d, MAX_BATCH: %d, cnt: %d, "
+			 "sn_avail_snbs: %d, sn_to_drv: %d, drv_to_sn: %d\n",
+			 ctrl_queue->dev->netdev->name, cnt_requested,
+			 cnt_to_send, MAX_BATCH, cnt, sn_avail_snbs(ctrl_queue),
+			 llring_count(ctrl_queue->sn_to_drv),
+			 llring_free_count(ctrl_queue->drv_to_sn));
+		trace_printk("%s: unable to send all desc. cnt_requested: %d, "
+			 "cnt_to_send: %d, MAX_BATCH: %d, cnt: %d, "
+			 "sn_avail_snbs: %d, sn_to_drv: %d, drv_to_sn: %d\n",
 			 ctrl_queue->dev->netdev->name, cnt_requested,
 			 cnt_to_send, MAX_BATCH, cnt, sn_avail_snbs(ctrl_queue),
 			 llring_count(ctrl_queue->sn_to_drv),
@@ -222,9 +255,18 @@ static int sn_host_do_tx_batch(struct sn_queue *ctrl_queue,
 		tx_desc->total_len = skb->len;
 		tx_desc->meta = meta_arr[i];
 
+		/* Loom: DEBUG. */
+		trace_printk("%s: sn_host_do_tx_batch: enqueuing skb in "
+				"ctrl_queue: %d\n",
+				ctrl_queue->dev->netdev->name,
+				ctrl_queue->queue_id);
+
+		/* Copy the skb data into the snb. */
+		/* Loom: TODO: This should go away and be replaced with dma_*
+		 * operators on the fraglist and creating a descriptor with a
+		 * list of fragments. */
 		memcpy(dst_addr, skb->data, skb_headlen(skb));
 		dst_addr += skb_headlen(skb);
-
 		for (j = 0; j < skb_shinfo(skb)->nr_frags; j++) {
 			skb_frag_t *frag = &skb_shinfo(skb)->frags[j];
 
@@ -234,12 +276,144 @@ static int sn_host_do_tx_batch(struct sn_queue *ctrl_queue,
 		}
 	}
 
+	/* Enqueue the control descriptors. */
 	ret = llring_sp_enqueue_burst(ctrl_queue->drv_to_sn, paddr_arr, cnt);
 	if (ret < cnt && net_ratelimit()) {
 		/* It should never happen since we cap cnt with llring_count().
 		 * If it does, snbufs leak. Ouch. */
 		log_err("%s: ctrl_queue %d is overflowing!\n",
 				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
+		trace_printk("%s: ctrl_queue %d is overflowing!\n",
+				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
+	}
+
+	return ret;
+}
+
+static int sn_host_do_tx_batch_dataq(struct sn_queue *ctrl_queue,
+		struct sn_queue *data_queue_arr[],
+		struct sk_buff *skb_arr[],
+		struct sn_tx_data_metadata meta_arr[],
+		int cnt_requested)
+{
+	int cnt_to_send;
+	int cnt;
+	int ret;
+	int i;
+
+	phys_addr_t paddr_arr[MAX_BATCH];
+	struct sn_tx_ctrl_desc ctrl_desc_arr[MAX_BATCH];
+
+	//cnt_to_send = min(cnt_requested,
+	//		(int)llring_free_count(ctrl_queue->drv_to_sn));
+	cnt_to_send = min(cnt_requested,
+			sn_avail_ctrl_desc(ctrl_queue));
+	cnt_to_send = min(cnt_to_send, MAX_BATCH);
+
+	cnt = alloc_snb_burst(ctrl_queue, paddr_arr, cnt_to_send);
+        /* TODO: update stats differently soon. */
+	ctrl_queue->tx_ctrl.stats.descriptor += cnt_requested - cnt;
+
+	/* LOOM: DEBUG: */
+	if (cnt_requested - cnt > 0) {
+		log_err("%s: unable to send all desc. cnt_requested: %d, "
+			 "cnt_to_send: %d, MAX_BATCH: %d, cnt: %d, "
+			 "sn_avail_snbs: %d, sn_to_drv: %d, drv_to_sn: %d\n",
+			 ctrl_queue->dev->netdev->name, cnt_requested,
+			 cnt_to_send, MAX_BATCH, cnt, sn_avail_snbs(ctrl_queue),
+			 llring_count(ctrl_queue->sn_to_drv),
+			 llring_free_count(ctrl_queue->drv_to_sn));
+		trace_printk("%s: unable to send all desc. cnt_requested: %d, "
+			 "cnt_to_send: %d, MAX_BATCH: %d, cnt: %d, "
+			 "sn_avail_snbs: %d, sn_to_drv: %d, drv_to_sn: %d\n",
+			 ctrl_queue->dev->netdev->name, cnt_requested,
+			 cnt_to_send, MAX_BATCH, cnt, sn_avail_snbs(ctrl_queue),
+			 llring_count(ctrl_queue->sn_to_drv),
+			 llring_free_count(ctrl_queue->drv_to_sn));
+	}
+
+	if (cnt == 0)
+		return 0;
+
+	for (i = 0; i < cnt; i++) {
+		struct sn_queue *data_queue = data_queue_arr[i];
+		struct sk_buff *skb = skb_arr[i];
+		phys_addr_t paddr = paddr_arr[i];
+		struct sn_tx_ctrl_desc *tx_ctrl_desc = &ctrl_desc_arr[i];
+		struct sn_tx_data_desc *tx_data_desc;
+		char *dst_addr;
+
+		int j;
+
+		/* Create the ctrl descriptor. */
+		sn_set_ctrl_desc(tx_ctrl_desc, data_queue->queue_id);
+
+		/* Loom: DEBUG. */
+		trace_printk("%s: sn_host_do_tx_batch: enqueuing skb in "
+				"ctrl_queue: %d. data_queue: %d\n",
+				ctrl_queue->dev->netdev->name,
+				ctrl_queue->queue_id, data_queue->queue_id);
+
+		/* Create the data descriptor. */
+		dst_addr = phys_to_virt(paddr + SNBUF_DATA_OFF);
+		/* Loom: I don't like calling snbuf metadata a "descriptor" */
+		/* Loom: I also don't like using snbs here. A true descriptor
+		 * with a fraglist and copying done inside of BESS would be
+		 * better. */
+		tx_data_desc = phys_to_virt(paddr + SNBUF_SCRATCHPAD_OFF);
+		tx_data_desc->total_len = skb->len;
+		tx_data_desc->meta = meta_arr[i];
+
+		/* Copy the skb data into the snb. */
+		/* Loom: TODO: This should go away and be replaced with dma_*
+		 * operators on the fraglist and creating a descriptor with a
+		 * list of fragments. */
+		memcpy(dst_addr, skb->data, skb_headlen(skb));
+		dst_addr += skb_headlen(skb);
+		for (j = 0; j < skb_shinfo(skb)->nr_frags; j++) {
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[j];
+
+			memcpy(dst_addr, skb_frag_address(frag),
+					skb_frag_size(frag));
+			dst_addr += skb_frag_size(frag);
+		}
+
+		/* For now enqueue data descriptors into data queues one at a
+		 * time instead of as a burst */
+		ret = llring_mp_enqueue_bulk(data_queue->drv_to_sn, &paddr, 1);
+		if (ret != 0) {
+			 /* If this happens, snbufs leak. Ouch. */
+			log_err("%s: data_queue %d is overflowing!\n",
+					data_queue->dev->netdev->name,
+					data_queue->queue_id);
+			trace_printk("%s: data_queue %d is overflowing!\n",
+					data_queue->dev->netdev->name,
+					data_queue->queue_id);
+		}
+	}
+
+        /* Loom: DEBUG */
+        trace_printk("%s: ctrl_queue %d: about to enqueue %d ctrl "
+			"descriptors in . Obj cnt: %lu\n",
+			ctrl_queue->dev->netdev->name, ctrl_queue->queue_id,
+			cnt, SN_CTRL_DESC_CNT_IN_OBJ(cnt));
+
+	/* Enqueue the control descriptors. */
+	ret = llring_mp_enqueue_bulk(ctrl_queue->drv_to_sn,
+			(llring_addr_t *)ctrl_desc_arr,
+			SN_CTRL_DESC_CNT_IN_OBJ(cnt));
+	if (ret != 0 && net_ratelimit()) {
+		/* We would like this to never happen. */
+		log_err("%s: ctrl_queue %d is overflowing!\n",
+				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
+		trace_printk("%s: ctrl_queue %d is overflowing!\n",
+				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
+
+		/* no ctrl desc have been enqueud at this point */
+		ret = 0;
+	} else {
+		/* enqueue_bulk returns 0 on success. */
+		ret = cnt;
 	}
 
 	return ret;
@@ -272,11 +446,18 @@ static void sn_host_flush_tx(void)
 		if (lock_required)
 			HARD_TX_LOCK(ctrl_queue->dev->netdev, netdev_txq, cpu);
 
-		sent = sn_host_do_tx_batch(ctrl_queue,
-				buf_queue->data_queue_arr,
-				buf_queue->skb_arr,
-				buf_queue->meta_arr,
-				buf_queue->cnt);
+		if (ctrl_queue->dev->dataq_on) {
+			sent = sn_host_do_tx_batch_dataq(ctrl_queue,
+					buf_queue->data_queue_arr,
+					buf_queue->skb_arr,
+					buf_queue->meta_arr,
+					buf_queue->cnt);
+		} else {
+			sent = sn_host_do_tx_batch_old(ctrl_queue,
+					buf_queue->skb_arr,
+					buf_queue->meta_arr,
+					buf_queue->cnt);
+		}
 
 		if (lock_required)
 			HARD_TX_UNLOCK(ctrl_queue->dev->netdev, netdev_txq);
@@ -287,6 +468,10 @@ static void sn_host_flush_tx(void)
 		/* LOOM: DEBUG. */
 		if ((buf_queue->cnt - sent) > 0) {
 			log_info("%s: dropped %d packets tx_ctrl_queue=%d\n",
+				 ctrl_queue->dev->netdev->name,
+				 (buf_queue->cnt - sent),
+				 ctrl_queue->queue_id);
+			trace_printk("%s: dropped %d packets tx_ctrl_queue=%d\n",
 				 ctrl_queue->dev->netdev->name,
 				 (buf_queue->cnt - sent),
 				 ctrl_queue->queue_id);
@@ -344,8 +529,14 @@ again:
 	//	 sn_avail_snbs(queue), queue->queue_id);
 
 	if (buf_queue->cnt == MAX_BATCH ||
-	    buf_queue->cnt >= sn_avail_snbs(ctrl_queue))
+	    /* Loom: This check of sn_avail_snbs(ctrl_queue) is not correct and
+	     * could lead to packet drops still.  This is because it considers
+	     * snb's for this CPU as well, which would be shared across
+	     * different buf_queue's. I should think about this more. */
+	    buf_queue->cnt >= sn_avail_snbs(ctrl_queue) ||
+	    buf_queue->cnt >= sn_avail_ctrl_desc(ctrl_queue)) {
 		sn_host_flush_tx();
+	}
 
 	sn_maybe_stop_tx(ctrl_queue);
 }
@@ -366,7 +557,13 @@ static int sn_host_do_tx(struct sn_queue *ctrl_queue, struct sn_queue *data_queu
 		return SN_NET_XMIT_BUFFERED;
 	}
 
-	ret = sn_host_do_tx_batch(ctrl_queue, &data_queue, &skb, tx_meta, 1);
+	/* Loom: TODO: Consider doing something with skb->xmit_more */
+
+	if (ctrl_queue->dev->dataq_on) {
+		ret = sn_host_do_tx_batch_dataq(ctrl_queue, &data_queue, &skb, tx_meta, 1);
+	} else {
+		ret = sn_host_do_tx_batch_old(ctrl_queue, &skb, tx_meta, 1);
+	}
 
 	/* Loom: Check if the queue should be stopped because there are not any
 	 * snb's left. */

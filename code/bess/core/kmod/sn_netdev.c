@@ -615,15 +615,18 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 
 	/* TODO: assert that queue is a tx_queue */
 
-	if (sn_avail_snbs(queue) > limit) {
+	if (sn_avail_snbs(queue) > limit &&
+	    sn_avail_ctrl_desc(queue) > limit) {
 		return 0;
 	}
+
 
 	/* LOOM: DEBUG */
 	//log_info("%s: sn_maybe_stop_tx stopping tx_queue=%d\n",
 	//	 queue->dev->netdev->name, queue->queue_id);
 	//trace_printk("%s: sn_maybe_stop_tx stopping tx_queue=%d\n",
 	//	 queue->dev->netdev->name, queue->queue_id);
+	/* Loom: DEBUG: TODO trace_printk the reason the queue is being stopped. */
 
 	netif_stop_subqueue(netdev, queue->queue_id);
 	sn_enable_interrupt_tx(queue);
@@ -772,6 +775,10 @@ static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *ctrl_queue,
 	}
 #endif
 
+	/* Set metadata before orphaning so that traffic class info can be
+	 * saved from the socket if needed. */
+	sn_set_tx_metadata(skb, &tx_meta);
+
         /* Loom: TODO: I don't feel like orphaning the skb is necessary here.
 	 * In particular, I feel like this breaks TCP Small Queues (although so
 	 * does tricking Linux into not using Qdisc). */
@@ -779,7 +786,7 @@ static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *ctrl_queue,
 	 * given that the skb may not always be freed. */
 	skb_orphan(skb);
 
-	sn_set_tx_metadata(skb, &tx_meta);
+	/* Actually do the TX. */
 	ret = dev->ops->do_tx(ctrl_queue, data_queue, skb, &tx_meta);
 
 skip_send:
@@ -841,12 +848,14 @@ static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	u16 tx_ctrlq = skb->queue_mapping;
 	u32 tx_dataq;
 
-	if (skb->sk && skb->sk->sk_tx_sched_queue_mapping >= 0) {
-		tx_dataq = skb->sk->sk_tx_sched_queue_mapping;
-	} else {
-		/* An skb could be assigned a scheduling queue in
-		 * netdev_pick_tx. */
-		tx_dataq = sn_select_data_queue(dev, skb);
+	if (dev->dataq_on) {
+		if (skb->sk && skb->sk->sk_tx_sched_queue_mapping >= 0) {
+			tx_dataq = skb->sk->sk_tx_sched_queue_mapping;
+		} else {
+			/* An skb could be assigned a scheduling queue in
+			 * netdev_pick_tx. */
+			tx_dataq = sn_select_data_queue(dev, skb);
+		}
 	}
 
 	/* log_info("tx_ctrlq=%d cpu=%d\n", txq, raw_smp_processor_id()); */
@@ -869,14 +878,14 @@ static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 		return NET_XMIT_DROP;
 	}
 
-	if (unlikely(tx_dataq >= dev->num_tx_dataq)) {
+	if (unlikely(dev->dataq_on && tx_dataq >= dev->num_tx_dataq)) {
 		log_err("invalid tx_dataq=%u\n", tx_dataq);
 		dev_kfree_skb(skb);
 		return NET_XMIT_DROP;
 	}
 
 	ctrl_queue = dev->tx_ctrl_queues[tx_ctrlq];
-	data_queue = dev->tx_data_queues[tx_dataq];
+	data_queue = (dev->dataq_on) ? dev->tx_data_queues[tx_dataq] : NULL;
 	return sn_send_tx_queue(ctrl_queue, data_queue, dev, skb);
 }
 
@@ -1087,22 +1096,23 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 		return -EINVAL;
 	}
 
-	if (conf->num_tx_ctrlq < 1 || conf->num_tx_dataq < 1 ||
+	if (conf->num_tx_ctrlq < 1 || 
+			(conf->num_tx_dataq < 1 && conf->dataq_on) ||
 			conf->num_rxq < 1 ||
 			conf->num_tx_ctrlq > MAX_QUEUES ||
 			conf->num_tx_dataq > SN_MAX_TX_DATAQ ||
 			conf->num_rxq > MAX_QUEUES)
 	{
 		log_err("invalid ioctl arguments: num_tx_ctrlq=%d, "
-				"num_tx_dataq=%d, num_rxq=%d\n",
+				"num_tx_dataq=%d, num_rxq=%d, dataq_on:%d\n",
 				conf->num_tx_ctrlq, conf->num_tx_dataq,
-				conf->num_rxq);
+				conf->num_rxq, conf->dataq_on);
 		return -EINVAL;
 	}
 	log_err("ioctl arguments: num_tx_ctrlq=%d, "
-			"num_tx_dataq=%d, num_rxq=%d\n",
+			"num_tx_dataq=%d, num_rxq=%d, dataq_on:%d\n",
 			conf->num_tx_ctrlq, conf->num_tx_dataq,
-			conf->num_rxq);
+			conf->num_rxq, conf->dataq_on);
 
 	netdev = alloc_etherdev_mqs(sizeof(struct sn_device),
 			conf->num_tx_ctrlq, conf->num_rxq);
@@ -1128,6 +1138,7 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 	dev->num_tx_ctrlq = conf->num_tx_ctrlq;
 	dev->num_tx_dataq = conf->num_tx_dataq;
 	dev->num_rxq = conf->num_rxq;
+	dev->dataq_on = conf->dataq_on;
 
 	sn_set_default_queue_mapping(dev);
 

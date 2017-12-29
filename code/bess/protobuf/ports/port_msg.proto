@@ -64,4 +64,6 @@ message VPortArg {
   uint64 tx_outer_tci = 7;
   bool loopback = 8;
   repeated string ip_addrs = 9;
+  bool use_tx_dataq = 10;
+  uint64 num_tx_dataqs = 11;
 }
