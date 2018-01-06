@@ -135,6 +135,7 @@ void DRR::ProcessBatch(bess::PacketBatch* batch) {
     // and add the packet to the new Flow
     if (it == nullptr) {
       if (llring_full(flow_ring_)) {
+        /* Loom: Note: siliently dropping packets is bad. */
         bess::Packet::Free(pkt);
       } else {
         AddNewFlow(pkt, id, &err);
@@ -394,6 +395,7 @@ llring* DRR::ResizeQueue(llring* old_queue, uint32_t new_size, int* err) {
     while (llring_dequeue(old_queue, reinterpret_cast<void**>(&pkt)) == 0) {
       *err = llring_enqueue(new_queue, pkt);
       if (*err == -LLRING_ERR_NOBUF) {
+        /* Loom: Note: silently dropping packets is bad. */
         bess::Packet::Free(pkt);
         *err = 0;
       } else if (*err != 0) {

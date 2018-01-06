@@ -1,9 +1,9 @@
 lines:
-- avg_gbps: 1.7817185157857225
-  lname: 'SQ
-
-    (2Gbps)'
-  stddev: 0.010195591610570426
+#- avg_gbps: 1.7817185157857225
+#  lname: 'SQ
+#
+#    (2Gbps)'
+#  stddev: 0.010195591610570426
 - avg_gbps: 7.333365273593002
   lname: '16Q
 

@@ -178,11 +178,16 @@ int sn_avail_snbs(struct sn_queue *queue)
 int sn_avail_ctrl_desc(struct sn_queue *ctrl_queue)
 {
 	int ring_free_cnt = (int)llring_free_count(ctrl_queue->drv_to_sn);
-	int avail_ctrl_desc = SN_CTRL_DESC_CNT_IN_OBJ(ring_free_cnt);
+	/* division is slow? */
+	int avail_ctrl_desc = ring_free_cnt / SN_OBJ_PER_TX_CTRL_DESC;
+
+	/* use a watermark to avoid overflow(?) */
+	int watermark = 8;
+	avail_ctrl_desc = max(0, avail_ctrl_desc - watermark);
 
 	/* Loom: DEBUG */
-	trace_printk("%s: sn_avail_ctrl_desc: avail_ctrl_desc: %d!\n",
-		ctrl_queue->dev->netdev->name, avail_ctrl_desc);
+	//trace_printk("%s: sn_avail_ctrl_desc: avail_ctrl_desc: %d\n",
+	//	ctrl_queue->dev->netdev->name, avail_ctrl_desc);
 
 	return avail_ctrl_desc;
 }
@@ -256,10 +261,10 @@ static int sn_host_do_tx_batch_old(struct sn_queue *ctrl_queue,
 		tx_desc->meta = meta_arr[i];
 
 		/* Loom: DEBUG. */
-		trace_printk("%s: sn_host_do_tx_batch: enqueuing skb in "
-				"ctrl_queue: %d\n",
-				ctrl_queue->dev->netdev->name,
-				ctrl_queue->queue_id);
+		//trace_printk("%s: sn_host_do_tx_batch: enqueuing skb in "
+		//		"ctrl_queue: %d\n",
+		//		ctrl_queue->dev->netdev->name,
+		//		ctrl_queue->queue_id);
 
 		/* Copy the skb data into the snb. */
 		/* Loom: TODO: This should go away and be replaced with dma_*
@@ -306,8 +311,11 @@ static int sn_host_do_tx_batch_dataq(struct sn_queue *ctrl_queue,
 
 	//cnt_to_send = min(cnt_requested,
 	//		(int)llring_free_count(ctrl_queue->drv_to_sn));
+	//cnt_to_send = min(cnt_requested,
+	//		sn_avail_ctrl_desc(ctrl_queue));
 	cnt_to_send = min(cnt_requested,
-			sn_avail_ctrl_desc(ctrl_queue));
+			(int)(llring_free_count(ctrl_queue->drv_to_sn) / 
+			SN_OBJ_PER_TX_CTRL_DESC));
 	cnt_to_send = min(cnt_to_send, MAX_BATCH);
 
 	cnt = alloc_snb_burst(ctrl_queue, paddr_arr, cnt_to_send);
@@ -349,10 +357,10 @@ static int sn_host_do_tx_batch_dataq(struct sn_queue *ctrl_queue,
 		sn_set_ctrl_desc(tx_ctrl_desc, data_queue->queue_id);
 
 		/* Loom: DEBUG. */
-		trace_printk("%s: sn_host_do_tx_batch: enqueuing skb in "
-				"ctrl_queue: %d. data_queue: %d\n",
-				ctrl_queue->dev->netdev->name,
-				ctrl_queue->queue_id, data_queue->queue_id);
+		//trace_printk("%s: sn_host_do_tx_batch: enqueuing skb in "
+		//		"ctrl_queue: %d. data_queue: %d\n",
+		//		ctrl_queue->dev->netdev->name,
+		//		ctrl_queue->queue_id, data_queue->queue_id);
 
 		/* Create the data descriptor. */
 		dst_addr = phys_to_virt(paddr + SNBUF_DATA_OFF);
@@ -382,21 +390,32 @@ static int sn_host_do_tx_batch_dataq(struct sn_queue *ctrl_queue,
 		 * time instead of as a burst */
 		ret = llring_mp_enqueue_bulk(data_queue->drv_to_sn, &paddr, 1);
 		if (ret != 0) {
-			 /* If this happens, snbufs leak. Ouch. */
 			log_err("%s: data_queue %d is overflowing!\n",
 					data_queue->dev->netdev->name,
 					data_queue->queue_id);
 			trace_printk("%s: data_queue %d is overflowing!\n",
 					data_queue->dev->netdev->name,
 					data_queue->queue_id);
+
+			/* If this happens, just drop the snb. */
+                        ret = store_to_cache(&paddr, 1);
+                        if (ret != 1) {
+                            /* In this case, snbs leak. Ouch. */
+                            log_err("%s: leaking snb!\n",
+                                            data_queue->dev->netdev->name);
+                            trace_printk("%s: leaking snb!\n",
+                                            data_queue->dev->netdev->name);
+                        }
+
+                        /* Loom: TODO: Keep drop statistics per data queue. */
 		}
 	}
 
         /* Loom: DEBUG */
-        trace_printk("%s: ctrl_queue %d: about to enqueue %d ctrl "
-			"descriptors in . Obj cnt: %lu\n",
-			ctrl_queue->dev->netdev->name, ctrl_queue->queue_id,
-			cnt, SN_CTRL_DESC_CNT_IN_OBJ(cnt));
+        //trace_printk("%s: ctrl_queue %d: about to enqueue %d ctrl "
+	//		"descriptors. Obj cnt: %lu\n",
+	//		ctrl_queue->dev->netdev->name, ctrl_queue->queue_id,
+	//		cnt, SN_CTRL_DESC_CNT_IN_OBJ(cnt));
 
 	/* Enqueue the control descriptors. */
 	ret = llring_mp_enqueue_bulk(ctrl_queue->drv_to_sn,
@@ -404,10 +423,10 @@ static int sn_host_do_tx_batch_dataq(struct sn_queue *ctrl_queue,
 			SN_CTRL_DESC_CNT_IN_OBJ(cnt));
 	if (ret != 0 && net_ratelimit()) {
 		/* We would like this to never happen. */
-		log_err("%s: ctrl_queue %d is overflowing!\n",
-				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
-		trace_printk("%s: ctrl_queue %d is overflowing!\n",
-				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id);
+		log_err("%s: ctrl_queue %d is overflowing! ret: %d\n",
+				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id, ret);
+		trace_printk("%s: ctrl_queue %d is overflowing! ret: %d\n",
+				ctrl_queue->dev->netdev->name, ctrl_queue->queue_id, ret);
 
 		/* no ctrl desc have been enqueud at this point */
 		ret = 0;
@@ -524,9 +543,11 @@ again:
 	buf_queue->cnt++;
 
 	/* LOOM: DEBUG */
-	//log_info("%s: sn_host_buffer_tx: buf_queue->cnt=%d, sn_avail_snbs=%d, "
-	//	 "tx_queue=%d\n", queue->dev->netdev->name, buf_queue->cnt,
-	//	 sn_avail_snbs(queue), queue->queue_id);
+	//trace_printk("%s: sn_host_buffer_tx: buf_queue->cnt=%d, sn_avail_snbs=%d, "
+	//	 "sn_avail_ctrl_desc=%d, tx_ctrl_queue=%d\n",
+	//	 ctrl_queue->dev->netdev->name, buf_queue->cnt,
+	//	 sn_avail_snbs(ctrl_queue), sn_avail_ctrl_desc(ctrl_queue),
+	//	 ctrl_queue->queue_id);
 
 	if (buf_queue->cnt == MAX_BATCH ||
 	    /* Loom: This check of sn_avail_snbs(ctrl_queue) is not correct and
@@ -620,6 +641,7 @@ static int sn_host_do_rx_batch(struct sn_queue *queue,
 		ptr = skb_put(skb, total_len);
 
 		do {
+			phys_addr_t paddr_next;
 			char *seg;
 			uint16_t seg_len;
 
@@ -630,8 +652,14 @@ static int sn_host_do_rx_batch(struct sn_queue *queue,
 					seg_len);
 
 			copied += seg_len;
+			paddr_next = rx_desc->next;
 			rx_desc = phys_to_virt(rx_desc->next +
 					SNBUF_SCRATCHPAD_OFF);
+			if (!virt_addr_valid(rx_desc)) {
+				log_err("invalid rx_desc %llx %p\n", paddr_next, rx_desc);
+				trace_printk("invalid rx_desc %llx %p\n", paddr_next, rx_desc);
+				continue;
+			}
 		} while (copied < total_len);
 	}
 

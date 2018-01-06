@@ -1618,7 +1618,12 @@ static inline void sk_tx_queue_clear(struct sock *sk)
 {
 	sk->sk_tx_queue_mapping = -1;
 #ifdef CONFIG_LOOM
-	sk->sk_tx_sched_queue_mapping = -1;
+	/* Loom: DEBUG */
+	//trace_printk("sk_tx_queue_clear for sk (%p)\n", sk);
+
+	/* TODO: Queue mappings get cleared fairly often? For now, do not reset
+	 * the scheduling queue. */
+	//sk->sk_tx_sched_queue_mapping = -1;
 #endif
 }
 
@@ -1630,6 +1635,13 @@ static inline int sk_tx_queue_get(const struct sock *sk)
 static inline void sk_set_socket(struct sock *sk, struct socket *sock)
 {
 	sk_tx_queue_clear(sk);
+#ifdef CONFIG_LOOM
+	/* TODO: When should the scheduling queue be cleared? */
+	/* Loom: DEBUG */
+	//trace_printk("sk_set_socket for sk (%p). Clearing sched queue\n", sk);
+
+	sk->sk_tx_sched_queue_mapping = -1;
+#endif
 	sk->sk_socket = sock;
 }
 

@@ -607,16 +607,21 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 
 	int limit = 0;
 	//int limit = (MAX_BATCH);
+	int ctrl_limit = 8; /* Some watermark... */
 
 	/* LOOM: DEBUG */
 	//log_info("%s: sn_maybe_stop_tx. avail_snbs=%d, tx_queue=%d\n",
 	//	 queue->dev->netdev->name, sn_avail_snbs(queue),
 	//	 queue->queue_id);
+	//trace_printk("%s: sn_maybe_stop_tx. avail_snbs=%d, "
+	//	 "avail_ctrl_desc=%d, tx_queue=%d\n",
+	//	 queue->dev->netdev->name, sn_avail_snbs(queue),
+	//	 sn_avail_ctrl_desc(queue), queue->queue_id);
 
 	/* TODO: assert that queue is a tx_queue */
 
 	if (sn_avail_snbs(queue) > limit &&
-	    sn_avail_ctrl_desc(queue) > limit) {
+	    sn_avail_ctrl_desc(queue) > ctrl_limit) {
 		return 0;
 	}
 
@@ -624,8 +629,10 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 	/* LOOM: DEBUG */
 	//log_info("%s: sn_maybe_stop_tx stopping tx_queue=%d\n",
 	//	 queue->dev->netdev->name, queue->queue_id);
-	//trace_printk("%s: sn_maybe_stop_tx stopping tx_queue=%d\n",
-	//	 queue->dev->netdev->name, queue->queue_id);
+	//trace_printk("%s: sn_maybe_stop_tx stopping tx_queue=%d. "
+	//	 "avail_snbs=%d, avail_ctrl_desc=%d\n",
+	//	 queue->dev->netdev->name, queue->queue_id,
+	//	 sn_avail_snbs(queue), sn_avail_ctrl_desc(queue));
 	/* Loom: DEBUG: TODO trace_printk the reason the queue is being stopped. */
 
 	netif_stop_subqueue(netdev, queue->queue_id);
@@ -637,7 +644,8 @@ int sn_maybe_stop_tx(struct sn_queue *queue)
 	smp_mb();
 	//__sync_synchronize();
 
-	if (likely(sn_avail_snbs(queue) <= limit))
+	if (likely(sn_avail_snbs(queue) <= limit ||
+			sn_avail_ctrl_desc(queue) <= ctrl_limit))
 		return -EBUSY;
 
 	/* LOOM: DEBUG */
@@ -846,11 +854,22 @@ static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	struct sn_queue *data_queue;
 
 	u16 tx_ctrlq = skb->queue_mapping;
-	u32 tx_dataq;
+	u32 tx_dataq = 0;
 
 	if (dev->dataq_on) {
-		if (skb->sk && skb->sk->sk_tx_sched_queue_mapping >= 0) {
-			tx_dataq = skb->sk->sk_tx_sched_queue_mapping;
+		if (skb->sk) {
+			if (skb->sk->sk_tx_sched_queue_mapping >= 0) {
+				tx_dataq = skb->sk->sk_tx_sched_queue_mapping;
+			} else {
+				tx_dataq = sn_select_data_queue(dev, skb);
+				skb->sk->sk_tx_sched_queue_mapping = tx_dataq;
+
+				/* Loom: DEBUG */
+				trace_printk("Set sched queue for sk (%p) to "
+					"%d\n", skb->sk,
+					skb->sk->sk_tx_sched_queue_mapping);
+
+			}
 		} else {
 			/* An skb could be assigned a scheduling queue in
 			 * netdev_pick_tx. */
@@ -925,6 +944,7 @@ static u16 sn_select_queue(struct net_device *netdev,
 			sched_qi = sn_select_data_queue(dev, skb);
 			sk->sk_tx_sched_queue_mapping = sched_qi;
 
+			/* Loom: DEBUG */
 			trace_printk("Set sched queue for sk (%p) to %d\n",
 				sk, sk->sk_tx_sched_queue_mapping);
 		}
@@ -1104,13 +1124,13 @@ int sn_create_netdev(void *bar, struct sn_device **dev_ret)
 			conf->num_rxq > MAX_QUEUES)
 	{
 		log_err("invalid ioctl arguments: num_tx_ctrlq=%d, "
-				"num_tx_dataq=%d, num_rxq=%d, dataq_on:%d\n",
+				"num_tx_dataq=%d, num_rxq=%d, dataq_on=%d\n",
 				conf->num_tx_ctrlq, conf->num_tx_dataq,
 				conf->num_rxq, conf->dataq_on);
 		return -EINVAL;
 	}
 	log_err("ioctl arguments: num_tx_ctrlq=%d, "
-			"num_tx_dataq=%d, num_rxq=%d, dataq_on:%d\n",
+			"num_tx_dataq=%d, num_rxq=%d, dataq_on=%d\n",
 			conf->num_tx_ctrlq, conf->num_tx_dataq,
 			conf->num_rxq, conf->dataq_on);
 

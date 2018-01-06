@@ -89,6 +89,9 @@ using bess::utils::be32_t;
 
 #define ROUND_TO_64(x) ((x + 32) & (~0x3f))
 
+/* Loom: TODO: Make more general. */
+#define DRR_QUANTUM (16834)
+
 static inline int find_next_nonworker_cpu(int cpu) {
   do {
     cpu = (cpu + 1) % sysconf(_SC_NPROCESSORS_ONLN);
@@ -289,7 +292,7 @@ void VPort::FreeBar() {
 
     /* LOOM. Ugly. */
     /* TODO: Currently TSO is disabled GSO provides good enough performance, so
-     * this cleanup code is not needed. */
+     * this code is not needed. */
     struct txq_private *txq_priv = &inc_data_qs_[i].txq_priv;
     while (txq_priv->cur_seg < txq_priv->seg_cnt) {
       bess::Packet::Free(txq_priv->segs[txq_priv->cur_seg]);
@@ -592,8 +595,88 @@ CommandResponse VPort::SetIPAddr(const bess::pb::VPortArg &arg) {
   return CommandSuccess();
 }
 
+llring* VPort::AddQueue(uint32_t slots, int* err) {
+  int bytes = llring_bytes_with_slots(slots);
+  int ret;
+
+  llring* q = static_cast<llring*>(aligned_alloc(alignof(llring), bytes));
+  if (!q) {
+    *err = -ENOMEM;
+    return nullptr;
+  }
+
+  /* Loom: TODO: what should single_p and single_c be in this case? */
+  ret = llring_init(q, slots, 0, 0);
+  if (ret) {
+    std::free(q);
+    *err = -EINVAL;
+    return nullptr;
+  }
+  return q;
+}
+
+int VPort::InitSchedState() {
+  int ret = 0;
+  uint32_t qsize;
+  llring* q;
+
+  /* Loom: DEBUG: */
+  LOG(INFO) << "InitSchedState: num_tx_dataqs_: " << num_tx_dataqs_;
+
+  /* Allocate the ring. */
+  qsize = num_tx_dataqs_ << 1;
+  q = AddQueue(qsize, &ret);
+  LOG(INFO) << "InitSchedState: q: " << q;
+  if (ret != 0) {
+    return ret;
+  }
+  dataq_drr_.dataq_ring = q;
+
+  /* Init metadata. */
+  dataq_drr_.current_dataq = nullptr;
+  dataq_drr_.quantum = DRR_QUANTUM;
+
+  /* Set the per-dataq state. */
+  for (int dataq_num = 0; dataq_num < num_tx_dataqs_; dataq_num++) {
+    struct tx_data_queue *dataq = &inc_data_qs_[dataq_num];
+
+    /* TODO: These should go somewhere else once a more general scheduling
+     * algorithm is implemented. */
+    dataq->active = false;
+    dataq->drr_deficit = dataq_drr_.quantum;
+    dataq->next_packet = nullptr;
+  }
+
+  return ret;
+}
+
+int VPort::DeInitSchedState() {
+  /* Loom: DEBUG: just warn for now. */
+  if (llring_count(dataq_drr_.dataq_ring)) {
+    LOG(WARNING) << "DeInitSchedState with items still in the dataq_drr_ queue";
+  }
+  
+  /* Dequeue the items in the queue. */
+  if (dataq_drr_.dataq_ring) {
+    llring_addr_t llr_addr;
+    while (llring_dequeue(dataq_drr_.dataq_ring, &llr_addr) == 0) {
+      /* Loom: TODO: do something with the items still enqueued? */
+    }
+
+    /* Free memory. */
+    std::free(dataq_drr_.dataq_ring);
+    dataq_drr_.dataq_ring = nullptr;
+  }
+
+  return (0);
+}
+
 void VPort::DeInit() {
   int ret;
+
+  ret = DeInitSchedState();
+  if (ret < 0)
+    PLOG(ERROR) << "DeInitSchedState ERROR";
 
   ret = ioctl(fd_, SN_IOC_RELEASE_HOSTNIC);
   if (ret < 0)
@@ -709,6 +792,13 @@ CommandResponse VPort::Init(const bess::pb::VPortArg &arg) {
   ret = ioctl(fd_, SN_IOC_SET_QUEUE_MAPPING, &map_);
   if (ret < 0) {
     PLOG(ERROR) << "ioctl(SN_IOC_SET_QUEUE_MAPPING)";
+  }
+
+  /* Loom: Initialize scheduling state. */
+  ret = InitSchedState();
+  if (ret < 0) {
+    err = CommandFailure(-ret, "InitSchedState failure");
+    goto fail;
   }
 
   return CommandSuccess();
@@ -1029,7 +1119,7 @@ int VPort::RecvPackets(queue_t qid, bess::Packet **pkts, int max_cnt) {
   }
 }
 
-int VPort::DequeueCtrlDesc(struct queue *tx_ctrl_queue,
+int VPort::DequeueCtrlDescs(struct queue *tx_ctrl_queue,
                              struct sn_tx_ctrl_desc *ctrl_desc_arr,
                              int max_cnt)
 {
@@ -1039,10 +1129,10 @@ int VPort::DequeueCtrlDesc(struct queue *tx_ctrl_queue,
   int i;
 
   /* Loom: DEBUG */
-  if (llring_count(tx_ctrl_queue->drv_to_sn) > 0) {
-    PLOG(INFO) << bess::utils::Format("DequeueCtrlDesc: ctrl_queue ring "
-      "count: %d", llring_count(tx_ctrl_queue->drv_to_sn));
-  }
+  //if (llring_count(tx_ctrl_queue->drv_to_sn) > 0) {
+  //  PLOG(INFO) << bess::utils::Format("DequeueCtrlDesc: ctrl_queue ring "
+  //    "count: %d", llring_count(tx_ctrl_queue->drv_to_sn));
+  //}
 
   ctrl_desc_cnt = std::min(max_cnt, (int)(llring_count(tx_ctrl_queue->drv_to_sn) / SN_OBJ_PER_TX_CTRL_DESC));
   dequeue_obj_cnt = ctrl_desc_cnt * SN_OBJ_PER_TX_CTRL_DESC;
@@ -1065,49 +1155,275 @@ int VPort::DequeueCtrlDesc(struct queue *tx_ctrl_queue,
   }
 
   /* Loom: DEBUG: Just print the ctrl descriptors for now. */
+#if 0
   for (i = 0; i < ctrl_desc_cnt; i++) {
     struct sn_tx_ctrl_desc *ctrl_desc = &ctrl_desc_arr[i];
 
     PLOG(INFO) << bess::utils::Format("tx_ctrl_desc: cookie: %x, dataq: %d",
       ctrl_desc->cookie, ctrl_desc->dataq_num);
   }
+#endif
 
   return ctrl_desc_cnt;
 }
 
+int VPort::ProcessCtrlDescs(struct sn_tx_ctrl_desc *ctrl_desc_arr,
+                            int cnt)
+{
+  int i;
+  for (i = 0; i < cnt; i++) {
+    struct sn_tx_ctrl_desc *ctrl_desc = &ctrl_desc_arr[i];
+    struct tx_data_queue *dataq;
+
+    /* Sanity check */
+    if (ctrl_desc->cookie != SN_CTRL_DESC_COOKIE) {
+      PLOG(ERROR) << bess::utils::Format("Bad Ctrl Desc Cookie: %x",
+        ctrl_desc->cookie);
+      continue;
+    }
+    if ((int)ctrl_desc->dataq_num >= num_tx_dataqs_) {
+      PLOG(ERROR) << bess::utils::Format("Bad TX Dataq num: %d",
+        ctrl_desc->dataq_num);
+      continue;
+    }
+
+    /* Add the dataq to the DRR queue (at the back. ouch.) */
+    /* Loom: TODO: different data structure. */
+    /* Loom: TODO: Move to an AddNewDataq function. */
+    dataq = &inc_data_qs_[ctrl_desc->dataq_num];
+    if (!dataq->active) {
+      int err = llring_enqueue(dataq_drr_.dataq_ring, reinterpret_cast<llring_addr_t>(dataq));
+      if (err) {
+        PLOG(ERROR) << bess::utils::Format("Unable to add dataq %d to DRR ring",
+          ctrl_desc->dataq_num);
+        continue;
+      }
+      dataq->active = true;
+      dataq->drr_deficit = 0;
+      dataq->next_packet = nullptr;
+    }
+  }
+
+  /* No error. */
+  return (0);
+}
+
+/* Loom: Note: I would expect this to break in bad ways if different workers
+ * are polling different control queues at the same time because they will try
+ * to access the same dataq_ring. */
+int VPort::GetNextBatch(bess::Packet **pkts, int max_cnt) {
+  struct tx_data_queue *dataq;
+  uint32_t dataq_count = llring_count(dataq_drr_.dataq_ring);
+  if (dataq_drr_.current_dataq) {
+    dataq_count++;
+  }
+  int last_round_cnt = 0;
+  int cnt = 0;
+  int ret;
+
+  // iterate through flows in round robin fashion until batch is full
+  while (cnt < max_cnt) {
+    // checks to see if there has been no update after a full round
+    // ensures that if every flow is empty or if there are no flows
+    // that will terminate with a non-full batch.
+    /* Loom: TODO: Since empty dataq's are removed this is probably overly complex. */
+    if (dataq_count == 0) {
+      if (last_round_cnt == cnt) {
+        break;
+      } else {
+        dataq_count = llring_count(dataq_drr_.dataq_ring);
+        last_round_cnt = cnt;
+      }
+    }
+    dataq_count--;
+
+    dataq = GetNextDrrDataq();
+    if (dataq == nullptr) {
+      /* TODO: revisit */
+      continue;
+    }
+
+    ret = GetNextPackets(&pkts[cnt], max_cnt - cnt, dataq);
+    cnt += ret;
+
+    /* TODO: What to do if the dataq does not have any packets? */
+    /* TODO: This feels redundant wiht GetNextDrrDataq */
+    if (llring_empty(dataq->drv_to_sn) && !dataq->next_packet) {
+      dataq->drr_deficit = 0;
+      dataq->active = false;
+      assert(dataq->next_packet == nullptr);
+    }
+
+    // if the flow doesn't have any more packets to give, reenqueue it
+    if (!dataq->next_packet || (uint32_t)dataq->next_packet->total_len() > dataq->drr_deficit) {
+      ret = llring_enqueue(dataq_drr_.dataq_ring, reinterpret_cast<llring_addr_t>(dataq));
+      if (ret != 0) {
+        PLOG(ERROR) << "Unable to enqueue a dataq back into the DRR queue!";
+        dataq->active = false;
+        dataq->drr_deficit = 0;
+        if (dataq->next_packet) {
+          bess::Packet::Free(dataq->next_packet);
+          dataq->next_packet = nullptr;
+        }
+        break;
+      }
+    } else {
+      // knowing that the while statement will exit, keep the flow that still
+      // has packets at the front
+      assert(cnt >= max_cnt);
+      dataq_drr_.current_dataq = dataq;
+    }
+  }
+
+  return cnt;
+}
+
+VPort::tx_data_queue* VPort::GetNextDrrDataq() {
+  struct tx_data_queue *dataq;
+  int err;
+
+  if (!dataq_drr_.current_dataq) {
+    err = llring_dequeue(dataq_drr_.dataq_ring, reinterpret_cast<llring_addr_t*>(&dataq));
+    if (err < 0) {
+      PLOG(ERROR) << "Unable to get a next dataq!";
+      return nullptr;
+    }
+
+    if (llring_empty(dataq->drv_to_sn) && !dataq->next_packet) {
+      // if the flow expired, remove it and update it
+      /* Loom: TODO: Move to its own function. */
+      dataq->active = false;
+      dataq->drr_deficit = 0;
+      assert(data->next_packet == nullptr);
+
+      return nullptr;
+    }
+
+    dataq->drr_deficit += dataq_drr_.quantum;
+  } else {
+    dataq = dataq_drr_.current_dataq;
+    dataq_drr_.current_dataq = nullptr;
+  }
+
+  return dataq;
+}
+
+int VPort::GetNextPackets(bess::Packet **pkts, int max_cnt,
+                               struct tx_data_queue *dataq) {
+  int cnt;
+  bess::Packet* pkt;
+
+  cnt = 0;
+  while (cnt < max_cnt && (!llring_empty(dataq->drv_to_sn) || dataq->next_packet)) {
+    // makes sure there isn't already a packet at the front
+    if (!dataq->next_packet) {
+      pkt = DataqReadPacket(dataq);
+      if (pkt == nullptr) {
+        PLOG(ERROR) << "Unable to dequeue packet from dataq!";
+        return cnt;
+      }
+    } else {
+      pkt = dataq->next_packet;
+      dataq->next_packet = nullptr;
+    }
+
+    if ((uint32_t)pkt->total_len() > dataq->drr_deficit) {
+      dataq->next_packet = pkt;
+      break;
+    }
+
+    dataq->drr_deficit -= pkt->total_len();
+
+    pkts[cnt] = pkt;
+    cnt++;
+  }
+
+  return cnt;
+}
+
+/* Loom: TODO: Read a batch? Do TSO? */
+bess::Packet* VPort::DataqReadPacket(struct tx_data_queue *dataq) {
+  phys_addr_t paddr;
+  struct sn_tx_data_desc *tx_desc;
+  //struct sn_tx_data_metadata *tx_meta;
+  bess::Packet *pkt;
+  uint16_t len;
+  int err;
+
+  err = llring_dequeue(dataq->drv_to_sn, reinterpret_cast<llring_addr_t*>(&paddr));
+  if (err != 0) {
+    PLOG(ERROR) << "Unable to dequeue packet from dataq that should should have data!";
+    return nullptr;
+  }
+
+  pkt = bess::Packet::from_paddr(paddr);
+
+  tx_desc = pkt->scratchpad<struct sn_tx_data_desc *>();
+  len = tx_desc->total_len;
+  //tx_meta = &tx_desc->meta;
+
+  pkt->set_data_off(SNBUF_HEADROOM);
+  pkt->set_total_len(len);
+  pkt->set_data_len(len);
+
+  /* TODO: process sn_tx_metadata */
+
+  /* TODO: Set tx_meta as pkt metadata. */
+
+  /* Metadata: Process checksumming */
+  //if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
+  //  //do_ip_csum(pkt, tx_meta->csum_start, tx_meta->csum_dest);
+  //  do_ip_tcp_csum(pkt);
+  //}
+
+  return pkt;
+}
+
+/* Loom: TODO: A reasonable way of hacking things up would be to reinterpret
+ * qid in this case instead as tcid (traffic class id).  However, this should
+ * probably get copy+pasted into a new LoomVPort file to avoid breaking the
+ * existing VPort implementation (which I want to compare against) */
 int VPort::RecvPacketsDataQ(queue_t qid, bess::Packet **pkts, int max_cnt) {
   struct queue *tx_ctrl_queue = &inc_ctrl_qs_[qid];
-  phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
   struct sn_tx_ctrl_desc ctrl_desc_arr[bess::PacketBatch::kMaxBurst];
   int cnt;
   int ctrl_desc_cnt;
   int refill_cnt;
-  int i;
+  //int i;
+  int ret;
 
   if (static_cast<size_t>(max_cnt) > bess::PacketBatch::kMaxBurst) {
     max_cnt = bess::PacketBatch::kMaxBurst;
   }
 
+  /* Process ctrl desriptors */
   /* Loom: TODO: different max_cnt? */
-  ctrl_desc_cnt = DequeueCtrlDesc(tx_ctrl_queue, ctrl_desc_arr, max_cnt);
+  /* Loom: TODO: Poll all ctrl queues? */
+  ctrl_desc_cnt = DequeueCtrlDescs(tx_ctrl_queue, ctrl_desc_arr, max_cnt);
+  ret = ProcessCtrlDescs(ctrl_desc_arr, ctrl_desc_cnt);
+  if (ret != 0) {
+    LOG(ERROR) << "Unexpected error in ProcessCtrlDescs";
+  }
 
+  /* Send more buffers to the driver. */
   refill_cnt = refill_tx_bufs(tx_ctrl_queue->sn_to_drv);
   refill_cnt = refill_cnt; /* XXX: avoid warnings. */
 
   /* Loom: DEBUG: lets just test up to here for now... */
-  cnt = 0;
-  return 0;
-
-  /* TODO: generic notification architecture */
-  /* TODO: Move triggering a tx interrupt to its own function? */
-  /* LOOM: TODO: the original concept was to cause a TX interrupt only when
-   * both additional buffers were refilled AND the kmod had not disabled
-   * interrupts. However, this has problems with race conditions.*/
-  //if (refill_cnt > 0) {
-  //}
+  /* Try to read a batch of packets. */
+  cnt = GetNextBatch(pkts, max_cnt);
 
   /* LOOM: DEBUG */
-  //LOG(INFO) << bess::utils::Format("VPort RecvPackets for txq: %d", qid);
+#if 0
+  if (cnt > 0) {
+    LOG(INFO) << bess::utils::Format("VPort RecvPackets for ctrl q: %d. %d packets",
+      qid, cnt);
+  }
+#endif
+
+  /* TODO: should any more procesing be done on the packets? */
+  //for (i = 0; i < cnt; i++) {
+  //}
 
   /* If the driver is requesting a TX interrupt, generate one. */
   if (__sync_bool_compare_and_swap(&tx_ctrl_queue->tx_regs->irq_disabled, 0, 1)) {
@@ -1121,7 +1437,6 @@ int VPort::RecvPacketsDataQ(queue_t qid, bess::Packet **pkts, int max_cnt) {
      * a txq_to_cpu mapping to make this part better. */
     uint64_t cpu = 0;
     uint64_t _cpui;
-    int ret;
     for (_cpui = 0; _cpui < SN_MAX_CPU; _cpui++) {
       if (map_.cpu_to_tx_ctrlq[_cpui] == qid) {
         cpu = _cpui;
@@ -1139,35 +1454,6 @@ int VPort::RecvPacketsDataQ(queue_t qid, bess::Packet **pkts, int max_cnt) {
     }
   }
 
-  for (i = 0; i < cnt; i++) {
-    bess::Packet *pkt;
-    struct sn_tx_data_desc *tx_desc;
-    struct sn_tx_data_metadata *tx_meta;
-    uint16_t len;
-
-    pkt = pkts[i] = bess::Packet::from_paddr(paddr[i]);
-
-    tx_desc = pkt->scratchpad<struct sn_tx_data_desc *>();
-    len = tx_desc->total_len;
-    tx_meta = &tx_desc->meta;
-
-    pkt->set_data_off(SNBUF_HEADROOM);
-    pkt->set_total_len(len);
-    pkt->set_data_len(len);
-
-    /* TODO: process sn_tx_metadata */
-
-    /* TODO: Set tx_meta as pkt metadata. */
-
-    /* Metadata: Process checksumming */
-    //if (tx_meta->csum_start != SN_TX_CSUM_DONT) {
-    //  //do_ip_csum(pkt, tx_meta->csum_start, tx_meta->csum_dest);
-    //  do_ip_tcp_csum(pkt);
-    //}
-
-    /* LOOM: TODO: What additional information should be added to metadata? */
-  }
-
   return cnt;
 }
 
@@ -1175,7 +1461,6 @@ int VPort::RecvPacketsOld(queue_t qid, bess::Packet **pkts, int max_cnt) {
   struct queue *tx_ctrl_queue = &inc_ctrl_qs_[qid];
   phys_addr_t paddr[bess::PacketBatch::kMaxBurst];
   int cnt;
-  int ctrl_desc_cnt;
   int refill_cnt;
   int i;
 
@@ -1286,6 +1571,26 @@ int VPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   for (int i = 0; i < cnt; i++) {
     bess::Packet *snb = pkts[i];
     bess::Packet *seg;
+
+    /* Loom: DEBUG */
+#if 0
+    if (snb->nb_segs() > 1) {
+      LOG(INFO) << "(Port " << name() << ") Number of segs: " << snb->nb_segs();
+    }
+    if (snb->total_len() > 1550) {
+      LOG(INFO) << "(Port " << name() << ") Packet len > 1550 (" << snb->total_len() << ")";
+    }
+    if (!snb->is_linear()) {
+      LOG(INFO) << "(Port " << name() << ") Packet is not linear!";
+    }
+    if (!snb->is_simple()) {
+      LOG(INFO) << "(Port " << name() << ") Packet is not simple!";
+    }
+#endif
+    if (snb->nb_segs() > 1 || snb->total_len() > 1550 ||
+        !snb->is_linear() || !snb->is_simple()) {
+      LOG(INFO) << "(Port " << name() << ") Dropping sn_to_drv (Outgoing/Kernel RX) packet!";
+    }
 
     struct sn_rx_desc *rx_desc;
 

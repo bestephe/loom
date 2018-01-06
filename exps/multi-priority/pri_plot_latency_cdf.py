@@ -55,7 +55,7 @@ def plot_cdf(results):
     ax.set_ylabel('CDF')
     #ax.set_ylim(ymin=0.8, ymax=1.0)
     #ax.set_xlim(xmax=2000)
-    ax.set_ylim(ymin=0.75, ymax=1.0)
+    ax.set_ylim(ymin=0.5, ymax=1.0)
     ax.set_xlim(xmax=6000)
 
     # Add the legend
@@ -66,7 +66,7 @@ def plot_cdf(results):
     figure.subplots_adjust(bottom=bottom)
 
     # Add the title
-    title(results['title'])
+    #title(results['title'])
 
 def main():
     # Parse arguments

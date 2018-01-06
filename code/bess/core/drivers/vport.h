@@ -88,7 +88,22 @@ class VPort final : public Port {
     /* Loom. Used for TSO (Not used right now). Probably in the wrong place? */
     struct txq_private txq_priv;
 
+    /* TODO: These should go somewhere else once a more general scheduling
+     * algorithm is implemented. */
+    bool active;
+    uint64_t drr_deficit;
+    bess::Packet* next_packet;
+
     struct llring *drv_to_sn;
+  };
+
+  struct dataq_drr {
+    /* XXX: Just store the scheduling data in a data structure we can get from
+     * the dataq index. */
+    //CuckooMap<uint32_t, struct tx_data_queue*> active_dataqs;
+    struct llring *dataq_ring;
+    struct tx_data_queue *current_dataq;
+    uint32_t quantum;
   };
 
   void FreeBar();
@@ -97,15 +112,34 @@ class VPort final : public Port {
   int SetIPAddrSingle(const std::string &ip_addr);
   CommandResponse SetIPAddr(const bess::pb::VPortArg &arg);
 
-  /* Loom: Apologies for putting things in the wrong places. */
-  /* Note: The aren't used any more */
+  /* Loom: Note: The aren't used any more */
   int RefillSegs(queue_t qid, bess::Packet **segs, int max_cnt);
   bess::Packet *SegPkt(queue_t qid);
 
-  /* Loom: To use "struct queue *". This could be cleaner. */
-  int DequeueCtrlDesc(struct queue *tx_ctrl_queue,
-                      struct sn_tx_ctrl_desc *ctrl_desc_arr,
-                      int max_cnt);
+  /* Loom: TODO: use "struct queue *". This could be cleaner. */
+  int DequeueCtrlDescs(struct queue *tx_ctrl_queue,
+                       struct sn_tx_ctrl_desc *ctrl_desc_arr,
+                       int max_cnt);
+  int ProcessCtrlDescs(struct sn_tx_ctrl_desc *ctrl_desc_arr,
+                       int cnt);
+  /*
+    allocates llring queue space and adds the queue to the specified flow with
+    size indicated by slots. Takes the number of slots for the queue to have
+    and the integer pointer to set on error.  Returns a llring queue.
+  */
+  /* Loom: This is a potentially misleading name. */
+  llring* AddQueue(uint32_t slots, int* err);
+
+  /* Dataq and scheduling functions. */
+  int InitSchedState();
+  int DeInitSchedState();
+
+  /* Functions for DataQ DRR here. */
+  int GetNextBatch(bess::Packet **pkts, int max_cnt);
+  struct tx_data_queue* GetNextDrrDataq();
+  int GetNextPackets(bess::Packet **pkts, int max_cnt,
+                     struct tx_data_queue *dataq);
+  bess::Packet* DataqReadPacket(struct tx_data_queue *dataq);
 
   /* Using data queues is optional */
   int RecvPacketsOld(queue_t qid, bess::Packet **pkts, int max_cnt);
@@ -127,6 +161,9 @@ class VPort final : public Port {
 
   bool use_tx_dataq_;
   int num_tx_dataqs_;
+
+  /* Loom: scheduling state for deciding which dataQs to pull from. */
+  struct dataq_drr dataq_drr_;
 };
 
 #endif  // BESS_DRIVERS_VPORT_H_
