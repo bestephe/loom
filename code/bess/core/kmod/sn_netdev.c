@@ -750,7 +750,7 @@ static void sn_set_tx_metadata(struct sk_buff *skb,
 		tx_meta->csum_dest = SN_TX_CSUM_DONT;
 	}
 
-        //tx_meta->drv_xmit_ts = get_cycles();
+        tx_meta->drv_xmit_ts = get_cycles();
 }
 
 static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *ctrl_queue,
@@ -858,7 +858,8 @@ static int sn_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 
 	if (dev->dataq_on) {
 		if (skb->sk) {
-			if (skb->sk->sk_tx_sched_queue_mapping >= 0) {
+			if (skb->sk->sk_tx_sched_queue_mapping >= 0 &&
+			    skb->sk->sk_tx_sched_queue_mapping < dev->num_tx_dataq) {
 				tx_dataq = skb->sk->sk_tx_sched_queue_mapping;
 			} else {
 				tx_dataq = sn_select_data_queue(dev, skb);

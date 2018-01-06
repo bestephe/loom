@@ -46,7 +46,7 @@
 #include "pb/port_msg.pb.h"
 #include "utils/common.h"
 
-typedef uint8_t queue_t;
+typedef uint16_t queue_t;
 
 #define MAX_QUEUES_PER_DIR 64 /* [0, 31] (for each RX/TX) */
 

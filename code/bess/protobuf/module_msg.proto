@@ -281,6 +281,15 @@ message PortIncCommandSetBurstArg {
 }
 
 /**
+ * The module LoomPortInc has a function `set_burst(...)` that allows you to specify the
+ * maximum number of packets to be stored in a single PacketBatch released by
+ * the module.
+ */
+message LoomPortIncCommandSetBurstArg {
+  uint64 burst = 1; /// The maximum "burst" of packets (ie, the maximum batch size)
+}
+
+/**
  * The module QueueInc has a function `set_burst(...)` that allows you to specify
  * the maximum number of packets to be stored in a single PacketBatch released
  * by the module.
@@ -684,6 +693,20 @@ message NoOpArg {
  * __Output Gates__: 1
  */
 message PortIncArg {
+  string port = 1; /// The portname to connect to.
+  bool prefetch = 2; /// Whether or not to prefetch packets from the port.
+}
+
+/**
+ * The LoomPortInc module connects a physical or virtual port and releases
+ * packets from it. LoomPortInc does not support multiqueueing.
+ * For details on how to configure LoomPortInc using DPDK, virtual ports,
+ * or libpcap, see the sidebar in the wiki.
+ *
+ * __Input Gates__: 0
+ * __Output Gates__: 1
+ */
+message LoomPortIncArg {
   string port = 1; /// The portname to connect to.
   bool prefetch = 2; /// Whether or not to prefetch packets from the port.
 }

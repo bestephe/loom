@@ -1,3 +1,4 @@
+// Copyright (c) 2014-2016, The Regents of the University of California.
 // Copyright (c) 2016-2017, Nefeli Networks, Inc.
 // All rights reserved.
 //
@@ -27,59 +28,46 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-syntax = "proto3";
+#ifndef BESS_MODULES_LOOMPORTINC_H_
+#define BESS_MODULES_LOOMPORTINC_H_
 
-package bess.pb;
+#include "../module.h"
+#include "../pb/module_msg.pb.h"
+#include "../port.h"
+#include "../drivers/loom_vport.h"
 
-message PCAPPortArg {
-  string dev = 1;
-}
+class LoomPortInc final : public Module {
+ public:
+  static const gate_idx_t kNumIGates = 0;
 
-message PMDPortArg {
-  bool loopback = 1;
-  oneof port {
-    uint64 port_id = 2;
-    string pci = 3;
-    string vdev = 4;
+  static const Commands cmds;
+
+  LoomPortInc() : Module(), port_(), loom_port_(), prefetch_(), burst_() {
+    is_task_ = true;
+    max_allowed_workers_ = Worker::kMaxWorkers;
   }
-}
 
-message UnixSocketPortArg {
-  string path = 1;
-}
+  CommandResponse Init(const bess::pb::LoomPortIncArg &arg);
 
-message ZeroCopyVPortArg {
+  void DeInit() override;
 
-}
+  /* Loom: TODO: RegisterTask override to rename the ctrl queue task and the tc
+   * tasks */
 
-message VPortArg {
-  string ifname = 1;
-  oneof cpid {
-    string docker = 2;
-    int64 container_pid = 3;
-    string netns = 4;
-  }
-  repeated int64 rxq_cpus = 5;
-  uint64 tx_tci = 6;
-  uint64 tx_outer_tci = 7;
-  bool loopback = 8;
-  repeated string ip_addrs = 9;
-  bool use_tx_dataq = 10;
-  uint64 num_tx_dataqs = 11;
-}
+  struct task_result RunTask(void *arg) override;
 
-message LoomVPortArg {
-  string ifname = 1;
-  oneof cpid {
-    string docker = 2;
-    int64 container_pid = 3;
-    string netns = 4;
-  }
-  repeated int64 rxq_cpus = 5;
-  uint64 tx_tci = 6;
-  uint64 tx_outer_tci = 7;
-  bool loopback = 8;
-  repeated string ip_addrs = 9;
-  uint64 num_tx_ctrlqs = 10;
-  uint64 num_tx_dataqs = 11;
-}
+  std::string GetDesc() const override;
+
+  CommandResponse CommandSetBurst(
+      const bess::pb::LoomPortIncCommandSetBurstArg &arg);
+
+ private:
+  struct task_result RunCtrlTask(void *arg);
+
+  Port *port_;
+  LoomVPort *loom_port_;
+  int prefetch_;
+  int burst_;
+};
+
+#endif  // BESS_MODULES_LOOMPORTINC_H_
