@@ -59,8 +59,9 @@ def plot_fairness_cdf(sq_res, mq_res, loom_res=None):
     # Mess with axes
     yax = ax.get_yaxis()
     yax.grid(True)
-    ax.set_xlabel('FM (Gbps)')
+    ax.set_xlabel('FM = $|TPUT_{J1} - TPUT_{J2}|$ (Gbps)')
     #ax.set_xlim(xmin=0)
+    ax.set_xlim(xmax=5)
     ax.set_ylim(ymax=1.0)
     ax.set_ylabel('CDF')
 

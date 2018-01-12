@@ -111,7 +111,7 @@ endif
 # -MMD dependency recording (should we use -MD?).
 COREDIR := $(abspath .)
 CXXARCHFLAGS ?= -march=native
-CXXFLAGS += -std=c++11 -g3 -ggdb3 $(CXXARCHFLAGS) \
+CXXFLAGS += -std=c++14 -g3 -ggdb3 $(CXXARCHFLAGS) \
 	    -isystem $(DPDK_INC_DIR) -isystem $(COREDIR) \
 	    -isystem $(dir $<).. -isystem $(COREDIR)/modules \
 	    -D_GNU_SOURCE \
@@ -250,7 +250,7 @@ UTIL_OBJS := $(addprefix utils/,$(patsubst %.cc,%.o,$(notdir $(UTIL_SRCS))))
 
 SRCS := $(filter-out $(TEST_SRCS) $(BENCH_SRCS) $(MODULE_SRCS) $(DRIVER_SRCS) $(UTIL_SRCS), $(ALL_SRCS)) $(PROTO_SRCS)
 # ? why doesn't HEADERS include module headers?
-HEADERS := $(wildcard *.h utils/*.h $(DRIVER_H) hooks/*.h)
+HEADERS := $(wildcard *.h utils/*.h utils/pifo/*.h $(DRIVER_H) hooks/*.h)
 OBJS := $(SRCS:.cc=.o) $(DRIVER_OBJS) $(UTIL_OBJS)
 
 EXEC := bessd

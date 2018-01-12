@@ -196,13 +196,13 @@ int sn_avail_ctrl_desc(struct sn_queue *ctrl_queue)
 /* Loom: TODO: more arguments. E.g., for scheduling metadata, for number of
  * enqueued packets/segments. */
 static void sn_set_ctrl_desc(struct sn_tx_ctrl_desc *ctrl_desc,
-		uint32_t dataq_num)
+		uint32_t dataq_num, struct sn_tx_data_metadata *tx_meta)
 {
 	ctrl_desc->cookie = SN_CTRL_DESC_COOKIE;
 	ctrl_desc->dataq_num = dataq_num;
+	ctrl_desc->meta.sch_meta = tx_meta->sch_meta;
 
-	/* Loom: TODO: ctrl metadata */
-	memset(&ctrl_desc->meta, 0x0, sizeof(ctrl_desc->meta));
+	/* Loom: TODO: More control metadata? */
 }
 
 static int sn_host_do_tx_batch_old(struct sn_queue *ctrl_queue,
@@ -349,12 +349,15 @@ static int sn_host_do_tx_batch_dataq(struct sn_queue *ctrl_queue,
 		phys_addr_t paddr = paddr_arr[i];
 		struct sn_tx_ctrl_desc *tx_ctrl_desc = &ctrl_desc_arr[i];
 		struct sn_tx_data_desc *tx_data_desc;
+		struct sn_tx_data_metadata *tx_meta = &meta_arr[i];
 		char *dst_addr;
 
 		int j;
 
 		/* Create the ctrl descriptor. */
-		sn_set_ctrl_desc(tx_ctrl_desc, data_queue->queue_id);
+                /* Loom: TODO: de-dup control descriptors for the same data
+                 * queue. */
+		sn_set_ctrl_desc(tx_ctrl_desc, data_queue->queue_id, tx_meta);
 
 		/* Loom: DEBUG. */
 		//trace_printk("%s: sn_host_do_tx_batch: enqueuing skb in "

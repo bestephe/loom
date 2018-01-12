@@ -61,7 +61,7 @@ endif
 BESS_INC_DIR := $(BESS_HOME)/core
 
 CXXARCHFLAGS ?= -march=native
-CXXFLAGS += -std=c++11 -g3 -ggdb3 $(CXXARCHFLAGS) \
+CXXFLAGS += -std=c++14 -g3 -ggdb3 $(CXXARCHFLAGS) \
 	    -Werror -isystem $(DPDK_INC_DIR) -isystem . -D_GNU_SOURCE \
 	    -isystem $(BESS_INC_DIR) \
 	    -Wall -Wextra -Wcast-align

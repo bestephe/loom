@@ -29,7 +29,7 @@ def plot_job_tput(results):
     lines = results['lines']
 
     # Create the figure
-    figure = plt.figure(figsize=(6, 2.5))
+    figure = plt.figure(figsize=(2.5, 2.5))
     bottom = 0.45
     legend_bbox = (0.5, -0.5)
 
@@ -54,7 +54,7 @@ def plot_job_tput(results):
     yax = ax.get_yaxis()
     yax.grid(True)
     ax.set_xlabel('Time (seconds)')
-    #ax.set_xlim(xmin=0)
+    ax.set_xlim(xmin=28)
     ax.set_ylabel('Throughput (Gbps)')
     figure.subplots_adjust(bottom=bottom)
 
@@ -65,7 +65,7 @@ def plot_job_tput(results):
     plt.tight_layout()
 
     # Add the title
-    title(results['title'])
+    #title(results['title'])
 
 def main():
     # Parse arguments

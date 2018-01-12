@@ -750,7 +750,12 @@ static void sn_set_tx_metadata(struct sk_buff *skb,
 		tx_meta->csum_dest = SN_TX_CSUM_DONT;
 	}
 
+	/* Redundant. Put in tx_sched_metadata instead? */
         tx_meta->drv_xmit_ts = get_cycles();
+	tx_meta->skb_priority = skb->priority;
+
+	/* Loom: TODO: more sophisticating assignment to traffic classes? */
+	tx_meta->sch_meta.tc = skb->priority;
 }
 
 static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *ctrl_queue,

@@ -34,6 +34,10 @@
 #include "../kmod/sn_common.h"
 #include "../port.h"
 
+/* For PIFO scheduling. */
+#include "../utils/pifo/pifo_pipeline_stage.h"
+#include "../utils/pifo/pifo_pipeline.h"
+
 static_assert(SN_MAX_TX_CTRLQ <= MAX_QUEUES_PER_DIR,
         "Cannot have more ctrl queues than max queues");
 static_assert(SN_MAX_RXQ <= MAX_QUEUES_PER_DIR,
@@ -43,7 +47,8 @@ static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
 
 class LoomVPort final : public Port {
  public:
-  LoomVPort() : fd_(), bar_(), map_(), netns_fd_(), container_pid_(), num_tx_dataqs_() {}
+  LoomVPort() : fd_(), bar_(), map_(), netns_fd_(), container_pid_(), num_tx_ctrlqs_(),
+    num_tx_dataqs_(), dataq_drr_(), pifo_state_() {}
   void InitDriver() override;
 
   CommandResponse Init(const bess::pb::LoomVPortArg &arg);
@@ -91,13 +96,29 @@ class LoomVPort final : public Port {
     struct txq_private txq_priv;
     int dataq_num;
 
-    /* TODO: These should go somewhere else once a more general scheduling
-     * algorithm is implemented. */
+    /* Metadata for PIFO scheduling. */
+    /* TODO: These should go somewhere else. */
     bool active;
-    uint64_t drr_deficit;
+    PIFOPacket pifo_entry;
     bess::Packet* next_packet;
+    uint64_t next_xmit_ts;
+    uint64_t next_tc;
 
+    /* DataQ DRR state. */
+    /* TODO: These should be deleted once a more general scheduling algorithm
+     * is implemented. */
+    uint64_t drr_deficit;
     struct llring *drv_to_sn;
+  };
+
+  struct pifo_pipeline_state {
+    /* TODO: multiple stages. */
+    PIFOPipeline *mesh;
+    std::map<uint32_t, std::vector<PIFOArguments>> tc_to_pifoargs;
+    int tick;
+
+    //pifo_pipeline_state() : {};
+    //~pifo_pipeline_state() {};
   };
 
   struct dataq_drr {
@@ -125,24 +146,36 @@ class LoomVPort final : public Port {
                        int max_cnt);
   int ProcessCtrlDescs(struct sn_tx_ctrl_desc *ctrl_desc_arr,
                        int cnt);
-  /*
-    allocates llring queue space and adds the queue to the specified flow with
-    size indicated by slots. Takes the number of slots for the queue to have
-    and the integer pointer to set on error.  Returns a llring queue.
-  */
-  /* Loom: This is a potentially misleading name. */
-  llring* AddQueue(uint32_t slots, int* err);
+  bess::Packet* DataqReadPacket(struct tx_data_queue *dataq);
 
-  /* Dataq and scheduling functions. */
+  /* Dataq and scheduling init/deint functions. */
   int InitSchedState();
   int DeInitSchedState();
 
-  /* Functions for DataQ DRR here. */
-  int GetNextBatch(bess::Packet **pkts, int max_cnt);
-  struct tx_data_queue* GetNextDrrDataq();
-  int GetNextPackets(bess::Packet **pkts, int max_cnt,
+  /* Functions for DataQ PIFO scheduling here. */
+  /* Init needs to be made generic. */
+  int InitPifoMeshFifo();
+  int InitPifoMesh2Tenant();
+  int InitPifoState();
+  int DeInitPifoState();
+  int AddNewPifoDataq(struct sn_tx_ctrl_desc *ctrl_desc);
+  int AddDataqToPifo(struct tx_data_queue *dataq);
+  int GetNextPifoBatch(bess::Packet **pkts, int max_cnt);
+  struct tx_data_queue* GetNextPifoDataq();
+  int GetNextPifoPackets(bess::Packet **pkts, int max_cnt,
                      struct tx_data_queue *dataq);
-  bess::Packet* DataqReadPacket(struct tx_data_queue *dataq);
+
+  /* Functions for DataQ DRR here. */
+  int InitDrrState();
+  int DeInitDrrState();
+  int AddNewDrrDataq(struct sn_tx_ctrl_desc *ctrl_desc);
+  /* Loom: This is a potentially misleading name. */
+  llring* AddDrrQueue(uint32_t slots, int* err);
+  int GetNextDrrBatch(bess::Packet **pkts, int max_cnt);
+  struct tx_data_queue* GetNextDrrDataq();
+  int GetNextDrrPackets(bess::Packet **pkts, int max_cnt,
+                     struct tx_data_queue *dataq);
+
 
   /* Using data queues was optional */
   int RecvPacketsDataQ(queue_t qid, bess::Packet **pkts, int max_cnt);
@@ -171,9 +204,11 @@ class LoomVPort final : public Port {
   int num_tx_ctrlqs_;
   int num_tx_dataqs_;
 
-  /* Loom: scheduling state for deciding which dataQs to pull from. */
   /* Loom: TODO: Replace with PIFOs */
   struct dataq_drr dataq_drr_;
+
+  /* Loom: scheduling state for deciding which dataQs to pull from. */
+  struct pifo_pipeline_state pifo_state_;
 };
 
 #endif  // BESS_DRIVERS_LOOMVPORT_H_

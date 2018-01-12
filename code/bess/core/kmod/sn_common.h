@@ -136,6 +136,9 @@ struct sn_tx_data_metadata {
 
         uint64_t skb_opaque;
 
+	/* skb->priority. */
+	uint16_t skb_priority;
+
         /* Driver xmit timestamp. */
         uint64_t drv_xmit_ts;
 
