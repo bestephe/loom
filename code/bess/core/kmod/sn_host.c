@@ -393,9 +393,9 @@ static int sn_host_do_tx_batch_dataq(struct sn_queue *ctrl_queue,
 		 * time instead of as a burst */
 		ret = llring_mp_enqueue_bulk(data_queue->drv_to_sn, &paddr, 1);
 		if (ret != 0) {
-			log_err("%s: data_queue %d is overflowing!\n",
-					data_queue->dev->netdev->name,
-					data_queue->queue_id);
+			//log_err("%s: data_queue %d is overflowing!\n",
+			//		data_queue->dev->netdev->name,
+			//		data_queue->queue_id);
 			trace_printk("%s: data_queue %d is overflowing!\n",
 					data_queue->dev->netdev->name,
 					data_queue->queue_id);

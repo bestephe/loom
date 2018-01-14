@@ -74,7 +74,7 @@ enum resource_t {
 typedef uint64_t resource_arr_t[NUM_RESOURCES];
 
 // The priority of a traffic class.
-typedef uint32_t priority_t;
+typedef uint64_t priority_t;
 
 // The amount of a resource allocated to a class.
 typedef int32_t resource_share_t;

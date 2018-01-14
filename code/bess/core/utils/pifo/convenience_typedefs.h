@@ -4,8 +4,8 @@
 /// Use Banzai's FieldContainer to represent a packet in the PIFO pipeline
 typedef FieldContainer<uint64_t> PIFOPacket;
 
-/// Set priority_t to a 32-bit uint for now
+/// Set priority_t to a 64-bit uint for now
 /// Better than creating a template for it.
-typedef uint32_t priority_t;
+typedef uint64_t priority_t;
 
 #endif  // CONVENIENCE_TYPEDEFS_H_

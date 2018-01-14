@@ -115,6 +115,10 @@ class LoomVPort final : public Port {
     /* TODO: multiple stages. */
     PIFOPipeline *mesh;
     std::map<uint32_t, std::vector<PIFOArguments>> tc_to_pifoargs;
+    std::map<uint32_t, PIFOPacket> tc_to_sattrs; /* TC -> static attributes of the class. */
+    std::vector<PIFOPacket::FieldName> virtual_time_fields;
+    std::map<PIFOPacket::FieldName, uint64_t> virtual_times;
+    //std::map<PIFOPacket::FieldName, std::map<uint64_t, uint64_t>> finish_times;
     int tick;
 
     //pifo_pipeline_state() : {};
@@ -155,7 +159,8 @@ class LoomVPort final : public Port {
   /* Functions for DataQ PIFO scheduling here. */
   /* Init needs to be made generic. */
   int InitPifoMeshFifo();
-  int InitPifoMesh2Tenant();
+  int InitPifoMesh2TenantPrio();
+  int InitPifoMesh2TenantFair();
   int InitPifoState();
   int DeInitPifoState();
   int AddNewPifoDataq(struct sn_tx_ctrl_desc *ctrl_desc);
@@ -163,7 +168,8 @@ class LoomVPort final : public Port {
   int GetNextPifoBatch(bess::Packet **pkts, int max_cnt);
   struct tx_data_queue* GetNextPifoDataq();
   int GetNextPifoPackets(bess::Packet **pkts, int max_cnt,
-                     struct tx_data_queue *dataq);
+                         struct tx_data_queue *dataq,
+                         uint64_t *total_bytes);
 
   /* Functions for DataQ DRR here. */
   int InitDrrState();
