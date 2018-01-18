@@ -11,7 +11,7 @@ import sys
 import time
 
 #TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
-TX_CTRL_QUEUE_COUNT = 8
+TX_CTRL_QUEUE_COUNT = 16
 TX_DATA_QUEUE_COUNT = 4096
 TX_BESS_QUEUES = 1
 RX_QUEUE_COUNT = 16
@@ -20,9 +20,9 @@ RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 VPORT = True
 
-#SCH_HIER = '2ten_pri'
+SCH_HIER = '2ten_pri'
 #SCH_HIER = '2ten_fair'
-SCH_HIER = 'mten_prifair'
+#SCH_HIER = 'mten_prifair'
 
 # DEBUGGING
 #bess.set_debug(True)

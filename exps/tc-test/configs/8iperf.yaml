@@ -1,0 +1,23 @@
+apps:
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5001, prog: iperf3, name: 'iperf_1',
+   start: 0,  finish: 5}
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5002, prog: iperf3, name: 'iperf_2',
+   start: 0,  finish: 5}
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5003, prog: iperf3, name: 'iperf_3',
+   start: 0,  finish: 5}
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5004, prog: iperf3, name: 'iperf_4',
+   start: 0,  finish: 5}
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5005, prog: iperf3, name: 'iperf_5',
+   start: 0,  finish: 5}
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5006, prog: iperf3, name: 'iperf_6',
+   start: 0,  finish: 5}
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5007, prog: iperf3, name: 'iperf_7',
+   start: 0,  finish: 5}
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5008, prog: iperf3, name: 'iperf_8',
+   start: 0,  finish: 5}
+expname: test
+extra_name: ''
+run: 1
+sink_host: 10.10.101.2
+src_host: 10.10.101.1
+

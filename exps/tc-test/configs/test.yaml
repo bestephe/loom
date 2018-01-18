@@ -1,0 +1,9 @@
+apps:
+- {cgroup: null, ip: 10.10.101.2, num_conns: 2, port: 5001, prog: iperf3, name: 'iperf_1',
+   start: 0,  finish: 5}
+expname: test
+extra_name: ''
+run: 1
+sink_host: 10.10.101.2
+src_host: 10.10.101.1
+
