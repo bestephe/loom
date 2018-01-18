@@ -63,8 +63,12 @@ struct NextHop {
 class NextHopLookupTable {
  public:
   NextHopLookupTable(const std::string & lut_field_name, const std::initializer_list<std::pair<const int, NextHop>> & lut_init)
+      : NextHopLookupTable(lut_field_name,
+                           std::vector<std::pair<const int, NextHop>>(lut_init)) {}
+
+  NextHopLookupTable(const std::string & lut_field_name, const std::vector<std::pair<const int, NextHop>> & lut_init)
       : look_up_field_name_(lut_field_name),
-        look_up_table_(lut_init) {}
+        look_up_table_(lut_init.begin(), lut_init.end()) {}
 
   /// Lookup a PIFOPacket in a LookUpTable using a specific field name
   auto lookup(const PIFOPacket & packet) const {
@@ -100,6 +104,15 @@ class PIFOPipelineStage {
   PIFOPipelineStage(const uint32_t & num_prio_queues,
                     const std::string & lut_field_name,
                     const std::initializer_list<std::pair<const int, NextHop>> & lut_initializer,
+                    const std::function<priority_t(PIFOPacket)> & t_prio_computer)
+      : PIFOPipelineStage(num_prio_queues,
+                          lut_field_name,
+                          std::vector<std::pair<const int, NextHop>>(lut_initializer),
+                          t_prio_computer) {}
+
+  PIFOPipelineStage(const uint32_t & num_prio_queues,
+                    const std::string & lut_field_name,
+                    const std::vector<std::pair<const int, NextHop>> & lut_initializer,
                     const std::function<priority_t(PIFOPacket)> & t_prio_computer)
       : priority_queue_bank_(num_prio_queues),
         calendar_queue_(),

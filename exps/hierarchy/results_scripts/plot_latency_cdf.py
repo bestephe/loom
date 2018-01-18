@@ -53,8 +53,9 @@ def plot_cdf(results):
     yax.grid(True)
     ax.set_xlabel('Avg Latency (us)')
     ax.set_ylabel('CDF')
-    ax.set_ylim(ymin=0.75, ymax=1.0)
-    ax.set_xlim(xmax=7000)
+    ax.set_ylim(ymin=0.65, ymax=1.0)
+    #ax.set_xlim(xmax=7000)
+    ax.set_xlim(xmax=10000)
 
     # Add the legend
     plt.legend(ncol=4, loc='lower center', bbox_to_anchor=legend_bbox,
@@ -64,7 +65,7 @@ def plot_cdf(results):
     figure.subplots_adjust(bottom=bottom)
 
     # Add the title
-    title(results['title'])
+    #title(results['title'])
 
 def main():
     # Parse arguments

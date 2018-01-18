@@ -59,7 +59,7 @@ namespace bess {
 // This doesn't mean anything, other than avoiding int64 overflow
 #define QUANTUM (1 << 10)
 
-#define MAX_WF_NOOPS (64)
+#define MAX_WF_NOOPS (4)
 
 // Resource types that can be accounted for.
 enum resource_t {

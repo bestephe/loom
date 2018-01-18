@@ -12,7 +12,7 @@ import time
 
 TX_QUEUE_COUNT = multiprocessing.cpu_count()
 RX_QUEUE_COUNT = 16
-TX_QSIZE = 1024
+TX_QSIZE = 128
 RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 

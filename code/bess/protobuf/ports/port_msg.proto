@@ -68,6 +68,13 @@ message VPortArg {
   uint64 num_tx_dataqs = 11;
 }
 
+//enum LoomSchedHier {
+//    SCH_UNKNOWN = 0;
+//    SCH_FIFO = 1;
+//    SCH_2TEN_PRI = 2;
+//    SCH_2TEN_FAIR = 3;
+//}
+
 message LoomVPortArg {
   string ifname = 1;
   oneof cpid {
@@ -82,4 +89,9 @@ message LoomVPortArg {
   repeated string ip_addrs = 9;
   uint64 num_tx_ctrlqs = 10;
   uint64 num_tx_dataqs = 11;
+
+  /* TODO: what are the benefits of enum vs. string?
+   * Using string for now because its how HashLB does things.*/
+  //LoomSchedHier sched_hier = 12;
+  string sch_hier = 12;
 }

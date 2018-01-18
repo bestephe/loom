@@ -15,7 +15,7 @@ use_experimental_sched = int($BESS_EXP_SCHED!'1')
 
 TX_QUEUE_COUNT = multiprocessing.cpu_count()
 RX_QUEUE_COUNT = 16
-TX_QSIZE = 256
+TX_QSIZE = 128
 RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 VPORT = True

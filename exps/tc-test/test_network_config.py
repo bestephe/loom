@@ -43,6 +43,7 @@ PRI_CONFIG_DEFAULTS = {
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
     'qdisc': True,
+    'cgroups': {'high_prio': 3},
 }
 
 class ServerConfig(object):
@@ -325,6 +326,8 @@ def main():
         config = PriConfig(user_config)
     else:
         config = PriConfig()
+
+    print 'config:', config.dump()
 
     # Configure the server
     if config.qmodel == QMODEL_BESS:

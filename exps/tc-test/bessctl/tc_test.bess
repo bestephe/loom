@@ -11,7 +11,7 @@ import sys
 import time
 
 #TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
-TX_CTRL_QUEUE_COUNT = 16
+TX_CTRL_QUEUE_COUNT = 8
 TX_DATA_QUEUE_COUNT = 4096
 TX_BESS_QUEUES = 1
 RX_QUEUE_COUNT = 16
@@ -19,6 +19,10 @@ TX_QSIZE = 128
 RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 VPORT = True
+
+#SCH_HIER = '2ten_pri'
+#SCH_HIER = '2ten_fair'
+SCH_HIER = 'mten_prifair'
 
 # DEBUGGING
 #bess.set_debug(True)
@@ -84,7 +88,8 @@ def gen_vhost_conf(i):
 def config_vport(vhost_conf):
     v = LoomVPort(ifname=vhost_conf.name, ip_addrs=vhost_conf.ip_addrs,
         num_inc_q=1, num_out_q=RX_QUEUE_COUNT,
-        num_tx_ctrlqs=TX_CTRL_QUEUE_COUNT, num_tx_dataqs=TX_DATA_QUEUE_COUNT)
+        num_tx_ctrlqs=TX_CTRL_QUEUE_COUNT, num_tx_dataqs=TX_DATA_QUEUE_COUNT,
+        sch_hier=SCH_HIER)
     config_rfs(vhost_conf.name)
     ip_cmd_prefix = ''
     #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns

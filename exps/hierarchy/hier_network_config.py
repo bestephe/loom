@@ -10,7 +10,15 @@ import sys
 import yaml
 from time import sleep
 
-DRIVER_DIR = '/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/code/ixgbe-5.0.4/'
+sys.path.insert(0, os.path.abspath('..'))
+from loom_exp_common import *
+
+if 'LOOM_HOME' in os.environ:
+    LOOM_HOME = os.environ['LOOM_HOME']
+else:
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/'
+
+DRIVER_DIR = LOOM_HOME + '/code/ixgbe-5.0.4/'
 TCP_BYTE_LIMIT_DIR = '/proc/sys/net/ipv4/tcp_limit_output_bytes'
 TCP_QUEUE_SYSTEM_DEFAULT = 262144
 
@@ -18,7 +26,8 @@ QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
 QMODEL_MQPRI = 'mq-pri'
 QMODEL_MQETS = 'mq-ets'
-QMODELS = [QMODEL_SQ, QMODEL_MQ, QMODEL_MQPRI, QMODEL_MQETS]
+QMODEL_BESS = 'bess'
+QMODELS = [QMODEL_SQ, QMODEL_MQ, QMODEL_MQPRI, QMODEL_MQETS, QMODEL_BESS]
 
 PRI_PORTS = [11212, 11214]
 H2_PORTS = [9020, 9077, 9080, 9091, 9092, 9093, 9094, 9095, 9096, 9097,
@@ -29,8 +38,12 @@ HIER_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
 
     'iface': 'eno2',
+    'ifaces': ['loom1', 'loom2'],
+    'iface_addr': '0000:81:00.1',
+    'bessctl': 'bessctl/sq.bess',
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
+    'qdisc': True,
 
     #'drr_quantum': 65536,
     'drr_quantum': 1500,
@@ -66,58 +79,6 @@ class HierConfig(object):
     def dump(self):
         d = self.__dict__.copy()
         return d
-
-#
-# TCP SmallQs and BQL Functions
-#
-def get_tcp_limit():
-    with open(TCP_BYTE_LIMIT_DIR) as tcpf:
-        limit = tcpf.read()
-    limit.strip()
-    limit = int(limit)
-    return limit
-
-def set_tcp_limit(b):
-    with open(TCP_BYTE_LIMIT_DIR, 'w') as tcpf:
-        tcpf.write('%d\n' % b)
-    assert (get_tcp_limit() == b)
-
-def get_queue_bql_limit_max(config, txqi):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
-    with open(limitfname) as limitf:
-        limit = limitf.read()
-    limit.strip()
-    limit = int(limit)
-    return limit
-
-def set_queue_bql_limit_max(config, txqi, limit):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_max' % txqi
-    with open(limitfname, 'w') as limitf:
-        limitf.write('%d\n' % limit)
-    assert (get_queue_bql_limit_max(config, txqi) == limit)
-
-def get_queue_bql_limit_min(config, txqi):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
-    with open(limitfname) as limitf:
-        limit = limitf.read()
-    limit.strip()
-    limit = int(limit)
-    return limit
-
-def set_queue_bql_limit_min(config, txqi, limit):
-    sysfs_dir = '/sys/class/net/%s' % config.iface
-    limitfname = sysfs_dir + '/queues/tx-%d/byte_queue_limits/limit_min' % txqi
-    with open(limitfname, 'w') as limitf:
-        limitf.write('%d\n' % limit)
-    assert (get_queue_bql_limit_min(config, txqi) == limit)
-
-def set_all_bql_limit_max(config):
-    for txqi in range(len(get_txqs(config))):
-        set_queue_bql_limit_max(config, txqi, config.bql_limit_max)
-        set_queue_bql_limit_min(config, txqi, 0)
 
 def verify_dcb(config):
     dcb_check_cmd = 'sudo dcbtool gc %s dcb' % config.iface
@@ -282,14 +243,6 @@ def hier_config_nic_driver(config):
     lldp_cmd = 'sudo service lldpad stop'
     subprocess.check_call(lldp_cmd, shell=True)
 
-def get_txqs(config):
-    txqs = glob.glob('/sys/class/net/%s/queues/tx-*' % config.iface)
-    return txqs
-
-def get_rxqs(config):
-    rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % config.iface)
-    return rxqs 
-
 def hier_configure_rfs(config):
     rxqs = get_rxqs(config)
     entries = 65536
@@ -317,7 +270,7 @@ def hier_config_xps(config):
         #Note: maybe not necessary.  But it shouldn't hurt to restart irqbalance
         subprocess.call('sudo service irqbalance restart', shell=True)
 
-def hier_config_qdisc(config):
+def hier_config_qdisc(config, iface):
     #XXX: DEBUG:
     #print 'WARNING: Skipping Qdisc config!'
     #return
@@ -326,7 +279,7 @@ def hier_config_qdisc(config):
             'not work yet!' % config.qmodel
         return
 
-    qcnt = len(get_txqs(config))
+    qcnt = len(get_txqs(iface))
     for i in xrange(1, qcnt + 1):
         #
         # Configure a DRR Qdisc prio Qdisc per txq with Prio children.
@@ -334,14 +287,21 @@ def hier_config_qdisc(config):
 
         # Configrue the DRR Qdiscs
         #  ... Create the classes for Tenant1 (%d00:1) and Tenant2 (%d00:2)
-        tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
-            (config.iface, i, i)
-        subprocess.check_call(tc_cmd, shell=True)
+        try:
+            tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
+                (iface, i, i)
+            subprocess.check_call(tc_cmd, shell=True)
+        except subprocess.CalledProcessError:
+            tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: drr' % \
+                (iface, i)
+            subprocess.check_call(tc_cmd, shell=True)
+
+
         tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:1 drr quantum %d' % \
-            (config.iface, i, i, config.drr_quantum)
+            (iface, i, i, config.drr_quantum)
         subprocess.check_call(tc_cmd, shell=True)
         tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:2 drr quantum %d' % \
-            (config.iface, i, i, config.drr_quantum)
+            (iface, i, i, config.drr_quantum)
         subprocess.check_call(tc_cmd, shell=True)
 
         # Note: this only works if the high priority ports are on Tenant1
@@ -352,37 +312,37 @@ def hier_config_qdisc(config):
             for pdir in ['sport', 'dport']:
                 tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
                     'prio 1 u32 match ip %s %d 0xffff flowid %d00:2'
-                tc_cmd = tc_str % (config.iface, i, pdir, p, i)
+                tc_cmd = tc_str % (iface, i, pdir, p, i)
                 subprocess.check_call(tc_cmd, shell=True)
         for pdir in ['sport', 'dport']:
             tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
                 'prio 1 u32 match ip %s 32768 0xff00 flowid %d00:2' 
-            tc_cmd = tc_str % (config.iface, i, pdir, i)
+            tc_cmd = tc_str % (iface, i, pdir, i)
             subprocess.check_call(tc_cmd, shell=True)
 
         # Create a traffic filter to send the rest of the traffic to class :1
         tc_str = 'sudo tc filter add dev %s protocol all parent %d00: ' + \
             'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:1'
-        tc_cmd = tc_str % (config.iface, i, i)
+        tc_cmd = tc_str % (iface, i, i)
         subprocess.check_call(tc_cmd, shell=True)
 
         # Configure the prio children
         for drr_class in ['%d00:1' % i, '%d00:2' % i]:
             handle = '%d0%s' % (i, (drr_class.split(':')[-1]))
             tc_cmd = 'sudo tc qdisc add dev %s parent %s handle %s: prio' % \
-                (config.iface, drr_class, handle)
+                (iface, drr_class, handle)
             subprocess.check_call(tc_cmd, shell=True)
             #tc_cmd = 'sudo tc qdisc add dev %s parent %s:1 sfq limit 32768 perturb 60' % \
             tc_cmd = 'sudo tc qdisc add dev %s parent %s:1 pfifo_fast' % \
-                (config.iface, handle)
+                (iface, handle)
             subprocess.check_call(tc_cmd, shell=True)
             #tc_cmd = 'sudo tc qdisc add dev %s parent %s:2 sfq limit 32768 perturb 60' % \
             tc_cmd = 'sudo tc qdisc add dev %s parent %s:2 pfifo_fast' % \
-                (config.iface, handle)
+                (iface, handle)
             subprocess.check_call(tc_cmd, shell=True)
             #tc_cmd = 'sudo tc qdisc add dev %s parent %s:3 sfq limit 32768 perturb 60' % \
             tc_cmd = 'sudo tc qdisc add dev %s parent %s:3 pfifo_fast' % \
-                (config.iface, handle)
+                (iface, handle)
             subprocess.check_call(tc_cmd, shell=True)
 
             # Create a filter for memcached traffic
@@ -390,13 +350,13 @@ def hier_config_qdisc(config):
                 for pdir in ['sport', 'dport']:
                     tc_str = 'sudo tc filter add dev %s protocol ip parent %s: ' + \
                         'prio 1 u32 match ip %s %d 0xffff flowid %s:1'
-                    tc_cmd = tc_str % (config.iface, handle, pdir, p, handle)
+                    tc_cmd = tc_str % (iface, handle, pdir, p, handle)
                     subprocess.check_call(tc_cmd, shell=True)
 
             # Create a traffic filter to send the rest of the traffic to priority :2
             tc_str = 'sudo tc filter add dev %s protocol all parent %s: ' + \
                 'prio 2 u32 match ip dst 0.0.0.0/0 flowid %s:2'
-            tc_cmd = tc_str % (config.iface, handle, handle)
+            tc_cmd = tc_str % (iface, handle, handle)
             subprocess.check_call(tc_cmd, shell=True)
 
 def hier_config_server(config):
@@ -419,10 +379,35 @@ def hier_config_server(config):
     if config.qmodel == QMODEL_MQPRI or config.qmodel == QMODEL_MQETS:
         print 'Skipping Qdisc config for qmodel: %s' % config.qmodel
     else:
-        hier_config_qdisc(config)
+        hier_config_qdisc(config, config.iface)
 
     # Configure BQL
     set_all_bql_limit_max(config)
+
+def hier_config_bess(config):
+    subprocess.call('sudo killall tcpdump', shell=True)
+
+    loom_config_bess(config)
+
+    # Do not configure XPS (for now)
+    subprocess.call('sudo service irqbalance restart', shell=True)
+
+    # Configure all of the interfaces
+    #XXX: This code doesn't work for virtio/Vhost/TAP interfaces
+    for iface in config.ifaces:
+        # Configure Qdisc/TC
+        #TODO: optionally skip Qdisc config
+        if config.qdisc:
+            hier_config_qdisc(config, iface)
+
+        # Configure CGroups
+        config_cgroup(config, iface)
+
+        # Configure RFS
+        configure_rfs(config, iface)
+    
+        # Configure BQL
+        set_all_bql_limit_max(config, iface)
 
 def main():
     # Parse arguments
@@ -441,7 +426,10 @@ def main():
         config = HierConfig()
 
     # Configure the server
-    hier_config_server(config)
+    if config.qmodel == QMODEL_BESS:
+        hier_config_bess(config)
+    else:
+        hier_config_server(config)
 
 if __name__ == '__main__':
     main()

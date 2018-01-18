@@ -44,7 +44,7 @@ def compute_fm(files):
             # Compute the FM only when the total throughput is high enough and
             # both jobs are active
             for i in range(len(xs)):
-                if tot_tput[i] > 8.25 and t1_tput[i] > 0.5 and t2_tput[i] > 0.5:
+                if tot_tput[i] > 7.0 and t1_tput[i] > 0.5 and t2_tput[i] > 0.5:
                     fs_t1 = t1_tput[i]
                     fs_t2 = t2_tput[i]
                     fm = abs(fs_t1 - fs_t2)
@@ -72,20 +72,27 @@ def main():
     parser = argparse.ArgumentParser(description='Go from the per-job '
         'throughput timeseries to a fairness metric (FM) CDF.')
     parser.add_argument('--sq', help='The SQ files to parse.',
-        nargs='+', required=True)
+        nargs='+')
     parser.add_argument('--mq', help='The MQ files to parse.',
         nargs='+', required=True)
     parser.add_argument('--mq-pri', help='The MQ-Pri files to parse.',
-        nargs='+', required=True)
+        nargs='+')
     parser.add_argument('--mq-ets', help='The MQ-ets files to parse.',
-        nargs='+', required=True)
+        nargs='+')
+    parser.add_argument('--loom', help='The Loom files to parse.',
+        nargs='+')
     parser.add_argument('--outf', help='The output file.')
     args = parser.parse_args()
 
     files_and_names = [(args.sq, 'SQ'), (args.mq, 'MQ'),
-        (args.mq_pri, 'MQ-Pri'), (args.mq_ets, 'MQ-ETS')]
+        (args.mq_pri, 'MQ-Pri'), (args.mq_ets, 'MQ-ETS'),
+        (args.loom, 'Loom')]
     lines = []
     for (files, lname) in files_and_names:
+        # Ignore optional files that are not present
+        if not files:
+            continue
+
         # Compute the fairness metric (FM)
         fms = compute_fm(files)
 

@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # ./pri_gen_cdf.py --sq results/memcached_latency.sq.spark.*.yaml --mq results/memcached_latency.mq.spark.*.yaml --mq-pri results/memcached_latency.mq-pri.spark.*.yaml --outf cdf_latency.spark.90p.yaml
+# ./pri_gen_cdf.py --sq results/memcached_latency.bess-sq.spark.*.yaml --mq results/memcached_latency.bess-mq.spark.*.yaml --loom results/memcached_latency.bess.spark.*.yaml --outf cdf_latency.spark.90p.yaml
 ./pri_plot_latency_cdf.py --results cdf_latency.spark.90p.yaml --figname latency.spark.90p.pdf
 ./pri_plot_latency_cdf.py --results cdf_latency.spark.90p.yaml --figname latency.spark.90p.png
 

@@ -3,7 +3,7 @@
 TIMEOUT=50
 THREADS=2
 
-GIT_DIR=/proj/opennf-PG0/exp/Loom-Terasort/datastore/git/loom-code/exps/hierarchy
+GIT_DIR=/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/exps/hierarchy
 
 if [ $# -ne 1 ]
   then

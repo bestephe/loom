@@ -67,25 +67,32 @@ def set_all_bql_limit_max(config, iface):
 #
 # CGroup Helpers
 # 
+DEFAULT_CGCONFIG = {'high_prio': 3}
 def config_cgroup(config, iface):
-    cgroup_dir = '/sys/fs/cgroup/net_prio/high_prio'
+    cgconfig = config.cgroups if hasattr(config, 'cgroups') else DEFAULT_CGCONFIG
+    
+    for cgname in cgconfig:
+        cgroup_dir = '/sys/fs/cgroup/net_prio/%s' % cgname
+        cgroup_prio = cgconfig[cgname]
 
-    mkdir_cmd = 'sudo mkdir %s' % cgroup_dir
-    subprocess.call(mkdir_cmd, shell=True)
+        mkdir_cmd = 'sudo mkdir %s' % cgroup_dir
+        subprocess.call(mkdir_cmd, shell=True)
 
-    priomap_cmd = 'sudo echo \"%s 3\" > %s/net_prio.ifpriomap' % \
-        (iface, cgroup_dir)
-    subprocess.check_call(priomap_cmd, shell=True)
+        priomap_cmd = 'sudo echo \"%s %d\" > %s/net_prio.ifpriomap' % \
+            (iface, cgroup_prio, cgroup_dir)
+        subprocess.check_call(priomap_cmd, shell=True)
 
-    check_cgroup(config, iface)
+        check_cgroup(config, iface, cgname)
 
-def check_cgroup(config, iface):
-    print 'Default:'
+    #XXX: Check default cgroup
+    print 'Default cgroup:'
     default_cmd = 'cat /sys/fs/cgroup/net_prio/net_prio.ifpriomap'
     print subprocess.check_output(default_cmd, shell=True)
-    print 'High prio:'
-    high_prio_cmd = 'cat /sys/fs/cgroup/net_prio/high_prio/net_prio.ifpriomap'
-    print subprocess.check_output(high_prio_cmd, shell=True)
+
+def check_cgroup(config, iface, cgname):
+    print 'Cgroup: %s' % cgname
+    check_prio_cmd = 'cat /sys/fs/cgroup/net_prio/%s/net_prio.ifpriomap' % cgname
+    print subprocess.check_output(check_prio_cmd, shell=True)
 
 #
 # More helpers

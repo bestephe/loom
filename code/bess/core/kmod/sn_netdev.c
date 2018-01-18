@@ -942,7 +942,7 @@ static u16 sn_select_queue(struct net_device *netdev,
 	 *   - Per-CPU scheduling queues?
 	 *   - Use a bitmask?
 	 */
-	if (sk) {
+	if (sk && dev->dataq_on) {
 		/* This could be a separate function call (ndo) from
 		 * netdev_pick_tx */
 		int sched_qi = sk->sk_tx_sched_queue_mapping;

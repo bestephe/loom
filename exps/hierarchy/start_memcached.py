@@ -11,7 +11,7 @@ from time import sleep
 MEMCACHED_CONFIG_DEFAULTS = {
     'max_mem': (16 * 1024),
     'threads': 10,
-    'high_prio': False,
+    'high_prio': True,
 
     #XXX: Not really used anymore
     'servers': [

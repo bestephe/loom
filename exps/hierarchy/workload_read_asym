@@ -28,6 +28,10 @@ workload=com.yahoo.ycsb.workloads.CoreWorkload
 fieldcount=1
 fieldlength=32768
 
+# Use 4KB records
+#fieldcount=1
+#fieldlength=4096
+
 readallfields=true
 
 readproportion=1

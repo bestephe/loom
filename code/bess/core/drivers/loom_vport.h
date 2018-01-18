@@ -45,6 +45,17 @@ static_assert(SN_MAX_RXQ <= MAX_QUEUES_PER_DIR,
 static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
 	"Tx Ctrl desc must be a multiple of the pointer size");
 
+/* Different scheduling hierarchies currently supported. */
+/* Loom: TODO: Make more general.  Ideally this would be able to be
+ * automatically compiled with the (broken) pifo-compiler.py.  This is a long
+ * ways off now though. */
+enum SchHier {
+  SCH_FIFO,
+  SCH_2TEN_PRI,
+  SCH_2TEN_FAIR,
+  SCH_MTEN_PRIFAIR,
+};
+
 class LoomVPort final : public Port {
  public:
   LoomVPort() : fd_(), bar_(), map_(), netns_fd_(), container_pid_(), num_tx_ctrlqs_(),
@@ -116,9 +127,11 @@ class LoomVPort final : public Port {
     PIFOPipeline *mesh;
     std::map<uint32_t, std::vector<PIFOArguments>> tc_to_pifoargs;
     std::map<uint32_t, PIFOPacket> tc_to_sattrs; /* TC -> static attributes of the class. */
-    std::vector<PIFOPacket::FieldName> virtual_time_fields;
-    std::map<PIFOPacket::FieldName, uint64_t> virtual_times;
-    //std::map<PIFOPacket::FieldName, std::map<uint64_t, uint64_t>> finish_times;
+    /* Loom: XXX: TODO: this would be better as a map from the unique node id
+     * in the tree to the generic state for the tree. */
+    uint64_t root_vt; /* l0_vt */
+    std::map<uint64_t, uint64_t> l1_vt; /* "tenant" */
+    std::map<uint64_t, uint64_t> l2_vt; /* "tc" */
     int tick;
 
     //pifo_pipeline_state() : {};
@@ -161,6 +174,7 @@ class LoomVPort final : public Port {
   int InitPifoMeshFifo();
   int InitPifoMesh2TenantPrio();
   int InitPifoMesh2TenantFair();
+  int InitPifoMeshMTenantPriFair();
   int InitPifoState();
   int DeInitPifoState();
   int AddNewPifoDataq(struct sn_tx_ctrl_desc *ctrl_desc);
@@ -214,6 +228,7 @@ class LoomVPort final : public Port {
   struct dataq_drr dataq_drr_;
 
   /* Loom: scheduling state for deciding which dataQs to pull from. */
+  enum SchHier sch_hier_;
   struct pifo_pipeline_state pifo_state_;
 };
 
