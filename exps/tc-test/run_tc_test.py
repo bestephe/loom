@@ -34,8 +34,6 @@ def main():
     parser.add_argument('--runs', help='The number of runs to do.', default=1, type=int)
     args = parser.parse_args()
 
-    print yaml.dump(TCTEST_CONFIG_DEFAULTS)
-
     for ci, cfname in enumerate(args.configs):
         with open(cfname) as cf:
             cdict = yaml.load(cf)
@@ -55,9 +53,9 @@ def main():
                 sleep(1) # Let the sinks start
                 src_proc = tc_test_setup_src(src_ssh, cfname)
 
-                sink_stdout, sink_stderr = sink_proc[1], sink_proc[2]
-                print 'sink_stdout:', sink_stdout.read()
-                print 'sink_stderr:', sink_stderr.read()
+                #sink_stdout, sink_stderr = sink_proc[1], sink_proc[2]
+                #print 'sink_stdout:', sink_stdout.read()
+                #print 'sink_stderr:', sink_stderr.read()
 
                 src_stdout, src_stderr = src_proc[1], src_proc[2]
                 print 'src_stdout:', src_stdout.read()

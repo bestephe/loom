@@ -41,6 +41,13 @@
 #include "port.h"
 #include "version.h"
 
+/* Loom: DEBUG */
+static std::string get_working_path()
+{
+   char temp[MAXPATHLEN];
+   return ( getcwd(temp, MAXPATHLEN) ? std::string( temp ) : std::string("") );
+}
+
 int main(int argc, char *argv[]) {
   FLAGS_logbuflevel = -1;
   FLAGS_colorlogtostderr = true;
@@ -103,6 +110,9 @@ int main(int argc, char *argv[]) {
   bess::close_mempool();
 
   LOG(INFO) << "BESS daemon has been gracefully shut down";
+
+  /* Loom: DEBUG for profiling.  What directory should we expect gmon.out to be in? */
+  LOG(INFO) << "cwd: " << get_working_path();
 
   return 0;
 }

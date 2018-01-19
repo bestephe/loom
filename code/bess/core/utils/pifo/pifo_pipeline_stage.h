@@ -13,6 +13,9 @@
 #include "priority_queue.h"
 #include "calendar_queue.h"
 
+/* TODO: */
+//using bess::utils::PIFOPacket;
+
 /// enum to distinguish between priority and calendar queues
 /// This lets us keep each in its own distinct namespace without
 /// having to create a polymorphic queue class
@@ -62,18 +65,18 @@ struct NextHop {
 /// field name. TODO: We assume all fields are ints
 class NextHopLookupTable {
  public:
-  NextHopLookupTable(const std::string & lut_field_name, const std::initializer_list<std::pair<const int, NextHop>> & lut_init)
+  NextHopLookupTable(const PIFOPacket::FieldName & lut_field_name, const std::initializer_list<std::pair<const int, NextHop>> & lut_init)
       : NextHopLookupTable(lut_field_name,
                            std::vector<std::pair<const int, NextHop>>(lut_init)) {}
 
-  NextHopLookupTable(const std::string & lut_field_name, const std::vector<std::pair<const int, NextHop>> & lut_init)
+  NextHopLookupTable(const PIFOPacket::FieldName & lut_field_name, const std::vector<std::pair<const int, NextHop>> & lut_init)
       : look_up_field_name_(lut_field_name),
         look_up_table_(lut_init.begin(), lut_init.end()) {}
 
   /// Lookup a PIFOPacket in a LookUpTable using a specific field name
   auto lookup(const PIFOPacket & packet) const {
     if (look_up_table_.find(packet(look_up_field_name_)) == look_up_table_.end()) {
-      throw std::logic_error("Field named " + look_up_field_name_ +
+      throw std::logic_error("Field named " + std::to_string(look_up_field_name_) +
                              " does not have an entry with value " + std::to_string(packet(look_up_field_name_)) +
                              " in NextHopLookupTable");
     }
@@ -82,7 +85,7 @@ class NextHopLookupTable {
 
  private:
   /// Field name to use for lookup
-  const std::string look_up_field_name_ = "";
+  const PIFOPacket::FieldName look_up_field_name_ = FIELD_PTR;
 
   /// Lookup table itself
   const std::map<int, NextHop> look_up_table_ = {};
@@ -102,7 +105,7 @@ class PIFOPipelineStage {
 
   /// Constructor for PIFOPipelineStage with a number of prio. and cal. qs
   PIFOPipelineStage(const uint32_t & num_prio_queues,
-                    const std::string & lut_field_name,
+                    const PIFOPacket::FieldName & lut_field_name,
                     const std::initializer_list<std::pair<const int, NextHop>> & lut_initializer,
                     const std::function<priority_t(PIFOPacket)> & t_prio_computer)
       : PIFOPipelineStage(num_prio_queues,
@@ -111,7 +114,7 @@ class PIFOPipelineStage {
                           t_prio_computer) {}
 
   PIFOPipelineStage(const uint32_t & num_prio_queues,
-                    const std::string & lut_field_name,
+                    const PIFOPacket::FieldName & lut_field_name,
                     const std::vector<std::pair<const int, NextHop>> & lut_initializer,
                     const std::function<priority_t(PIFOPacket)> & t_prio_computer)
       : priority_queue_bank_(num_prio_queues),

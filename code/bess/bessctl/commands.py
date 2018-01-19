@@ -653,9 +653,16 @@ def _do_start(cli, opts):
     if opts is None:
         opts = []
 
+    #perf_prefix = 'perf record -e cycles:u --call-graph dwarf'
+    #perf_prefix = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/code/linux-4.9/tools/perf/perf record -e cycles:u --call-graph dwarf'
+    #gmon_prefix = 'GMON_OUT_PREFIX=test_gmon'
+    perf_prefix = ''
+    gmon_prefix = ''
+
     # need -E to pass GCOV_* env variables through
-    cmd = 'sudo -E %s/core/bessd -k %s' % (os.path.dirname(cli.this_dir),
-                                           ' '.join(opts))
+    cmd = 'sudo -E %s %s %s/core/bessd -k %s' % (gmon_prefix, perf_prefix,
+                                                 os.path.dirname(cli.this_dir),
+                                                 ' '.join(opts))
 
     cli.bess.disconnect()
 

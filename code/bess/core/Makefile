@@ -48,6 +48,7 @@ $(shell mkdir -p $(DEPDIR)/hooks >/dev/null)
 $(shell mkdir -p $(DEPDIR)/pb >/dev/null)
 
 # 'clang' or 'g++'
+#CXXCOMPILER := $(CXX)
 CXXCOMPILER := $(shell expr $(word 1, $(shell $(CXX) --version)) : '\(clang\|g++\)')
 
 CXXVERSION := $(shell $(CXX) -dumpversion)
@@ -131,6 +132,7 @@ ifeq "$(shell expr $(CXXCOMPILER) = g++)" "1"
 endif
 
 LDFLAGS += -rdynamic -L$(DPDK_LIB_DIR) -Wl,-rpath=$(DPDK_LIB_DIR) -pthread
+#ifeq (0, 1)
 ifdef BESS_LINK_DYNAMIC
     LIBS_ALL_SHARED = -Wl,-call_shared
     LIBS_DL_SHARED =
@@ -170,8 +172,14 @@ ifdef DEBUG
 	CXXFLAGS += --coverage -O0
 	LDFLAGS += --coverage
 else
-	CXXFLAGS += -Ofast -DNDEBUG
+	CXXFLAGS += -Ofast
+	#CXXFLAGS += -Ofast -DNDEBUG
 endif
+
+#Loom: DEBUG: trying to get gprof to work
+#XXX: This should probably go in extra.mk
+#CXXFLAGS += -g -pg
+#LDFLAGS += -pg
 
 -include extra*.mk
 

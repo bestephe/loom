@@ -69,14 +69,16 @@
         - docker
         #- docker.io
         - wireshark-common
+        - linux-tools-common
         
-        # For debugging the kernel in a virtual machine with valgrind
-        - qemu-kvm
-        - qemu-system-x86
-        - libvirt0
-        - libvirt-bin
-        - libvirt-dev
-        - nfs-kernel-server
+        # For debugging the kernel in a virtual machine with vagrant
+        #XXX: I gave up on vagrant debugging for now.
+        #- qemu-kvm
+        #- qemu-system-x86
+        #- libvirt0
+        #- libvirt-bin
+        #- libvirt-dev
+        #- nfs-kernel-server
 
         # Although it would be desirable to use as new of a kernel version as
         # possible, OFED + Linux 4.11 cause a kernel crash related to RDMA

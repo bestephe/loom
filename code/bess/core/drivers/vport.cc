@@ -1294,7 +1294,7 @@ VPort::tx_data_queue* VPort::GetNextDrrDataq() {
       /* Loom: TODO: Move to its own function. */
       dataq->active = false;
       dataq->drr_deficit = 0;
-      assert(data->next_packet == nullptr);
+      assert(dataq->next_packet == nullptr);
 
       return nullptr;
     }

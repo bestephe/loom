@@ -112,7 +112,7 @@ class GenericProg(object):
     def get_cgroup_cmd(self, cmd):
         cgroup = self.pconf.cgroup
         if cgroup != None:
-            cg_cmd = 'sudo cgexec -g net_prio:%(cgroup) %(cmd)s'
+            cg_cmd = 'sudo cgexec -g net_prio:%(cgroup)s %(cmd)s'
         else:
             cg_cmd = 'sudo %(cmd)s'
         cg_cmd = cg_cmd % {'cgroup': cgroup, 'cmd': cmd}
@@ -131,7 +131,7 @@ class GenericProg(object):
         src_cmd = self.get_src_cmd()
         cg_cmd = self.get_cgroup_cmd(src_cmd)
         #TODO: Deal with different desired start times
-        print 'start sink cg_cmd:', cg_cmd
+        print 'start src cg_cmd:', cg_cmd
         proc = subprocess.Popen(cg_cmd, shell=True,
             stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
         self.dir = 'src'

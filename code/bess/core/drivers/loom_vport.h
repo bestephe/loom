@@ -50,6 +50,7 @@ static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
  * automatically compiled with the (broken) pifo-compiler.py.  This is a long
  * ways off now though. */
 enum SchHier {
+  SCH_DRR,
   SCH_FIFO,
   SCH_2TEN_PRI,
   SCH_2TEN_FAIR,
@@ -126,7 +127,7 @@ class LoomVPort final : public Port {
     /* TODO: multiple stages. */
     PIFOPipeline *mesh;
     std::map<uint32_t, std::vector<PIFOArguments>> tc_to_pifoargs;
-    std::map<uint32_t, PIFOPacket> tc_to_sattrs; /* TC -> static attributes of the class. */
+    std::map<uint32_t, std::vector<std::pair<uint64_t, uint64_t>>> tc_to_sattrs; /* TC -> static attributes of the class. */
     /* Loom: XXX: TODO: this would be better as a map from the unique node id
      * in the tree to the generic state for the tree. */
     uint64_t root_vt; /* l0_vt */
