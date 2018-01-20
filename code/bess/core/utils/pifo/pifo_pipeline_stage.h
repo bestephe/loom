@@ -59,6 +59,8 @@ struct NextHop {
   std::vector<PIFOArguments> pifo_arguments;
 };
 
+#define NEXTHOP_MAX_FIELD_VAL (32)
+
 /// Simple look-up table to look-up a packet's next hop.
 /// Takes as input a packet field name as a string
 /// and a std::map that determines the next-hop based on that
@@ -71,16 +73,25 @@ class NextHopLookupTable {
 
   NextHopLookupTable(const PIFOPacket::FieldName & lut_field_name, const std::vector<std::pair<const int, NextHop>> & lut_init)
       : look_up_field_name_(lut_field_name),
-        look_up_table_(lut_init.begin(), lut_init.end()) {}
+        look_up_table_(lut_init.begin(), lut_init.end()) {
+    for (auto it = lut_init.begin(); it != lut_init.end(); it++) {
+      assert(it->first < NEXTHOP_MAX_FIELD_VAL);
+      look_up_array_[it->first] = it->second;
+    }
+  }
 
   /// Lookup a PIFOPacket in a LookUpTable using a specific field name
   auto lookup(const PIFOPacket & packet) const {
-    if (look_up_table_.find(packet(look_up_field_name_)) == look_up_table_.end()) {
-      throw std::logic_error("Field named " + std::to_string(look_up_field_name_) +
-                             " does not have an entry with value " + std::to_string(packet(look_up_field_name_)) +
-                             " in NextHopLookupTable");
-    }
-    return look_up_table_.at(packet(look_up_field_name_));
+    //if (look_up_table_.find(packet(look_up_field_name_)) == look_up_table_.end()) {
+    //  throw std::logic_error("Field named " + std::to_string(look_up_field_name_) +
+    //                         " does not have an entry with value " + std::to_string(packet(look_up_field_name_)) +
+    //                         " in NextHopLookupTable");
+    //}
+    //return look_up_table_.at(packet(look_up_field_name_));
+
+    /* Throw away error checking and generality to try to go faster. */
+    assert(packet(look_up_field_name_) < NEXTHOP_MAX_FIELD_VAL);
+    return look_up_array_[packet(look_up_field_name_)];
   }
 
  private:
@@ -89,6 +100,7 @@ class NextHopLookupTable {
 
   /// Lookup table itself
   const std::map<int, NextHop> look_up_table_ = {};
+  NextHop look_up_array_[NEXTHOP_MAX_FIELD_VAL];
 };
 
 /// PIFOPipelineStage models a stage of PIFOs

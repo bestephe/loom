@@ -11,8 +11,8 @@ import sys
 import time
 
 #TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
-#TX_CTRL_QUEUE_COUNT = 32
-TX_CTRL_QUEUE_COUNT = 4
+TX_CTRL_QUEUE_COUNT = 32
+#TX_CTRL_QUEUE_COUNT = 4
 TX_DATA_QUEUE_COUNT = 4096
 TX_BESS_QUEUES = 1 #XXX: HACK: Determines the ratio in which control queues and
                    # dataQs are polled...

@@ -650,7 +650,7 @@ int LoomVPort::InitPifoMeshFifo() {
   LOG(INFO) << "InitPifoMeshFifo";
 
   /* Init the PIFO stages. */
-  PIFOPipelineStage pifo1(1, FIELD_PTR, {{666, {Operation::TRANSMIT, {}}},},
+  PIFOPipelineStage pifo1(1, FIELD_PTR, {{0, {Operation::TRANSMIT, {}}},},
     [] (const auto & x) {return x(FIELD_XMIT_TS);});
   pipe->mesh = new PIFOPipeline({pifo1,});
   pipe->tick = 0;
@@ -703,7 +703,7 @@ int LoomVPort::InitPifoMesh2TenantPrio() {
   /* FIFO for each tenant. */
   PIFOPipelineStage pifo2(2,
                           FIELD_PTR,
-                          {{666, {Operation::TRANSMIT, {}}}},
+                          {{0, {Operation::TRANSMIT, {}}}},
                           [] (const auto & x) {
                             return x(FIELD_XMIT_TS);
                           });
@@ -779,7 +779,7 @@ int LoomVPort::InitPifoMesh2TenantFair() {
   /* FIFO for each tenant. */
   PIFOPipelineStage pifo2(2,
                           FIELD_PTR,
-                          {{666, {Operation::TRANSMIT, {}}}},
+                          {{0, {Operation::TRANSMIT, {}}}},
                           [] (const auto & x) {
                             return x(FIELD_XMIT_TS);
                           });
@@ -889,7 +889,7 @@ int LoomVPort::InitPifoMeshMTenantPriFair() {
   /* FIFO for each tenant. */
   PIFOPipelineStage pifo3(num_tcs,
                           FIELD_PTR,
-                          {{666, {Operation::TRANSMIT, {}}}},
+                          {{0, {Operation::TRANSMIT, {}}}},
                           [this] (const auto & x) {
                             static std::map<uint64_t, uint64_t> last_fin_time = {};
                             uint64_t tc = x(FIELD_TC);
@@ -957,7 +957,7 @@ int LoomVPort::InitPifoState() {
     assert(dataq->dataq_num == dataq_num);
     dataq->active = false;
     dataq->next_packet = nullptr;
-    dataq->pifo_entry(FIELD_PTR) = 666;
+    dataq->pifo_entry(FIELD_PTR) = 0;
     dataq->pifo_entry(FIELD_DATAQ_NUM) = dataq->dataq_num;
     dataq->pifo_entry(FIELD_XMIT_TS) = rdtsc();
     dataq->pifo_entry(FIELD_TC) = tc;
@@ -1734,11 +1734,15 @@ int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
     //  //  "setting virtual time field %s -> %lu", dataq->pifo_entry(FIELD_DATAQ_NUM),
     //  //  it->c_str(), ps->virtual_times[*it]);
     //}
+
     /* Loom: XXX: This should be more general. See other note. */
     ps->root_vt = dataq->pifo_entry(FIELD_ROOT_VT);
     ps->l1_vt[dataq->pifo_entry(FIELD_TENANT)] = dataq->pifo_entry(FIELD_L1_VT);
     ps->l2_vt[dataq->pifo_entry(FIELD_TC)] = dataq->pifo_entry(FIELD_L2_VT);
 
+    /* Get an entire batch of packets from a single DataQ if possible.  This is
+     * a performance vs. precision/granularity of network scheduling trade-off.
+     * */
     ret = GetNextPifoPackets(&pkts[cnt], max_cnt - cnt, dataq, &total_bytes);
     cnt += ret;
 
