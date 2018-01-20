@@ -658,11 +658,12 @@ int LoomVPort::InitPifoMeshFifo() {
   /* Create a mapping from priority 0 to the appropriate PIFOArguments. */
   std::vector<PIFOArguments> all_tenants = {{0, QueueType::PRIORITY_QUEUE, 0}};
   pipe->tc_to_pifoargs[0] = all_tenants;
+  /* Loom: TODO: memset other pifoargs. */
 
   /* Set the static state and virtual time state. */
   pipe->tc_to_sattrs[0] = {{FIELD_TENANT, 0}, {FIELD_TC, 0},};
-  pipe->l1_vt = {{0, 0}};
-  pipe->l2_vt = {{0, 0}};
+  pipe->l1_vt[0] = 0;
+  pipe->l2_vt[0] = 0;
 
   return (0);
 }
@@ -712,12 +713,13 @@ int LoomVPort::InitPifoMesh2TenantPrio() {
   PIFOArguments root_pifo_args = {0, QueueType::PRIORITY_QUEUE, 0};
   pipe->tc_to_pifoargs[0] = {root_pifo_args, targetTenant1};
   pipe->tc_to_pifoargs[3] = {root_pifo_args, targetTenant2};
+  /* Loom: TODO: memset other pifoargs. */
 
   /* Set the static state and virtual time state. */
   pipe->tc_to_sattrs[0] = {{FIELD_TENANT, 0}, {FIELD_TC, 0}};
   pipe->tc_to_sattrs[3] = {{FIELD_TENANT, 3}, {FIELD_TC, 3}};
-  pipe->l1_vt = {{0, 0}, {3, 0}};
-  pipe->l2_vt = {{0, 0}, {3, 0}};
+  pipe->l1_vt[0] = 0; pipe->l1_vt[3] = 0;
+  pipe->l2_vt[0] = 0; pipe->l2_vt[3] = 0;
 
   return (0);
 }
@@ -787,12 +789,13 @@ int LoomVPort::InitPifoMesh2TenantFair() {
   PIFOArguments root_pifo_args = {0, QueueType::PRIORITY_QUEUE, 0};
   pipe->tc_to_pifoargs[0] = {root_pifo_args, targetTenant1};
   pipe->tc_to_pifoargs[3] = {root_pifo_args, targetTenant2};
+  /* Loom: TODO: memset other pifoargs. */
 
   /* Set the static state and virtual time state. */
   pipe->tc_to_sattrs[0] = {{FIELD_TENANT, 0}, {FIELD_TC, 0}};
   pipe->tc_to_sattrs[3] = {{FIELD_TENANT, 3}, {FIELD_TC, 3}};
-  pipe->l1_vt = {{0, 0}, {3, 0}};
-  pipe->l2_vt = {{0, 0}, {3, 0}};
+  pipe->l1_vt[0] = 0; pipe->l1_vt[3] = 0;
+  pipe->l2_vt[0] = 0; pipe->l2_vt[3] = 0;
 
   return (0);
 }
@@ -810,6 +813,9 @@ int LoomVPort::InitPifoMeshMTenantPriFair() {
   struct pifo_pipeline_state *pipe = &pifo_state_;
   uint64_t num_tenants = 8;
   uint64_t num_tcs = num_tenants << 1;
+
+  assert(num_tenants <= SN_MAX_TENANT);
+  assert(num_tcs <= SN_MAX_TC);
 
   /* Loom: DEBUG */
   LOG(INFO) << "InitPifoMeshMTenantPriFair";
@@ -835,6 +841,7 @@ int LoomVPort::InitPifoMeshMTenantPriFair() {
     pipe->tc_to_sattrs[tc] = {{FIELD_TENANT, tenant}, {FIELD_TC, tc}};
     pipe->l2_vt[tc] = 0;
   }
+  /* Loom: TODO: memset other pifoargs. */
 
   /* Fair sharing between tenants. */
   PIFOPipelineStage pifo1(1,
@@ -1596,8 +1603,12 @@ int LoomVPort::AddNewPifoDataq(struct sn_tx_ctrl_desc *ctrl_desc) {
   struct tx_data_queue *dataq;
   uint64_t tc = ctrl_desc->meta.sch_meta.tc;
 
-  /* Loom: TODO: Read scheduling metadata from ctrl descriptors and save to the dataq state. */
+  /* Loom: TODO: Better error checking (and security?) on the incoming traffic
+   * class. */
+  assert(tc < SN_MAX_TC); /* TC is used as an index! It should not allow for overflow. */
 
+  /* Loom: Read scheduling metadata from ctrl descriptors and save to the
+   * dataq state. */
   dataq = &inc_data_qs_[ctrl_desc->dataq_num];
   if (!dataq->active) {
     /* Loom: TODO: different data structure. */
@@ -1630,6 +1641,11 @@ int LoomVPort::AddNewPifoDataq(struct sn_tx_ctrl_desc *ctrl_desc) {
 
 int LoomVPort::AddDataqToPifo(struct tx_data_queue *dataq) {
   uint64_t tc = dataq->pifo_entry(FIELD_TC);
+  uint64_t tenant = dataq->pifo_entry(FIELD_TENANT);
+
+  /* Loom: TODO: Better error checking. */
+  assert(tc < SN_MAX_TC);
+  assert(tenant < SN_MAX_TENANT);
 
   /* Loom: DEBUG */
   //LOG(INFO) << bess::utils::Format("AddDataqToPifo: Adding dataq_num %lu "
@@ -1670,6 +1686,7 @@ int LoomVPort::AddDataqToPifo(struct tx_data_queue *dataq) {
   /* Loom: TODO: More DEBUG. Print new attrs */
   //LOG(INFO) << "  PIFO entry: " << dataq->pifo_entry;
 
+  assert(tc < SN_MAX_TC); /* Loom: TODO: Error checking */
   auto pifo_arg_vec = &pifo_state_.tc_to_pifoargs[tc];
   for (size_t i = 0; i < pifo_arg_vec->size(); i++) {
     const auto pifo_args = pifo_arg_vec->at(i);
@@ -1702,6 +1719,9 @@ int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
       break;
     }
 
+    assert(dataq->pifo_entry(FIELD_TENANT) < SN_MAX_TENANT);
+    assert(dataq->pifo_entry(FIELD_TC) < SN_MAX_TC);
+
     /* Loom: XXX: HACK: Save virtual time state needed for FQ computation */
     /* Loom: Note: this would be better if the lambda given to the
      * PIFOPipelineState was called on enq and deq so that state could be saved
@@ -1728,6 +1748,10 @@ int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
      * attributes for this traffic class */
     /* Loom: TODO: start here: save total_bytes to the virtual time for all of
      * the static attributes for this traffic class */
+
+    /* Loom: Note: GetNextPifoPackets can set dataq->next_tc. */
+    /* Loom: TODO: Better error checking. */
+    assert(dataq->next_tc < SN_MAX_TC);
 
     /* Loom: TODO: Ordering? */
     dataq->pifo_entry(FIELD_XMIT_TS) = dataq->next_xmit_ts;
@@ -1788,6 +1812,7 @@ LoomVPort::tx_data_queue* LoomVPort::GetNextPifoDataq() {
   return dataq;
 }
 
+/* Loom: TODO: Performance: Read a batch of packets */
 int LoomVPort::GetNextPifoPackets(bess::Packet **pkts, int max_cnt,
                                struct tx_data_queue *dataq, uint64_t *total_bytes) {
   int cnt;
@@ -1796,6 +1821,9 @@ int LoomVPort::GetNextPifoPackets(bess::Packet **pkts, int max_cnt,
 
   cnt = 0;
   while (cnt < max_cnt && (!llring_empty(dataq->drv_to_sn) || dataq->next_packet)) {
+    /* Loom: Note: next_packet was used by the modules/drr.c implementation I initially used */
+    assert(dataq->next_packet == nullptr);
+
     // makes sure there isn't already a packet at the front
     if (!dataq->next_packet) {
       pkt = DataqReadPacket(dataq);
@@ -2023,6 +2051,10 @@ bess::Packet* LoomVPort::DataqReadPacket(struct tx_data_queue *dataq) {
     LOG(WARNING) << bess::utils::Format("Skb priority (%d) should equal tc "
       "(%lu)!\n", tx_meta->skb_priority, tx_meta->sch_meta.tc);
   }
+
+  /* Loom: TODO: Better error checking (and security?) on the incoming traffic
+   * class. */
+  assert(dataq->next_tc < SN_MAX_TC); /* TC is used as an index! It should not allow for overflow. */
 
   /* TODO: Set tx_meta as pkt metadata. */
 

@@ -45,6 +45,11 @@ static_assert(SN_MAX_RXQ <= MAX_QUEUES_PER_DIR,
 static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
 	"Tx Ctrl desc must be a multiple of the pointer size");
 
+/* Loom: Upper bound on the number of traffic classes. */
+/* Loom: TODO: Small for now. */
+#define SN_MAX_TC   (16)
+#define SN_MAX_TENANT (16)
+
 /* Different scheduling hierarchies currently supported. */
 /* Loom: TODO: Make more general.  Ideally this would be able to be
  * automatically compiled with the (broken) pifo-compiler.py.  This is a long
@@ -126,13 +131,13 @@ class LoomVPort final : public Port {
   struct pifo_pipeline_state {
     /* TODO: multiple stages. */
     PIFOPipeline *mesh;
-    std::map<uint32_t, std::vector<PIFOArguments>> tc_to_pifoargs;
-    std::map<uint32_t, std::vector<std::pair<uint64_t, uint64_t>>> tc_to_sattrs; /* TC -> static attributes of the class. */
+    std::vector<PIFOArguments> tc_to_pifoargs[SN_MAX_TC];
+    std::vector<std::pair<uint64_t, uint64_t>> tc_to_sattrs[SN_MAX_TC]; /* TC -> static attributes of the class. */
     /* Loom: XXX: TODO: this would be better as a map from the unique node id
      * in the tree to the generic state for the tree. */
     uint64_t root_vt; /* l0_vt */
-    std::map<uint64_t, uint64_t> l1_vt; /* "tenant" */
-    std::map<uint64_t, uint64_t> l2_vt; /* "tc" */
+    uint64_t l1_vt[SN_MAX_TENANT]; /* "tenant" */
+    uint64_t l2_vt[SN_MAX_TC]; /* "tc" */
     int tick;
 
     //pifo_pipeline_state() : {};
