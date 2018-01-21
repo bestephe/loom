@@ -236,6 +236,9 @@ class LoomVPort final : public Port {
   /* Loom: scheduling state for deciding which dataQs to pull from. */
   enum SchHier sch_hier_;
   struct pifo_pipeline_state pifo_state_;
+
+  /* XXX: Hack for testing out overheads of polling Ctrl Descriptors */
+  int ctrl_desc_call_i_;
 };
 
 #endif  // BESS_DRIVERS_LOOMVPORT_H_

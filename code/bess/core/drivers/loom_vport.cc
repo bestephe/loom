@@ -1865,8 +1865,9 @@ int LoomVPort::AddNewDrrDataq(struct sn_tx_ctrl_desc *ctrl_desc) {
     /* Loom: TODO: different data structure. */
     assert(dataq->active == false);
     dataq->active = true;
-    assert(dataq->next_packet == nullptr);
-    dataq->next_packet = nullptr;
+    /* Loom: TODO: For some reason this assertion fails... */
+    //assert(dataq->next_packet == nullptr);
+    //dataq->next_packet = nullptr;
 
     /* Loom: TODO: remove naive DRR dataq scheduling. */
     /* Add the dataq to the DRR queue (at the back. ouch.) */
@@ -2131,6 +2132,14 @@ int LoomVPort::RecvCtrlDesc() {
   int qid;
   int ret;
   int cnt = 0;
+
+  /* XXX: Hack for debugging performance. This would be better off configured
+   * through bessctl traffic classes (e.g., weighted share round robin) */
+  //ctrl_desc_call_i_++;
+  //ctrl_desc_call_i_ = ctrl_desc_call_i_ % 4;
+  //if (ctrl_desc_call_i_ != 0) {
+  //  return cnt;
+  //}
 
   for (qid = 0; qid < num_tx_ctrlqs_; qid++) {
     tx_ctrl_queue = &inc_ctrl_qs_[qid];

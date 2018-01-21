@@ -21,6 +21,9 @@ def main():
         required=True, choices=PROG_DIRS)
     parser.add_argument('--configf', help='The YAML config for the experiment.',
         required=True)
+    parser.add_argument('--extra-name', help='An extra string to add to the experiment name.',
+        default='')
+    parser.add_argument('--run', help='The number of this run.', default=1, type=int)
     args = parser.parse_args()
 
     with open(args.configf) as cf:
@@ -61,7 +64,8 @@ def main():
         avg_agg = 0
         for appn in results:
             app_res = results[appn]
-            avg_agg += app_res['agg_tput']['avg']
+            if 'agg_tput' in app_res:
+                avg_agg += app_res['agg_tput']['avg']
         results['avg_agg'] = avg_agg
 
         # Print output

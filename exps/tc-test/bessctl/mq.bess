@@ -10,25 +10,11 @@ import subprocess
 import sys
 import time
 
-#TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
-#TX_CTRL_QUEUE_COUNT = 24
-TX_CTRL_QUEUE_COUNT = 16
-TX_DATA_QUEUE_COUNT = 4096
-TX_BESS_QUEUES = 2 #XXX: HACK: Determines the ratio in which control queues and
-                   # dataQs are polled...
-                   #XXX: Setting this to anything other than 1 currently causes
-                   # race conditions!
+TX_QUEUE_COUNT = multiprocessing.cpu_count()
 RX_QUEUE_COUNT = 16
 TX_QSIZE = 128
 RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
-VPORT = True
-
-#SCH_HIER = 'drr'
-#SCH_HIER = 'fifo'
-#SCH_HIER = '2ten_pri'
-#SCH_HIER = '2ten_fair'
-SCH_HIER = 'mten_prifair'
 
 # DEBUGGING
 #bess.set_debug(True)
@@ -39,8 +25,6 @@ def aton(ip):
 # CloudLab experiment platform specific code:
 def node2id(node):
     node2id_dict = {
-        'pinter': 1,
-        'jarry': 2,
         'node-1.loomtest2.opennf-pg0.clemson.cloudlab.us': 1,
         'node-0.loomtest2.opennf-pg0.clemson.cloudlab.us': 2,
     }
@@ -78,24 +62,23 @@ class VhostConf(object):
                 setattr(self, key, dictionary[key])
         for key in kwargs:
             setattr(self, key, kwargs[key])
-def gen_vhost_conf(i):
+def gen_vhost_conf():
+    i = 1
     vhost_conf_dict = {
         'name': 'loom%d' % i,
         'addr': '10.10.10%d.%d' % (i, node_id),
+        'extra_addrs': ['10.10.102.%d' % (node_id)],
         'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
         'netns': 'loom_test%d' % i,
+        'vlan': '10%d' % i,
     }
     vhost_conf = VhostConf(vhost_conf_dict)
     vhost_conf.addr_prefix = vhost_conf.addr + '/24'
-    second_addr = '10.10.10%d.%d/24' % (i+1, node_id)
-    vhost_conf.ip_addrs=[vhost_conf.addr_prefix, second_addr]
     return vhost_conf
 
 def config_vport(vhost_conf):
-    v = LoomVPort(ifname=vhost_conf.name, ip_addrs=vhost_conf.ip_addrs,
-        num_inc_q=TX_BESS_QUEUES, num_out_q=RX_QUEUE_COUNT,
-        num_tx_ctrlqs=TX_CTRL_QUEUE_COUNT, num_tx_dataqs=TX_DATA_QUEUE_COUNT,
-        sch_hier=SCH_HIER)
+    v = VPort(ifname=vhost_conf.name, ip_addrs=[vhost_conf.addr_prefix],
+        num_inc_q=TX_QUEUE_COUNT, num_out_q=RX_QUEUE_COUNT)
     config_rfs(vhost_conf.name)
     ip_cmd_prefix = ''
     #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
@@ -107,6 +90,9 @@ def config_vport(vhost_conf):
         (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
     subprocess.check_call('%s ip link set dev %s up' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
+    for eaddr in vhost_conf.extra_addrs:
+        subprocess.check_call('%s ip addr add %s/24 dev %s ' % \
+            (ip_cmd_prefix, eaddr, vhost_conf.name), shell=True)
     return v
 
 # Reset everything at the start
@@ -123,8 +109,6 @@ bess.pause_all()
 bess.add_worker(0, 0)
 bess.add_worker(1, 28)
 
-bess.pause_all()
-
 # Configure the scheduler
 bess.add_tc('tenant_inc_rr',
             wid=0,
@@ -137,56 +121,55 @@ bess.add_tc('tenant_out_rl',
 bess.add_tc('tenant_out_rr',
             parent='tenant_out_rl',
             policy='round_robin')
+#bess.add_tc('tenant_out_rr',
+#            wid=1,
+#            policy='round_robin')
 
 # Get config for each vhost
-v1_vhost_conf = gen_vhost_conf(1)
-
-# Configure network namespaces
-#subprocess.call('sudo ip -all netns del', shell=True)
-#for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
-#    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
-
-# Delete then add the network namespaces
-subprocess.call('sudo ip -all netns del', shell=True)
-#for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
-#    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
+v1_vhost_conf = gen_vhost_conf()
 
 # Create a vhost as an interface on the host for each tenant
-if VPORT:
-    v1 = config_vport(v1_vhost_conf)
-else:
-    assert(0)
+v1 = config_vport(v1_vhost_conf)
 
 # Create a PMD port (physical) with q-txq and 1-rxq
 ## Only use 1-rxq because the 82599 with DPDK only does 16 RSS?
-p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=1,
+## XXX: Instead just use 16 RSS RX queues?
+p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=TX_QUEUE_COUNT,
     size_inc_q=RX_QSIZE, size_out_q=TX_QSIZE)
 
-# Merge all incoming traffic from the vport into a single PMD output port/queue
-v1_inc::LoomPortInc(port=v1.name) -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
+#TODO: If we want to use 16-wide RSS, then we could merge then together before
+# going out a HashLB
 
-# Configure the scheduler for traffic outgoing the physical port
-for i in range(TX_BESS_QUEUES):
-    v1_inc.attach_task(parent='tenant_out_rr', module_taskid=i)
-#TODO: Do something special with the extra task used by LoomVPort to control
-#the polling of the control queues (module_taskid=TX_QUEUE_COUNT)?
-v1_inc.attach_task(parent='tenant_out_rr', module_taskid=TX_BESS_QUEUES)
+for i in range(TX_QUEUE_COUNT):
+    # V Inc -> P Out (TX)
+    v1_qinc = QueueInc(port=v1.name, qid=i)
+    q_out = QueueOut(port=p.name, qid=i)
+    v1_qinc -> IPChecksum() -> L4Checksum() -> q_out
+    v1_qinc.attach_task(parent='tenant_out_rr')
+    
+# P Inc -> HashLB
+#XXX: It seems like providing RSS through HashLB leads to bad network
+# throughput.
+#pq_inc = QueueInc(port=p.name, qid=0)
+#hashlb = HashLB(gates=range(RX_QUEUE_COUNT), mode='l4')
+#pq_inc -> IPChecksum() -> L4Checksum() -> hashlb
+#pq_inc.attach_task(parent='tenant_inc_rr')
 
-
-# Connect queues instead of ports
 for i in range(RX_QUEUE_COUNT):
+    # P Inc -> V Out (RX)
     q_inc = QueueInc(port=p.name, qid=i)
-    q_out = QueueOut(port=v1.name, qid=i)
-    q_inc -> IPChecksum() -> L4Checksum() -> q_out
-
-    # Configure the scheduler
     q_inc.attach_task(parent='tenant_inc_rr')
+    v1_qout = QueueOut(port=v1.name, qid=i)
 
-    # DEBUG
-    #fifo = make_tcpdump_fifo('/tmp/vport_q_inc_%d.pcap' % i)
-    #bess.tcpdump(True, q_inc.name, fifo=fifo)
+    q_inc -> IPChecksum() -> L4Checksum() -> v1_qout
+    #hashlb:i -> v1_qout
 
 bess.resume_all()
 
-# DEBUG
-#print('Two ports now share one PMD: {} <-> {} and {} <-> {}'.format(v1, p, v2, p))
+## Dump outgoing packets for later analysis
+#out_fifo = make_tcpdump_fifo('/tmp/pout.pcap')
+#bess.tcpdump(True, p_out.name, direction='in', fifo=out_fifo)
+#tcpdump_cmd = 'sudo tcpdump -r /tmp/pout.pcap -s 64 -w /dev/shm/spark_tcp_flows.pcap -s 64'
+#tcpdump = subprocess.Popen(shlex.split(tcpdump_cmd),
+#    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+#tcpdump.wait()

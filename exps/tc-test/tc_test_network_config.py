@@ -18,6 +18,15 @@ if 'LOOM_HOME' in os.environ:
 else:
     LOOM_HOME = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/'
 
+NUM_TENANTS = 5
+TENANT_TO_PORTS = {tenant: [] for tenant in range(NUM_TENANTS)}
+TENANT_TO_PORTS[0] = [11111]
+for tenant in range(1, NUM_TENANTS):
+    for i in range(4):
+        TENANT_TO_PORTS[tenant].append(5000 + i + (4 * tenant))
+PRI_PORTS = [11111]
+print 'TENANT_TO_PORTS:', TENANT_TO_PORTS
+
 DRIVER_DIR = LOOM_HOME + '/code/ixgbe-5.0.4/'
 TCP_BYTE_LIMIT_DIR = '/proc/sys/net/ipv4/tcp_limit_output_bytes'
 TCP_QUEUE_SYSTEM_DEFAULT = 262144
@@ -25,25 +34,23 @@ TCP_QUEUE_SYSTEM_DEFAULT = 262144
 QMODEL_SQ = 'sq'
 QMODEL_MQ = 'mq'
 QMODEL_MQPRI = 'mq-pri'
+QMODEL_MQETS = 'mq-ets'
 QMODEL_BESS = 'bess'
-QMODELS = [QMODEL_SQ, QMODEL_MQ, QMODEL_MQPRI, QMODEL_BESS]
+QMODELS = [QMODEL_SQ, QMODEL_MQ, QMODEL_MQPRI, QMODEL_MQETS, QMODEL_BESS]
 
-TC_PFIFO = 'pfifo'
-TC_SFQ = 'sfq'
-TC_TYPES = [TC_PFIFO, TC_SFQ]
-
-PRI_CONFIG_DEFAULTS = {
+TCTEST_CONFIG_DEFAULTS = {
     'qmodel': QMODEL_SQ,
-    'tc_type': TC_PFIFO,
 
     'iface': 'eno2',
-    'ifaces': ['loom1', 'loom2'],
+    'ifaces': ['loom1'],
     'iface_addr': '0000:81:00.1',
     'bessctl': 'bessctl/sq.bess',
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
     'qdisc': True,
     'cgroups': {'high_prio': 3},
+
+    'drr_quantum': 1500,
 }
 
 class ServerConfig(object):
@@ -56,10 +63,10 @@ class ServerConfig(object):
     def dump(self):
         return self.__dict__.copy()
 
-class PriConfig(object):
+class TcTestConfig(object):
     def __init__(self, *initial_data, **kwargs):
-        for key in PRI_CONFIG_DEFAULTS:
-            setattr(self, key, PRI_CONFIG_DEFAULTS[key])
+        for key in TCTEST_CONFIG_DEFAULTS:
+            setattr(self, key, TCTEST_CONFIG_DEFAULTS[key])
         for dictionary in initial_data:
             for key in dictionary:
                 if not hasattr(self, key):
@@ -73,8 +80,6 @@ class PriConfig(object):
         # Error checking
         if self.qmodel not in QMODELS:
             raise ValueError('Unknown qmodel: \'%s\'' % self.qmodel)
-        if self.tc_type not in TC_TYPES:
-            raise ValueError('Unknown tc_type: \'%s\'' % self.tc_type)
     def dump(self):
         d = self.__dict__.copy()
         return d
@@ -95,7 +100,7 @@ def verify_dcb(config):
 #
 # The rest of the functions
 #
-def pri_config_nic_driver(config):
+def tctest_config_nic_driver(config):
     # Get the current IP
     get_ip_cmd='/sbin/ifconfig %s | grep \'inet addr:\' | cut -d: -f2 | awk \'{ print $1}\'' % config.iface
     ip = subprocess.check_output(get_ip_cmd, shell=True)
@@ -197,7 +202,7 @@ def pri_config_nic_driver(config):
     lldp_cmd = 'sudo service lldpad stop'
     subprocess.check_call(lldp_cmd, shell=True)
 
-def pri_config_xps(config):
+def tctest_config_xps(config):
     if config.qmodel == QMODEL_MQ:
         # Use the Intel script to configure XPS
         subprocess.call('sudo killall irqbalance', shell=True)
@@ -213,61 +218,100 @@ def pri_config_xps(config):
         #Note: maybe not necessary.  But it shouldn't hurt to restart irqbalance
         subprocess.call('sudo service irqbalance restart', shell=True)
 
-def pri_config_qdisc(config, iface):
+def tctest_config_qdisc(config, iface):
     #XXX: DEBUG:
     #print 'WARNING: Skipping Qdisc config!'
     #return
 
-    # MQPRI specific options
-    root_handle = '1' if config.qmodel == QMODEL_MQPRI else ''
-    handle_offset = 5 if config.qmodel == QMODEL_MQPRI else 1
+    if config.qmodel == QMODEL_MQPRI or config.qmodel == QMODEL_MQETS:
+        print 'WARNING: Skipping Qdisc for qmodel \'%s\' because it does ' \
+            'not work yet!' % config.qmodel
+        return
 
     qcnt = len(get_txqs(iface))
-    for i in xrange(handle_offset, qcnt + handle_offset):
-        # Configure a prio Qdisc per txq with SFQ children
+    for i in xrange(1, qcnt + 1):
+        #
+        # Configure a DRR Qdisc per txq with Prio children.
+        #
+        # Note: this does not fully install the hierarchy.  Importantly, it
+        #   skips adding priority within a single tenant.
+
+        # Configrue the DRR Qdiscs
+        #  Create the classes for T0 (%d00:1), T1 (%d00:2), ...
         try:
-            tc_cmd = 'sudo tc qdisc add dev %s parent %s:%x handle %d00: prio' % \
-                (iface, root_handle, i, i)
+            tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
+                (iface, i, i)
             subprocess.check_call(tc_cmd, shell=True)
         except subprocess.CalledProcessError:
-            tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: prio' % \
+            tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: drr' % \
                 (iface, i)
             subprocess.check_call(tc_cmd, shell=True)
 
-        # Configure the prio children.
-        for parent in ['%d00:1' % i, '%d00:2' % i, '%d00:3' % i]:
-            if config.tc_type == TC_PFIFO:
-                tc_cmd = 'sudo tc qdisc add dev %s parent %s pfifo_fast' % \
-                    (iface, parent)
-            elif config.tc_type == TC_SFQ:
-                tc_cmd = 'sudo tc qdisc add dev %s parent %s sfq limit 32768 perturb 60' % \
-                    (iface, parent)
-            else:
-                raise
+
+
+        for tenant in range(NUM_TENANTS):
+            thandle = tenant + 1
+            tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:%d drr quantum %d' % \
+                (iface, i, i, thandle, config.drr_quantum)
             subprocess.check_call(tc_cmd, shell=True)
 
-        PRI_PORTS = [11212, 11214]
+        # Create traffic filters for each tenant
+        for tenant in range(NUM_TENANTS):
+            thandle = tenant + 1
+            ports = TENANT_TO_PORTS[tenant]
+            for p in ports:
+                for pdir in ['sport', 'dport']:
+                    tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
+                        'prio 1 u32 match ip %s %d 0xffff flowid %d00:%d'
+                    tc_cmd = tc_str % (iface, i, pdir, p, i, thandle)
+                    subprocess.check_call(tc_cmd, shell=True)
 
-        # Create a filter for memcached traffic
-        for p in PRI_PORTS:
-            for pdir in ['sport', 'dport']:
-                tc_str = 'sudo tc filter add dev %s protocol ip parent %d00: ' + \
-                    'prio 1 u32 match ip %s %d 0xffff flowid %d00:1'
-                tc_cmd = tc_str % (iface, i, pdir, p, i)
-                subprocess.check_call(tc_cmd, shell=True)
-
-        # Create a traffic filter to send the rest of the traffic to priority :2
+        # Create a traffic filter to send the rest of the traffic to class :1 (T0)
         tc_str = 'sudo tc filter add dev %s protocol all parent %d00: ' + \
-            'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:2'
+            'prio 2 u32 match ip dst 0.0.0.0/0 flowid %d00:1'
         tc_cmd = tc_str % (iface, i, i)
         subprocess.check_call(tc_cmd, shell=True)
 
-def pri_config_server(config):
+        # Configure the prio children
+        drr_classes = ['%d00:%d' % (i, thandle) for thandle in range(1, NUM_TENANTS + 1)]
+        for drr_class in drr_classes:
+            handle = '%d0%s' % (i, (drr_class.split(':')[-1]))
+            tc_cmd = 'sudo tc qdisc add dev %s parent %s handle %s: prio' % \
+                (iface, drr_class, handle)
+            subprocess.check_call(tc_cmd, shell=True)
+            #tc_cmd = 'sudo tc qdisc add dev %s parent %s:1 sfq limit 32768 perturb 60' % \
+            tc_cmd = 'sudo tc qdisc add dev %s parent %s:1 pfifo_fast' % \
+                (iface, handle)
+            subprocess.check_call(tc_cmd, shell=True)
+            #tc_cmd = 'sudo tc qdisc add dev %s parent %s:2 pfifo_fast' % \
+            tc_cmd = 'sudo tc qdisc add dev %s parent %s:2 sfq limit 32768 perturb 60' % \
+                (iface, handle)
+            subprocess.check_call(tc_cmd, shell=True)
+            #tc_cmd = 'sudo tc qdisc add dev %s parent %s:3 pfifo_fast' % \
+            tc_cmd = 'sudo tc qdisc add dev %s parent %s:3 sfq limit 32768 perturb 60' % \
+                (iface, handle)
+            subprocess.check_call(tc_cmd, shell=True)
+
+            # Create a filter for high priority traffic
+            for p in PRI_PORTS:
+                for pdir in ['sport', 'dport']:
+                    tc_str = 'sudo tc filter add dev %s protocol ip parent %s: ' + \
+                        'prio 1 u32 match ip %s %d 0xffff flowid %s:1'
+                    tc_cmd = tc_str % (iface, handle, pdir, p, handle)
+                    subprocess.check_call(tc_cmd, shell=True)
+
+            # Create a traffic filter to send the rest of the traffic to priority :2
+            tc_str = 'sudo tc filter add dev %s protocol all parent %s: ' + \
+                'prio 2 u32 match ip dst 0.0.0.0/0 flowid %s:2'
+            tc_cmd = tc_str % (iface, handle, handle)
+            subprocess.check_call(tc_cmd, shell=True)
+
+def tctest_config_server(config):
     # Configure the number of NIC queues
-    pri_config_nic_driver(config)
+    tctest_config_nic_driver(config)
 
     # Configure XPS
-    pri_config_xps(config)
+    tctest_config_xps(config)
 
     # Configure Qdisc/TC
     #XXX: BUG: There appears to be a bug with assigning Qdiscs in the mqprio
@@ -278,7 +322,7 @@ def pri_config_server(config):
     if config.qmodel == QMODEL_MQPRI:
         print 'Skipping Qdisc config for qmodel: %s' % config.qmodel
     else:
-        pri_config_qdisc(config, config.iface)
+        tctest_config_qdisc(config, config.iface)
 
     # Configure CGroups
     config_cgroup(config, config.iface)
@@ -286,7 +330,7 @@ def pri_config_server(config):
     # Configure BQL
     set_all_bql_limit_max(config)
 
-def pri_config_bess(config):
+def tctest_config_bess(config):
     subprocess.call('sudo killall tcpdump', shell=True)
 
     loom_config_bess(config)
@@ -300,7 +344,7 @@ def pri_config_bess(config):
         # Configure Qdisc/TC
         #TODO: optionally skip Qdisc config
         if config.qdisc:
-            pri_config_qdisc(config, iface)
+            tctest_config_qdisc(config, iface)
 
         # Configure CGroups
         config_cgroup(config, iface)
@@ -313,8 +357,8 @@ def pri_config_bess(config):
 
 def main():
     # Parse arguments
-    parser = argparse.ArgumentParser(description='Configure the server and '
-        'start spark for the fairness experiment')
+    parser = argparse.ArgumentParser(description='Configure the server'
+        'for the tc-test experiment')
     parser.add_argument('--config', help='An alternate configuration file. '
         'The configuration format is unsurprisingly not documented.')
     args = parser.parse_args()
@@ -323,17 +367,17 @@ def main():
     if args.config:
         with open(args.config) as configf:
             user_config = yaml.load(configf)
-        config = PriConfig(user_config)
+        config = TcTestConfig(user_config)
     else:
-        config = PriConfig()
+        config = TcTestConfig()
 
     print 'config:', config.dump()
 
     # Configure the server
     if config.qmodel == QMODEL_BESS:
-        pri_config_bess(config)
+        tctest_config_bess(config)
     else:
-        pri_config_server(config)
+        tctest_config_server(config)
 
 if __name__ == '__main__':
     main()

@@ -121,7 +121,7 @@ class GenericProg(object):
     def start_sink(self):
         sink_cmd = self.get_sink_cmd()
         cg_cmd = self.get_cgroup_cmd(sink_cmd)
-        print 'start sink cg_cmd:', cg_cmd
+        print 'start sink cmd:', cg_cmd
         proc = subprocess.Popen(cg_cmd, shell=True,
             stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
         self.dir = 'sink'
@@ -130,9 +130,15 @@ class GenericProg(object):
     def start_src(self):
         src_cmd = self.get_src_cmd()
         cg_cmd = self.get_cgroup_cmd(src_cmd)
+
+        #TODO: something more precise than sleep to determine start time?
+        sleep_cmd = 'sleep %d' % self.pconf.start
+        cmd = sleep_cmd + '; ' + cg_cmd
+
         #TODO: Deal with different desired start times
-        print 'start src cg_cmd:', cg_cmd
-        proc = subprocess.Popen(cg_cmd, shell=True,
+        print 'start src cmd:', cmd
+
+        proc = subprocess.Popen(cmd, shell=True,
             stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
         self.dir = 'src'
         self.proc = proc
@@ -176,8 +182,10 @@ class IperfProg(GenericProg):
     def parse_src_output(self):
         assert(self.dir == 'src')
         proc_out = self.proc.stdout.read()
-        #print 'proc_out:', proc_out
-        json_obj = json.loads(proc_out)
+        try:
+            json_obj = json.loads(proc_out)
+        except:
+            print 'Unable to load proc_out!', proc_out
         agg_tput_results = self.process_agg_tput(json_obj)
         #flow_tput_results = self.process_flow_tput(json_obj)
         #return {'agg_tput': agg_tput_results, 'flow_tput': flow_tput_results}
@@ -189,14 +197,52 @@ class IperfProg(GenericProg):
         subprocess.call(cmd, shell=True)
 
 
+class SockperfProg(GenericProg):
+    def get_sink_cmd(self):
+        cmd = 'sockperf sr --tcp -p %(port)s'
+        cmd = cmd % {'port': self.pconf.port}
+        return cmd
+
+    def get_fulllog_name(self):
+        fulllog = 'results/sockperf/%s.sockperf_log.csv' % self.pconf.name
+        return fulllog
+
+    def get_src_cmd(self):
+        pconf = self.pconf
+        mps = 1000
+        fulllog = self.get_fulllog_name()
+        cmd = 'sockperf pp --tcp -i %(ip)s -t %(duration)d -p %(port)s --mps %(mps)d ' \
+            '--full-log %(fulllog)s' 
+        cmd = cmd % {
+            'ip': pconf.ip,
+            'duration': self.duration(),
+            'port': pconf.port,
+            'mps': mps,
+            'fulllog': fulllog,
+        }
+        return cmd
+
+    def parse_src_output(self):
+        assert(self.dir == 'src')
+        proc_out = self.proc.stdout.read()
+        fulllog = self.get_fulllog_name()
+
+        print 'proc_out:', proc_out
+
+        return {}
+
+    @staticmethod
+    def killall():
+        cmd = 'sudo killall sockperf'
+        subprocess.call(cmd, shell=True)
+        
 #
 # Generic Per-app setup
 # 
-#TEST_PROGS = [TEST_PROG_IPERF, TEST_PROG_SOCKPERF]
-TEST_PROGS = [TEST_PROG_IPERF]
+TEST_PROGS = [TEST_PROG_IPERF, TEST_PROG_SOCKPERF]
 TEST_PROGS2CLASS = {
     TEST_PROG_IPERF: IperfProg,
-    #TEST_PROG_SOCKPERF: 
+    TEST_PROG_SOCKPERF: SockperfProg,
 }
 
 def tc_test_start_sink(prog_conf):
