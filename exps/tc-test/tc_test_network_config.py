@@ -22,8 +22,8 @@ NUM_TENANTS = 5
 TENANT_TO_PORTS = {tenant: [] for tenant in range(NUM_TENANTS)}
 TENANT_TO_PORTS[0] = [11111]
 for tenant in range(1, NUM_TENANTS):
-    for i in range(4):
-        TENANT_TO_PORTS[tenant].append(5000 + i + (4 * tenant))
+    for i in range(100):
+        TENANT_TO_PORTS[tenant].append(5000 + i + (100 * tenant))
 PRI_PORTS = [11111]
 print 'TENANT_TO_PORTS:', TENANT_TO_PORTS
 

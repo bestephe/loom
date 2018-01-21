@@ -31,14 +31,13 @@ def gen_tctest_config1():
     for tenant in range(1, num_iperf_tenants+1):
         tc = (tenant << 1) + 1
         tc_str = 'tc%d' % tc
-        base_port = IPERF_BASEPORT + (4 * tenant)
+        base_port = IPERF_BASEPORT + (100 * tenant)
         base_name = 'iperf_%s_' % tc_str
         num_conns = (4 ** tenant)
         start = 2 * tenant
         finish = (4 * num_iperf_tenants) - ((tenant - 1) * 2)
 
-        #if (tenant == 1 or num_conns > 128):
-        if 1:
+        if tenant == 1:
             iperf0 = {'cgroup': tc_str, 'ip': SINK_IP, 'port': base_port,
                 'prog': 'iperf3', 'name': base_name + '0', 'num_conns': (num_conns+1)/2,
                 'start': start, 'finish': finish}
@@ -48,10 +47,12 @@ def gen_tctest_config1():
             apps.append(iperf0)
             apps.append(iperf1)
         else:
-            iperf0 = {'cgroup': tc_str, 'ip': SINK_IP, 'port': base_port,
-                'prog': 'iperf3', 'name': base_name + '0', 'num_conns': num_conns,
-                'start': start, 'finish': finish}
-            apps.append(iperf0)
+            for i in range(num_conns / 4):
+                assert(i < 100)
+                iperf = {'cgroup': tc_str, 'ip': SINK_IP, 'port': base_port + i,
+                    'prog': 'iperf3', 'name': '%s%d' % (base_name, i), 'num_conns': 4,
+                    'start': start, 'finish': finish}
+                apps.append(iperf)
 
     c1 = {
         'apps': apps,

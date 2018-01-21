@@ -18,8 +18,8 @@ NUM_TENANTS = 5
 PORT_TO_TENANT = {
     11111: 0,
 }
-for i in range(4):
-    PORT_TO_TENANT.update({5000 + i + (4 * tenant): tenant for tenant in range(NUM_TENANTS)})
+for i in range(100):
+    PORT_TO_TENANT.update({5000 + i + (100 * tenant): tenant for tenant in range(NUM_TENANTS)})
 #print 'PORT_TO_TENANT:', PORT_TO_TENANT
 
 #XXX: Build our own reader because dpkt is not designed well

@@ -34,4 +34,5 @@ mkdir results configs results/sockperf
 
 Useful commands:
 ```
+./results_scripts/plot_tenant_tput_ts.py --results results/tputs.bess-sq..yaml
 ```
