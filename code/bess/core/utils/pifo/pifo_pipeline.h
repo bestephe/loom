@@ -23,7 +23,7 @@ class PIFOPipeline {
            const QueueType & q_type,
            const uint32_t & queue_id,
            const PIFOPacket & packet,
-           const uint32_t & tick) {
+           const uint64_t & tick) {
     stages_.at(stage_id).enq(q_type, queue_id, packet, tick);
   }
 
@@ -33,7 +33,7 @@ class PIFOPipeline {
   Optional<PIFOPacket> deq(const uint32_t & stage_id,
                            const QueueType & q_type,
                            const uint32_t & queue_id,
-                           const uint32_t & tick) {
+                           const uint64_t & tick) {
     // Start off with a dequeue operation to the specified stage_id
     NextHop next_hop = {Operation::DEQ, {{stage_id, q_type, queue_id}}};
 

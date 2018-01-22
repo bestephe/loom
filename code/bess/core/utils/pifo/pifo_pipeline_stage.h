@@ -138,7 +138,7 @@ class PIFOPipelineStage {
   /// These happen externally from the ingress pipeline
   /// or from a push from a calendar queue/
   void enq(const QueueType & q_type, const uint32_t & queue_id,
-           const PIFOPacket & packet, const uint32_t & tick) {
+           const PIFOPacket & packet, const uint64_t & tick) {
     num_enq_ops++;
     assert_exception(num_enq_ops == 1);
     const auto prio = prio_computer_(packet);
@@ -154,7 +154,7 @@ class PIFOPipelineStage {
   /// Dequeues
   /// Happen implicitly starting from the root PIFO
   Optional<PIFOPacket> deq(const QueueType & q_type, const uint32_t & queue_id,
-                           const uint32_t & tick) {
+                           const uint64_t & tick) {
     num_deq_ops++;
     assert_exception(num_deq_ops == 1);
     if (q_type == QueueType::PRIORITY_QUEUE) {

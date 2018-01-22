@@ -1,12 +1,13 @@
 #!/bin/bash
 
-RUN_START=1
-RUN_END=1
+RUN_START=10
+RUN_END=19
 
 
 for i in $(seq $RUN_START $RUN_END)
 do
     for qtype in bess-sq bess-mq bess-tc
+    #for qtype in bess-sq
     do
         # Configure the network on all of the servers
         sudo -u ubuntu -H ./config_all_bess_netconf.sh $qtype.conf
@@ -27,7 +28,7 @@ do
         sudo tcpdump -i loom1 -w /dev/shm/tctest_tcp_flows.$qtype.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &
         #TODO: I could collect a trace from BESS internals as well
 
-        time ./run_tc_test.py --configs configs/tctest_conf1.yaml --extra-name $qtype --runs 1
+        time ./run_tc_test.py --configs configs/tctest_conf1.yaml --extra-name $qtype.$i --runs 1
 
         echo "After wait..."
 
@@ -42,6 +43,7 @@ do
     ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-sq.pcap --outf results/tputs.bess-sq.$i.yaml &
     ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-mq.pcap --outf results/tputs.bess-mq.$i.yaml &
     ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-tc.pcap --outf results/tputs.bess-tc.$i.yaml
+    ##sudo rm -f /dev/shm/tctest_tcp_flows.bess-sq.pcap
 
     #TODO: better waiting for all jobs to finish
 done

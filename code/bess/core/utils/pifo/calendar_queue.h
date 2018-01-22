@@ -12,25 +12,25 @@ class CalendarQueue {
  public:
   /// Enqueue method
   void enq(const ElementType & element, const PriorityType & prio,
-           const uint32_t & tick) {
+           const uint64_t & tick) {
     // Don't push in a packet that was due in the past.
     assert_exception(prio >= tick);
     pifo_.push(element, prio);
   }
 
   /// Dequeue method
-  Optional<ElementType> deq(const uint32_t & tick) {
+  Optional<ElementType> deq(const uint64_t & tick) {
     // Get top of pifo
     auto top_prio = pifo_.top_prio();
 
     if (top_prio.initialized() and top_prio.get() <= tick) {
       // If top element's tick is less than current time,
       // assert that the top element and the current time match up
-      assert_exception(top_prio.get() == tick);
+      //assert_exception(top_prio.get() == tick);
       return pifo_.pop();
     } else {
       // Otherwise, return nothing
-      std::cout << "Returning nothing \n";
+      //std::cout << "Returning nothing \n";
       return Optional<ElementType>();
     }
   }

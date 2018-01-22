@@ -16,6 +16,8 @@ enum fields_t {
   FIELD_ROOT_VT,
   FIELD_L1_VT,
   FIELD_L2_VT,
+  FIELD_RL_NODE1,
+  FIELD_RL_NODE2,
   NUM_FIELDS,     // Sentinel
 };
 

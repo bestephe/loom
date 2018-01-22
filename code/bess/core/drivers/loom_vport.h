@@ -49,6 +49,7 @@ static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
 /* Loom: TODO: Small for now. */
 #define SN_MAX_TC   (16)
 #define SN_MAX_TENANT (16)
+#define SN_MAX_RL_CLS (16)
 
 /* Different scheduling hierarchies currently supported. */
 /* Loom: TODO: Make more general.  Ideally this would be able to be
@@ -60,6 +61,7 @@ enum SchHier {
   SCH_2TEN_PRI,
   SCH_2TEN_FAIR,
   SCH_MTEN_PRIFAIR,
+  SCH_MTEN_PRIFAIR_RL,
 };
 
 class LoomVPort final : public Port {
@@ -108,6 +110,15 @@ class LoomVPort final : public Port {
     struct llring *sn_to_drv;
   };
 
+  /* Loom: Note: This structure isnt' well thought out.  The dataq only needs
+   * to keep track of unaccounted bytes.  The scheduling node only needs to
+   * keep of a ts.  */
+  struct rate_limit_state {
+    uint64_t rate_bps; /* A rate of 0 indicates no rate limit (null class) */
+    uint64_t unaccnt_bytes;
+    uint64_t accnt_ns;  /* Allowed to be in the future. */
+  };
+
   struct tx_data_queue {
     /* Loom. Used for TSO (Not used right now). Probably in the wrong place? */
     struct txq_private txq_priv;
@@ -120,6 +131,8 @@ class LoomVPort final : public Port {
     bess::Packet* next_packet;
     uint64_t next_xmit_ts;
     uint64_t next_tc;
+    uint64_t next_rl_cls;
+    struct rate_limit_state rl_state;
 
     /* DataQ DRR state. */
     /* TODO: These should be deleted once a more general scheduling algorithm
@@ -131,6 +144,7 @@ class LoomVPort final : public Port {
   struct pifo_pipeline_state {
     /* TODO: multiple stages. */
     PIFOPipeline *mesh;
+    PIFOPipeline *calendar;
     std::vector<PIFOArguments> tc_to_pifoargs[SN_MAX_TC];
     std::vector<std::pair<uint64_t, uint64_t>> tc_to_sattrs[SN_MAX_TC]; /* TC -> static attributes of the class. */
     /* Loom: XXX: TODO: this would be better as a map from the unique node id
@@ -138,7 +152,9 @@ class LoomVPort final : public Port {
     uint64_t root_vt; /* l0_vt */
     uint64_t l1_vt[SN_MAX_TENANT]; /* "tenant" */
     uint64_t l2_vt[SN_MAX_TC]; /* "tc" */
-    int tick;
+    uint64_t tick; // For mesh, not for calendar.  Calendar uses current_ns.
+    struct rate_limit_state root_rl_state;
+    struct rate_limit_state rl_class_state[SN_MAX_RL_CLS]; /* 0 is a null class */
 
     //pifo_pipeline_state() : {};
     //~pifo_pipeline_state() {};
@@ -181,12 +197,14 @@ class LoomVPort final : public Port {
   int InitPifoMesh2TenantPrio();
   int InitPifoMesh2TenantFair();
   int InitPifoMeshMTenantPriFair();
+  int InitPifoMeshMTenantPriFairRl();
   int InitPifoState();
   int DeInitPifoState();
   int AddNewPifoDataq(struct sn_tx_ctrl_desc *ctrl_desc);
   int AddDataqToPifo(struct tx_data_queue *dataq);
   int GetNextPifoBatch(bess::Packet **pkts, int max_cnt);
   struct tx_data_queue* GetNextPifoDataq();
+  int ShouldRlPifoDataq(struct tx_data_queue *dataq);
   int GetNextPifoPackets(bess::Packet **pkts, int max_cnt,
                          struct tx_data_queue *dataq,
                          uint64_t *total_bytes);

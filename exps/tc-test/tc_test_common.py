@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import argparse
+import csv
 import glob
 import json
 import numpy
@@ -17,6 +18,7 @@ import yaml
 from time import sleep
 
 USERNAME = 'brents'
+FLOAT_DESC_STR = '[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?'
 
 if 'LOOM_HOME' in os.environ:
     LOOM_HOME = os.environ['LOOM_HOME']
@@ -90,10 +92,10 @@ class TcTestConfig(object):
         return d
     def get_exp_str(self):
         if hasattr(self, 'extra_name') and self.extra_name != '':
-            exp_str = 'results/tctest.%s.%s.%d.yaml' % \
+            exp_str = 'tctest.%s.%s.%d.yaml' % \
                 (self.expname, self.extra_name, self.run)
         else:
-            exp_str = 'results/tctest.%s.%d.yaml' % (self.expname, self.run)
+            exp_str = 'tctest.%s.%d.yaml' % (self.expname, self.run)
         return exp_str
 
 #
@@ -199,19 +201,17 @@ class IperfProg(GenericProg):
 
 class SockperfProg(GenericProg):
     def get_sink_cmd(self):
-        cmd = 'sockperf sr --tcp -p %(port)s'
+        #XXX: Trying without --tcp for now
+        cmd = 'sockperf sr -p %(port)s'
         cmd = cmd % {'port': self.pconf.port}
         return cmd
-
-    def get_fulllog_name(self):
-        fulllog = 'results/sockperf/%s.sockperf_log.csv' % self.pconf.name
-        return fulllog
 
     def get_src_cmd(self):
         pconf = self.pconf
         mps = 1000
         fulllog = self.get_fulllog_name()
-        cmd = 'sockperf pp --tcp -i %(ip)s -t %(duration)d -p %(port)s --mps %(mps)d ' \
+        #XXX: Trying without --tcp for now
+        cmd = 'sockperf pp -i %(ip)s -t %(duration)d -p %(port)s --mps %(mps)d ' \
             '--full-log %(fulllog)s' 
         cmd = cmd % {
             'ip': pconf.ip,
@@ -222,14 +222,46 @@ class SockperfProg(GenericProg):
         }
         return cmd
 
+    def get_fulllog_name(self):
+        fulllog = 'results/sockperf/%s.sockperf_log.csv' % self.pconf.name
+        return fulllog
+
+    def parse_sockperf_stdout(self):
+        proc_out = self.proc.stdout.read()
+        print 'proc_out:', proc_out
+        summary = {}
+        for l in proc_out.split('\n'):
+            for ptile in (r"99\.9", r"99\.0", r"90\.0", r"75\.0", r"50\.0"):
+                mstr = r".*percentile %s.*=.* (%s).*" % (ptile, FLOAT_DESC_STR)
+                match = re.match(mstr, l)
+                if match:
+                    ptile_f = float(ptile.replace("\\", ""))
+                    usec = float(match.groups()[0])
+                    summary[ptile_f] = usec
+        return summary
+
+    def parse_sockperf_fulllog(self):
+        fulllog = self.get_fulllog_name()
+        xs, ys = [], []
+        with open(fulllog, 'rb') as csvfile:
+            logreader = csv.reader(csvfile, delimiter=' ', quotechar='|')
+            for row in logreader:
+                if len(row) == 2:
+                    #print row
+                    try:
+                        tx, rx = float(row[0].strip(',')), float(row[1].strip(','))
+                        lat = rx - tx
+                        xs.append(tx)
+                        ys.append(lat)
+                    except ValueError:
+                        continue
+        return {'xs': xs, 'ys': ys}
+
     def parse_src_output(self):
         assert(self.dir == 'src')
-        proc_out = self.proc.stdout.read()
-        fulllog = self.get_fulllog_name()
-
-        print 'proc_out:', proc_out
-
-        return {}
+        summary = self.parse_sockperf_stdout()
+        samples = self.parse_sockperf_fulllog()
+        return {'summary': summary, 'samples': samples}
 
     @staticmethod
     def killall():

@@ -30,9 +30,11 @@ mkdir results configs results/sockperf
 - Note: this is currently very hard-coded still.  I don't have a reason to make
   this more general yet though.
 
-3. Parse the output
+3. Parse and plot the output
 
 Useful commands:
 ```
 ./results_scripts/plot_tenant_tput_ts.py --results results/tputs.bess-sq..yaml
+./results_scripts/gen_latency_ts.py --sq results/src.tctest.tctest_conf1.bess-sq.1.1.yaml --mq results/src.tctest.tctest_conf1.bess-mq.1.1.yaml --loom results/src.tctest.tctest_conf1.bess-tc.1.1.yaml --outf results/tctest_latency_ts.yaml
+./results_scripts/plot_latency_ts.py --results results/tctest_latency_ts.yaml --figname results/tctest_latency_ts.pdf
 ```

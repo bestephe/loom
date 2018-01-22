@@ -31,6 +31,7 @@
 #include <linux/version.h>
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
+#include <linux/ip.h>
 #include <linux/timex.h>
 
 /* Loom: For queue assignment hack. */
@@ -738,6 +739,8 @@ static int sn_poll_tx(struct napi_struct *napi, int budget)
 static void sn_set_tx_metadata(struct sk_buff *skb,
 			       struct sn_tx_data_metadata *tx_meta)
 {
+	__be16 protocol = skb->protocol;
+
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		tx_meta->csum_start = skb_checksum_start_offset(skb);
 		tx_meta->csum_dest = tx_meta->csum_start + skb->csum_offset;
@@ -756,6 +759,12 @@ static void sn_set_tx_metadata(struct sk_buff *skb,
 
 	/* Loom: TODO: more sophisticating assignment to traffic classes? */
 	tx_meta->sch_meta.tc = skb->priority;
+
+	tx_meta->skb_daddr = 0;
+	if (protocol == __constant_htons(ETH_P_IP)) {
+		struct iphdr *iph = ip_hdr(skb);
+		tx_meta->skb_daddr = iph->daddr;
+	}
 }
 
 static inline netdev_tx_t sn_send_tx_queue(struct sn_queue *ctrl_queue,

@@ -134,13 +134,18 @@ struct sn_tx_data_metadata {
 	uint16_t csum_start;
 	uint16_t csum_dest;
 
-        uint64_t skb_opaque;
+        //uint64_t skb_opaque;
 
 	/* skb->priority. */
 	uint16_t skb_priority;
 
         /* Driver xmit timestamp. */
         uint64_t drv_xmit_ts;
+
+        /* Skb destination for rate-limiting (hack). */
+        /* This could also be in the ctrl desc.  Also could currently just be
+         * gotten from the packet itself, which is had at this point. */
+        __be32 skb_daddr;
 
         /* Loom: Scheduling metadata. */
         struct sn_tx_sched_metadata sch_meta;

@@ -916,6 +916,128 @@ int LoomVPort::InitPifoMeshMTenantPriFair() {
   return (0);
 }
 
+
+/* Overview of the scheduling algorithm:
+ * - There are 8 total tenants
+ *   - Different tenants fairly share available bandwidth
+ * - Each tenant has two traffic classes (t<<1, (t<<1)+1):
+ *   - E.g., Tenant 0 has tcs {0, 1}, Tenant 1 has tcs {2, 3}, ...
+ *   - TC t has strict priority over traffic class t+1 
+ *   - TC t uses FIFO scheduling
+ *   - TC t+1 uses per-dataq fair queuing (FQ)
+ * - Rate-limit class 1 is rate-limited to 2Gbps
+ */
+int LoomVPort::InitPifoMeshMTenantPriFairRl() {
+  struct pifo_pipeline_state *pipe = &pifo_state_;
+  uint64_t num_tenants = 8;
+  uint64_t num_tcs = num_tenants << 1;
+
+  assert(num_tenants <= SN_MAX_TENANT);
+  assert(num_tcs <= SN_MAX_TC);
+
+  /* Loom: DEBUG */
+  LOG(INFO) << "InitPifoMeshMTenantPriFair";
+
+  /* Init the PIFO arguments for each stage. */
+  PIFOArguments root_pifo_args = {0, QueueType::PRIORITY_QUEUE, 0};
+  std::map<uint64_t, PIFOArguments> tenantArguments;
+  std::vector<std::pair<const int, NextHop>> tenantLut;
+  std::map<uint64_t, PIFOArguments> tcArguments;
+  std::vector<std::pair<const int, NextHop>> tcLut;
+  pipe->root_vt = 0;
+  for (uint64_t tenant = 0; tenant < num_tenants; tenant++) {
+    tenantArguments[tenant] = PIFOArguments({1, QueueType::PRIORITY_QUEUE, tenant});
+    tenantLut.push_back({tenant, {Operation::DEQ, {tenantArguments[tenant]}}});
+    /* l1_vt is unused. */
+    pipe->l1_vt[tenant] = 0;
+  }
+  for (uint64_t tc = 0; tc < num_tcs; tc++) {
+    uint64_t tenant = (tc >> 1);
+    tcArguments[tc] = {2, QueueType::PRIORITY_QUEUE, tc};
+    tcLut.push_back({tc, {Operation::DEQ, {tcArguments[tc]}}});
+    pipe->tc_to_pifoargs[tc] = {root_pifo_args, tenantArguments[tenant], tcArguments[tc]};
+    pipe->tc_to_sattrs[tc] = {{FIELD_TENANT, tenant}, {FIELD_TC, tc}};
+    pipe->l2_vt[tc] = 0;
+  }
+  /* Loom: TODO: memset other pifoargs. */
+
+  /* Set the rate-limits */
+  /* 2.5Gbps for the one traffic class */
+  pipe->rl_class_state[1].rate_bps = (2500ull * 1000ull * 1000ull);
+
+  /* Fair sharing between tenants. */
+  PIFOPipelineStage pifo1(1,
+                          FIELD_TENANT,
+                          tenantLut,
+                          [this] (const auto & x) {
+                            static std::map<uint64_t, uint64_t> last_fin_time = {};
+                            uint64_t tenant = x(FIELD_TENANT);
+                            uint64_t root_vt = pifo_state_.root_vt;
+
+                            if (last_fin_time.find(tenant) == last_fin_time.end()) {
+                                last_fin_time[tenant] = root_vt;
+                            }
+                            uint64_t fin_time = std::max(last_fin_time[tenant], root_vt);
+
+                            /* This is bad and could lead to packet bursts from
+                             * all of the dataq's in the same traffic class
+                             * because we don't know how many bytes will be
+                             * sent until after we check the queue. */
+                            /* Another way of saying this: we're only doing
+                             * per-batch fair queuing, not per-byte fair
+                             * queueing */
+                            fin_time += 1; 
+
+                            /* Workaround to save the virtual time used for
+                             * this dataq despite it being constant. */ 
+                            /* Loom: Note: TODO: The PIFO design seems
+                             * fundamentally broken/limiting right now.  There
+                             * should also be a lambda for saving shared state
+                             * on dequeue operations. */
+                            inc_data_qs_[x(FIELD_DATAQ_NUM)].pifo_entry(FIELD_ROOT_VT) = fin_time;
+                            last_fin_time.at(tenant) = fin_time;
+
+                            return fin_time;
+                          });
+  /* Strict priority between traffic classes */
+  /* Note: no need for tenant virtual time in this model. */
+  PIFOPipelineStage pifo2(num_tcs,
+                          FIELD_TC,
+                          tcLut,
+                          [this] (const auto & x) {
+                            return x(FIELD_TC);
+                          });
+
+  /* FIFO for each tenant. */
+  PIFOPipelineStage pifo3(num_tcs,
+                          FIELD_PTR,
+                          {{0, {Operation::TRANSMIT, {}}}},
+                          [this] (const auto & x) {
+                            static std::map<uint64_t, uint64_t> last_fin_time = {};
+                            uint64_t tc = x(FIELD_TC);
+                            uint64_t dataq = x(FIELD_DATAQ_NUM);
+                            uint64_t l2_vt = pifo_state_.l2_vt[tc];
+                                
+                            if ((tc % 2) == 0) {
+                                return x(FIELD_XMIT_TS);
+                            } else {
+                                if (last_fin_time.find(dataq) == last_fin_time.end()) {
+                                    last_fin_time[dataq] = l2_vt;
+                                }
+                                uint64_t fin_time = std::max(last_fin_time[dataq], l2_vt);
+
+                                fin_time += 1; 
+                                inc_data_qs_[dataq].pifo_entry(FIELD_L2_VT) = fin_time;
+                                last_fin_time.at(dataq) = fin_time;
+
+                                return fin_time;
+                            }
+                          });
+  pipe->mesh = new PIFOPipeline({pifo1, pifo2, pifo3,});
+
+  return (0);
+}
+
 int LoomVPort::InitPifoState() {
   int ret = 0;
 
@@ -926,6 +1048,21 @@ int LoomVPort::InitPifoState() {
     " num_tx_dataqs_: " << num_tx_dataqs_;
 
   pipe->tick = 0;
+
+  /* One shared calendar queue. */
+  {
+    PIFOPipelineStage pifo1(1, FIELD_PTR, {{0, {Operation::TRANSMIT, {}}},},
+      [] (const auto & x) {return x(FIELD_XMIT_TS);});
+    pipe->calendar = new PIFOPipeline({pifo1,});
+
+    /* Loom: TODO: More general rate limiting state */
+    pipe->root_rl_state = {.rate_bps = 0, .unaccnt_bytes = 0, .accnt_ns = 0};
+
+    /* Init rate-limit class state. */
+    for (int rl_cls = 0; rl_cls < SN_MAX_RL_CLS; rl_cls++) {
+      pipe->rl_class_state[rl_cls] = {.rate_bps = 0, .unaccnt_bytes = 0, .accnt_ns = 0};
+    }
+  }
 
   /* Init the PIFO pipeline state. */
   /* TODO: Make configurable. */
@@ -938,6 +1075,8 @@ int LoomVPort::InitPifoState() {
     InitPifoMesh2TenantFair();
   } else if (sch_hier_ == SCH_MTEN_PRIFAIR) {
     InitPifoMeshMTenantPriFair();
+  } else if (sch_hier_ == SCH_MTEN_PRIFAIR_RL) {
+    InitPifoMeshMTenantPriFairRl();
   } else if (sch_hier_ == SCH_DRR) {
     LOG(ERROR) << "InitPifoState: using FIFO because DRR is requested"
       "sch_hier_: " << sch_hier_;
@@ -957,10 +1096,15 @@ int LoomVPort::InitPifoState() {
     assert(dataq->dataq_num == dataq_num);
     dataq->active = false;
     dataq->next_packet = nullptr;
+    dataq->next_xmit_ts = 0;
+    dataq->next_tc = 0;
+    dataq->next_rl_cls = 0;
+    dataq->rl_state = {.rate_bps = 0, .unaccnt_bytes = 0, .accnt_ns = 0};
     dataq->pifo_entry(FIELD_PTR) = 0;
     dataq->pifo_entry(FIELD_DATAQ_NUM) = dataq->dataq_num;
     dataq->pifo_entry(FIELD_XMIT_TS) = rdtsc();
     dataq->pifo_entry(FIELD_TC) = tc;
+    dataq->pifo_entry(FIELD_RL_NODE1) = 0;
 
     /* Init the static attributes. */
     auto sattr_pairs = pipe->tc_to_sattrs[tc];
@@ -991,6 +1135,8 @@ int LoomVPort::DeInitPifoState() {
   /* This should be in a destructor instead? */
   delete pifo_state_.mesh;
   pifo_state_.mesh = nullptr;
+  delete pifo_state_.calendar;
+  pifo_state_.calendar = nullptr;
 
   return (0);
 }
@@ -1192,6 +1338,8 @@ CommandResponse LoomVPort::Init(const bess::pb::LoomVPortArg &arg) {
     sch_hier_ = SCH_2TEN_FAIR;
   } else if (arg.sch_hier() == "mten_prifair") {
     sch_hier_ = SCH_MTEN_PRIFAIR;
+  } else if (arg.sch_hier() == "mten_prifair_rl") {
+    sch_hier_ = SCH_MTEN_PRIFAIR_RL;
   } else {
     err = CommandFailure(EINVAL, "Invalid Sch Hier");
     goto fail;
@@ -1644,6 +1792,9 @@ int LoomVPort::AddDataqToPifo(struct tx_data_queue *dataq) {
   uint64_t tenant = dataq->pifo_entry(FIELD_TENANT);
 
   /* Loom: TODO: Better error checking. */
+  assert(dataq->active);
+
+  /* Loom: TODO: Better error checking. */
   assert(tc < SN_MAX_TC);
   assert(tenant < SN_MAX_TENANT);
 
@@ -1708,6 +1859,7 @@ int LoomVPort::AddDataqToPifo(struct tx_data_queue *dataq) {
 int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
   struct tx_data_queue *dataq;
   uint64_t total_bytes = 0;
+  uint64_t now_ns = tsc_to_ns(rdtsc());
   int cnt = 0;
   int ret;
 
@@ -1746,6 +1898,16 @@ int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
     ret = GetNextPifoPackets(&pkts[cnt], max_cnt - cnt, dataq, &total_bytes);
     cnt += ret;
 
+    /* Loom: DEBUG */
+    //LOG(INFO) << bess::utils::Format("Dataq %d sent %lu bytes",
+    //  dataq->dataq_num, total_bytes);
+
+    /* Accounting for rate-limiting. */
+    assert(dataq->rl_state.unaccnt_bytes == 0);
+    //dataq->rl_state.unaccnt_bytes += total_bytes;
+    dataq->rl_state.unaccnt_bytes = total_bytes;
+    dataq->rl_state.accnt_ns = now_ns;
+
     /* Set scheduilng metadata. */
     /* Loom: TODO: Modularize and make generic. */
     /* Loom: TODO: start here: updates total_bytes for all of the static
@@ -1760,6 +1922,7 @@ int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
     /* Loom: TODO: Ordering? */
     dataq->pifo_entry(FIELD_XMIT_TS) = dataq->next_xmit_ts;
     dataq->pifo_entry(FIELD_TC) = dataq->next_tc;
+    dataq->pifo_entry(FIELD_RL_NODE1) = dataq->next_rl_cls;
 
     /* TODO: What to do if the dataq does not have any packets? */
     /* TODO: This feels redundant wiht GetNextPifoDataq */
@@ -1785,23 +1948,123 @@ int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
   return cnt;
 }
 
+int LoomVPort::ShouldRlPifoDataq(struct tx_data_queue *dataq) {
+  uint64_t rl_cls = dataq->pifo_entry(FIELD_RL_NODE1);
+  struct rate_limit_state *rl_state = nullptr;
+  uint64_t rl_bps = 0;
+  uint64_t now_ns = tsc_to_ns(rdtsc());
+  uint64_t next_ns, start_ns, rl_ns;
+  int ret = 0;
+
+  assert(rl_cls < SN_MAX_RL_CLS);
+  rl_state = &pifo_state_.rl_class_state[rl_cls];
+  rl_bps = rl_state->rate_bps;
+  if (rl_bps == 0) {
+    /* Loom: TODO: This code is broken if we want to apply multiple different
+     * rate-limiter classes in a hierarchy.  Unaccnt_bytes should only be reset
+     * after *all* rate limit computation has been performed. */
+    dataq->rl_state.unaccnt_bytes = 0;
+    return 0;
+  }
+
+  /* Loom: DEBUG */
+  //LOG(INFO) << bess::utils::Format("dataq %d rl state: unaccnt_bytes: %lu, "
+  //  "accnt_ns: %lu", dataq->dataq_num, dataq->rl_state.unaccnt_bytes,
+  //  dataq->rl_state.accnt_ns);
+
+  /* Loom: TODO: Only do global rate-limiting for now. */
+
+  start_ns = rl_state->accnt_ns;
+  rl_ns = ((dataq->rl_state.unaccnt_bytes * 8) * (1000 * 1000 * 1000)) / rl_bps;
+  next_ns = start_ns + rl_ns;
+
+  /* Loom: DEBUG */
+  //LOG(INFO) << bess::utils::Format("total_bytes: %lu, rl_ns: %lu",
+  //  dataq->rl_state.unaccnt_bytes, rl_ns);
+
+  /* Check if we should be rate-limited */
+  if (next_ns < now_ns) {
+    /* Loom(Brent): I'm not convinced that this line is correct. */
+    //next_ns = now_ns;
+    /* Loom(Brent): Setting next_ns to the time the unaccounted bytes were sent
+     * should ensure that the rate is respected for each batch. */
+    //next_ns = dataq->rl_state.accnt_ns;
+    next_ns = dataq->rl_state.accnt_ns + rl_ns;
+    /* Loom(Brent): I really should think about this some more. */
+
+    assert(dataq->rl_state.accnt_ns < now_ns);
+
+    /* This line is (likely) unnecessary. */
+    dataq->pifo_entry(FIELD_XMIT_TS) = next_ns;
+    ret = 0;
+  } else {
+    //LOG(INFO) << bess::utils::Format("dataq %d would be rate-limited", dataq->dataq_num);
+    dataq->pifo_entry(FIELD_XMIT_TS) = next_ns;
+    ret = 1;
+  }
+
+  /* Save the next allowed transmit time. */
+  rl_state->accnt_ns = next_ns;
+
+  /* The previously sent bytes have now been accounted for. */
+  /* Loom: TODO: This code is broken if we want to apply multiple different
+   * rate-limiter classes in a hierarchy.  Unaccnt_bytes should only be reset
+   * after *all* rate limit computation has been performed. */
+  dataq->rl_state.unaccnt_bytes = 0;
+  /* Let the timestamp be? */
+
+  return ret;
+}
+
 LoomVPort::tx_data_queue* LoomVPort::GetNextPifoDataq() {
   Optional<PIFOPacket> ret;
   PIFOPacket pifo_entry;
   struct tx_data_queue *dataq;
 
-  ret = pifo_state_.mesh->deq(0, QueueType::PRIORITY_QUEUE, 0,
-    pifo_state_.tick);
-  pifo_state_.tick++;
-
-  if (!ret.initialized()) {
-    return nullptr;
-  } else {
+  /* Try to get something from the calendar queue first. */
+  /* Loom: Stolen from modules/timestamp.cc: We don't use ctx->current_ns here
+   * for better accuracy */
+  uint64_t now_ns = tsc_to_ns(rdtsc());
+  ret = pifo_state_.calendar->deq(0, QueueType::CALENDAR_QUEUE, 0, now_ns);
+  if (ret.initialized()) {
     pifo_entry = ret.get();
+    dataq = &inc_data_qs_[pifo_entry(FIELD_DATAQ_NUM)];
+    assert(dataq->active);
+    return dataq;
   }
+  /* Loom: To be general, it should be allowed for the rate-limited queue to be
+   * re-inserted into (some of the) PIFO mesh.  This implementation is not
+   * general yet. */
 
-  dataq = &inc_data_qs_[pifo_entry(FIELD_DATAQ_NUM)];
-  assert(dataq->active);
+  /* Try to dequeue from the mesh if there is nothing in the calendar queue. */
+  while (true) {
+    ret = pifo_state_.mesh->deq(0, QueueType::PRIORITY_QUEUE, 0,
+      pifo_state_.tick);
+    pifo_state_.tick++;
+
+    if (!ret.initialized()) {
+      return nullptr;
+    } else {
+      pifo_entry = ret.get();
+    }
+
+    dataq = &inc_data_qs_[pifo_entry(FIELD_DATAQ_NUM)];
+    assert(dataq->active);
+
+    /* Rate-limit the dataq as needed. */
+    /* Loom: TODO */
+    if (ShouldRlPifoDataq(dataq)) {
+      /* Loom: DEBUG. */
+      LOG(INFO) << bess::utils::Format("Rate-limiting dataq_num %d "
+        "with xmit_ts %lu", dataq->dataq_num, dataq->pifo_entry(FIELD_XMIT_TS));
+
+      pifo_state_.calendar->enq(0, QueueType::CALENDAR_QUEUE, 0,
+        dataq->pifo_entry, now_ns);
+    } else {
+      //break;
+      return dataq;
+    }
+  }
 
   /* Loom: DEBUG. */
   //LOG(INFO) << bess::utils::Format("Dequeued dataq_num %lu from PIFO mesh "
@@ -2020,6 +2283,27 @@ int LoomVPort::GetNextDrrPackets(bess::Packet **pkts, int max_cnt,
   return cnt;
 }
 
+//Likely borked on BE machines
+#define IP_10_10_102_1 (0x01660a0a)
+#define IP_10_10_102_2 (0x02660a0a)
+
+/* Loom: TODO: This should be a general lambda called whenever an element is
+ * dequeued from a PIFO stage. */
+static uint64_t get_next_rl_cls(struct sn_tx_data_metadata *tx_meta) {
+  uint64_t rl_cls = 0; /* 0 is a null class */
+
+  /* LOOM: DEBUG */
+  //LOG(INFO) << bess::utils::Format("tx_meta: daddr: %x", tx_meta->skb_daddr);
+
+  /* Hardcode classes for now. */
+  if (tx_meta->skb_daddr == IP_10_10_102_1 ||
+      tx_meta->skb_daddr == IP_10_10_102_2) {
+    rl_cls = 1;
+  }
+
+  return rl_cls;
+}
+
 /* Loom: TODO: Read a batch? Do TSO? */
 bess::Packet* LoomVPort::DataqReadPacket(struct tx_data_queue *dataq) {
   phys_addr_t paddr;
@@ -2050,6 +2334,15 @@ bess::Packet* LoomVPort::DataqReadPacket(struct tx_data_queue *dataq) {
   /* Loom: TODO: Why not just directly update the pifo_entry? */
   dataq->next_xmit_ts = tx_meta->drv_xmit_ts;
   dataq->next_tc = tx_meta->skb_priority; 
+  /* Loom: TODO: Performance: it would probably be best to not compute the next
+   * rate-limit class for every packet but instead just compute it once
+   * per-batch. */
+  /* Loom: TODO: It should be possible to assign a dataq to multiple rate limit classes. */
+  dataq->next_rl_cls = get_next_rl_cls(tx_meta);
+
+  /* Loom: DEBUG */
+  //LOG(INFO) << bess::utils::Format("dataq %d has rate-limit class: %lu",
+  //  dataq->dataq_num, dataq->next_rl_cls);
 
   /* Loom: DEBUG. */
   if (tx_meta->skb_priority != tx_meta->sch_meta.tc) {
@@ -2077,7 +2370,7 @@ bess::Packet* LoomVPort::DataqReadPacket(struct tx_data_queue *dataq) {
  * probably get copy+pasted into a new LoomVPort file to avoid breaking the
  * existing VPort implementation (which I want to compare against) */
 int LoomVPort::RecvPacketsDataQ(queue_t qid, bess::Packet **pkts, int max_cnt) {
-  uint64_t total_bytes;
+  //uint64_t total_bytes;
   int cnt;
   //int i;
 

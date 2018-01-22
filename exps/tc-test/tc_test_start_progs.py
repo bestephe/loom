@@ -29,6 +29,8 @@ def main():
     with open(args.configf) as cf:
         cdict = yaml.load(cf)
         tc_config = TcTestConfig(cdict)
+        tc_config.run = args.run
+        tc_config.extra_name = args.extra_name
 
         print 'Read YAML Config:', tc_config.dump()
 
@@ -59,6 +61,13 @@ def main():
             else:
                 raise ValueError("Unexpected dir")
             results[app.pconf.name] = output
+
+        # Save the output for the src
+        if args.dir == PROG_DIR_SRC:
+            exp_str = tc_config.get_exp_str()
+            outfname = 'results/src.%s' % exp_str
+            with open(outfname, 'w') as outf:
+                yaml.dump(results, outf, default_flow_style=False)
 
         # TODO: Change: Less magic 
         avg_agg = 0
