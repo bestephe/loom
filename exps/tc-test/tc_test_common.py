@@ -175,8 +175,14 @@ class IperfProg(GenericProg):
             agg_tputs.append(sum(ival))
         
         ivals = {self.pconf.start + i: agg_tput for i, agg_tput in enumerate(agg_tputs)}
-        agg_tput_results = {'50p': get_percentile(agg_tputs, 50),
-                            'avg': 1.0 * sum(agg_tputs) / len(agg_tputs),
+        if len(agg_tputs) > 0:
+            median = get_percentile(agg_tputs, 50)
+            avg = 1.0 * sum(agg_tputs) / len(agg_tputs)
+        else:
+            median = None
+            avg = None
+        agg_tput_results = {'50p': median,
+                            'avg': avg,
                             'ivals': ivals
                             }
         return agg_tput_results

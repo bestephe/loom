@@ -26,8 +26,12 @@ mkdir results configs results/sockperf
 ```./gen_tc_test_configs.py```
 
 2. Run the scripts
-```./run_bess.sh```
-- Note: this is currently very hard-coded still.  I don't have a reason to make
+```
+./run_bess.sh
+./run_bess_rl.sh
+```
+
+Note: these scripts are currently very hard-coded still.  I don't have a reason to make
   this more general yet though.
 
 3. Parse and plot the output

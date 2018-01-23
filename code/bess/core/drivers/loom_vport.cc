@@ -2058,6 +2058,20 @@ LoomVPort::tx_data_queue* LoomVPort::GetNextPifoDataq() {
       LOG(INFO) << bess::utils::Format("Rate-limiting dataq_num %d "
         "with xmit_ts %lu", dataq->dataq_num, dataq->pifo_entry(FIELD_XMIT_TS));
 
+      /* This current implementation is broken in a fundamental way.  Imagine a
+       * high priority and full tput flow share the same rate-limit class.  In
+       * this current implementation, when the tput flow is rate-limited and
+       * then a high priority flow shows up, the tput flow still gets to go
+       * first.
+       * To fix this, only one request per child-tree should be enqueued in the
+       * calendar queue.  The rate-limited queues should then be enqueued in
+       * their own separate copy of the same hierarchy.
+       * (Performance/implementation? Could be too wasteful unless logical
+       * queues can share the same total queuing capacity. I think it should be
+       * doable though.)
+       */
+      /* Loom: TODO: only enqueue a single rate-limit reference per rate-limit
+       * class */
       pifo_state_.calendar->enq(0, QueueType::CALENDAR_QUEUE, 0,
         dataq->pifo_entry, now_ns);
     } else {
