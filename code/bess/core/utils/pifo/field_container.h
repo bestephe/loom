@@ -18,6 +18,8 @@ enum fields_t {
   FIELD_L2_VT,
   FIELD_RL_NODE1,
   FIELD_RL_NODE2,
+  FIELD_RESUBMIT,
+  FIELD_UNACCNT_BYTES,
   NUM_FIELDS,     // Sentinel
 };
 

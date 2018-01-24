@@ -34,19 +34,18 @@ def gen_tctest_config1():
         tc_str = 'tc%d' % tc
         base_port = IPERF_BASEPORT + (100 * tenant)
         base_name = 'iperf_%s_' % tc_str
-        num_conns = (4 ** tenant)
+        num_conns = (4 ** (tenant))
         start = 2 * tenant
         finish = (4 * num_iperf_tenants) - ((tenant - 1) * 2)
 
         if tenant == 1:
-            iperf0 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port,
-                'prog': 'iperf3', 'name': base_name + '0', 'num_conns': (num_conns+1)/2,
-                'start': start, 'finish': finish}
-            iperf1 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port + 1,
-                'prog': 'iperf3', 'name': base_name + '1', 'num_conns': num_conns/2,
-                'start': start, 'finish': finish}
-            apps.append(iperf0)
-            apps.append(iperf1)
+            num_conns *= 4
+            for i in range(num_conns / 4):
+                assert(i < 100)
+                iperf = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port + i,
+                    'prog': 'iperf3', 'name': '%s%d' % (base_name, i), 'num_conns': 4,
+                    'start': start, 'finish': finish}
+                apps.append(iperf)
         else:
             for i in range(num_conns / 4):
                 assert(i < 100)
@@ -70,11 +69,11 @@ def gen_tctest_config_rl1():
     apps = []
 
     # Start measuring latency at time 0 at tc-0
-    sockperf_finish = (4 * num_iperf_tenants) + 2
-    sockperf_tc0 = {'cgroup': 'tc0', 'ip': SINK_IP0, 'port': SOCKPERF_BASEPORT,
-        'prog': 'sockperf', 'name': 'sockperf_0', 'start': 0,
-        'finish': sockperf_finish}
-    apps.append(sockperf_tc0)
+    #sockperf_finish = (4 * num_iperf_tenants) + 2
+    #sockperf_tc0 = {'cgroup': 'tc0', 'ip': SINK_IP0, 'port': SOCKPERF_BASEPORT,
+    #    'prog': 'sockperf', 'name': 'sockperf_0', 'start': 0,
+    #    'finish': sockperf_finish}
+    #apps.append(sockperf_tc0)
 
     for tenant in range(1, num_iperf_tenants+1):
         tc = (tenant << 1) + 1
@@ -82,22 +81,53 @@ def gen_tctest_config_rl1():
         base_port = IPERF_BASEPORT + (100 * tenant)
         base_name = 'iperf_%s_' % tc_str
         num_conns = (4 ** tenant)
+        if tenant == num_iperf_tenants:
+            num_conns = (4 ** (tenant - 1))
+
         start = 2 * tenant
-        finish = (4 * num_iperf_tenants) - ((tenant - 1) * 2)
+        finish = (2 * num_iperf_tenants) + 2
+        #finish = (4 * num_iperf_tenants) - ((tenant - 1) * 2)
+
+        #start = 0 if tenant == 1 else 5
+        ##finish = 10
 
         if tenant == 1:
             dst0_iperf0 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port,
-                'prog': 'iperf3', 'name': base_name + 'dst0_0', 'num_conns': 2,
+                'prog': 'iperf3', 'name': base_name + 'dst0_0', 'num_conns': 4,
                 'start': start, 'finish': finish}
             dst1_iperf0 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 1,
-                'prog': 'iperf3', 'name': base_name + 'dst1_0', 'num_conns': 2,
+                'prog': 'iperf3', 'name': base_name + 'dst1_0', 'num_conns': 4,
                 'start': start, 'finish': finish}
             dst1_iperf1 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 2,
-                'prog': 'iperf3', 'name': base_name + 'dst1_1', 'num_conns': 2,
+                'prog': 'iperf3', 'name': base_name + 'dst1_1', 'num_conns': 4,
                 'start': start, 'finish': finish}
             apps.append(dst0_iperf0)
             apps.append(dst1_iperf0)
             apps.append(dst1_iperf1)
+#            dst0_iperf0 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port,
+#                'prog': 'iperf3', 'name': base_name + 'dst0_0', 'num_conns': 2,
+#                'start': start, 'finish': finish}
+#            dst0_iperf1 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port + 1,
+#                'prog': 'iperf3', 'name': base_name + 'dst0_1', 'num_conns': 2,
+#                'start': start, 'finish': finish}
+#            dst1_iperf0 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 2,
+#                'prog': 'iperf3', 'name': base_name + 'dst1_0', 'num_conns': 2,
+#                'start': start, 'finish': finish}
+#            dst1_iperf1 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 3,
+#                'prog': 'iperf3', 'name': base_name + 'dst1_1', 'num_conns': 2,
+#                'start': start, 'finish': finish}
+#            dst1_iperf2 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 4,
+#                'prog': 'iperf3', 'name': base_name + 'dst1_2', 'num_conns': 2,
+#                'start': start, 'finish': finish}
+#            dst1_iperf3 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 5,
+#                'prog': 'iperf3', 'name': base_name + 'dst1_3', 'num_conns': 2,
+#                'start': start, 'finish': finish}
+#            apps.append(dst0_iperf0)
+#            apps.append(dst0_iperf1)
+#            apps.append(dst1_iperf0)
+#            apps.append(dst1_iperf1)
+#            apps.append(dst1_iperf2)
+#            apps.append(dst1_iperf3)
 
         else:
             for i in range(num_conns / 4):

@@ -113,17 +113,17 @@ bess.add_worker(1, 28)
 bess.add_tc('tenant_inc_rr',
             wid=0,
             policy='round_robin')
-bess.add_tc('tenant_out_rl',
-            wid=1,
-            policy='rate_limit',
-            resource='bit',
-            limit={'bit': int(10e9)})
-bess.add_tc('tenant_out_rr',
-            parent='tenant_out_rl',
-            policy='round_robin')
-#bess.add_tc('tenant_out_rr',
+#bess.add_tc('tenant_out_rl',
 #            wid=1,
+#            policy='rate_limit',
+#            resource='bit',
+#            limit={'bit': int(10e9)})
+#bess.add_tc('tenant_out_rr',
+#            parent='tenant_out_rl',
 #            policy='round_robin')
+bess.add_tc('tenant_out_rr',
+            wid=1,
+            policy='round_robin')
 
 # Get config for each vhost
 v1_vhost_conf = gen_vhost_conf()
