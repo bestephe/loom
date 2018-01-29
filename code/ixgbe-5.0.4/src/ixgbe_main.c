@@ -8596,6 +8596,19 @@ netdev_tx_t ixgbe_xmit_frame_ring(struct sk_buff *skb,
 	__be16 protocol = skb->protocol;
 	u8 hdr_len = 0;
 
+        /* 
+         * Do some quick counting to evaluate the number of PCIe writes that
+         * need to be generated.
+         */
+        tx_ring->tx_stats.tx_segs++;
+        if (tx_ring->prev_sk != skb->sk || !skb->xmit_more) {
+            tx_ring->tx_stats.tx_change_sk++;
+        }
+        tx_ring->prev_sk = skb->sk;
+        if (!skb->xmit_more) {
+            tx_ring->tx_stats.tx_no_xmit_more++;
+        }
+
 	/*
 	 * need: 1 descriptor per page * PAGE_SIZE/IXGBE_MAX_DATA_PER_TXD,
 	 *       + 1 desc for skb_headlen/IXGBE_MAX_DATA_PER_TXD,

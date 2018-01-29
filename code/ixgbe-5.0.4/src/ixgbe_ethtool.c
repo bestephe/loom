@@ -1205,6 +1205,9 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 		if (!ring) {
 			data[i++] = 0;
 			data[i++] = 0;
+			data[i++] = 0; /* segs */
+			data[i++] = 0; /* change_sk */
+			data[i++] = 0; /* no_xmit_more */
 #ifdef BP_EXTENDED_STATS
 			data[i++] = 0;
 			data[i++] = 0;
@@ -1219,10 +1222,14 @@ static void ixgbe_get_ethtool_stats(struct net_device *netdev,
 #endif
 			data[i]   = ring->stats.packets;
 			data[i+1] = ring->stats.bytes;
+                        data[i+2] = ring->tx_stats.tx_segs;
+                        data[i+3] = ring->tx_stats.tx_change_sk;
+                        data[i+4] = ring->tx_stats.tx_no_xmit_more;
 #ifdef HAVE_NDO_GET_STATS64
 		} while (u64_stats_fetch_retry_irq(&ring->syncp, start));
 #endif
-		i += 2;
+		//i += 2;
+		i += 5;
 #ifdef BP_EXTENDED_STATS
 		data[i] = ring->stats.yields;
 		data[i+1] = ring->stats.misses;
@@ -1307,6 +1314,12 @@ static void ixgbe_get_strings(struct net_device *netdev, u32 stringset,
 			sprintf(p, "tx_queue_%u_packets", i);
 			p += ETH_GSTRING_LEN;
 			sprintf(p, "tx_queue_%u_bytes", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "tx_queue_%u_segs", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "tx_queue_%u_change_sk", i);
+			p += ETH_GSTRING_LEN;
+			sprintf(p, "tx_queue_%u_no_xmit_more", i);
 			p += ETH_GSTRING_LEN;
 #ifdef BP_EXTENDED_STATS
 			sprintf(p, "tx_queue_%u_bp_napi_yield", i);

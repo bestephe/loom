@@ -286,6 +286,9 @@ struct ixgbe_tx_queue_stats {
 	u64 restart_queue;
 	u64 tx_busy;
 	u64 tx_done_old;
+        u64 tx_segs;
+        u64 tx_change_sk;
+        u64 tx_no_xmit_more;
 };
 
 struct ixgbe_rx_queue_stats {
@@ -373,6 +376,8 @@ struct ixgbe_ring {
 		struct ixgbe_tx_queue_stats tx_stats;
 		struct ixgbe_rx_queue_stats rx_stats;
 	};
+
+        void *prev_sk;
 } ____cacheline_internodealigned_in_smp;
 
 enum ixgbe_ring_f_enum {
