@@ -47,7 +47,8 @@ def memcached_ycsb_run(args):
     run_cmd_tmpl = 'cd %(ycsb_dir)s; %(prefix)s ./bin/ycsb run memcached -s ' \
         '-P %(workload)s -P %(properties)s -threads 16 -p status.interval=1'
     if args.high_prio:
-        prefix = 'sudo cgexec -g net_prio:high_prio '
+        #prefix = 'sudo cgexec -g net_prio:high_prio '
+        prefix = 'sudo cgexec -g net_prio:tc0 '
     else:
         prefix = ''
     run_cmd_args = {

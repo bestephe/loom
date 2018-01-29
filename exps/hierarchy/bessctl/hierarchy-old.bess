@@ -11,24 +11,16 @@ import sys
 import time
 
 #TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
-#TX_CTRL_QUEUE_COUNT = 24
-TX_CTRL_QUEUE_COUNT = 16
+TX_CTRL_QUEUE_COUNT = 32
 TX_DATA_QUEUE_COUNT = 4096
-TX_BESS_QUEUES = 2 #XXX: HACK: Determines the ratio in which control queues and
-                   # dataQs are polled...
-                   #XXX: Setting this to anything other than 1 currently causes
-                   # race conditions!
+TX_BESS_QUEUES = 1
 RX_QUEUE_COUNT = 16
 TX_QSIZE = 128
 RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 VPORT = True
 
-#SCH_HIER = 'drr'
-#SCH_HIER = 'fifo'
-#SCH_HIER = '2ten_pri'
-#SCH_HIER = '2ten_fair'
-SCH_HIER = 'mten_prifair'
+SCH_HIER = '2ten_pri'
 
 # DEBUGGING
 #bess.set_debug(True)
@@ -84,16 +76,15 @@ def gen_vhost_conf(i):
         'addr': '10.10.10%d.%d' % (i, node_id),
         'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
         'netns': 'loom_test%d' % i,
+        'vlan': '10%d' % i,
     }
     vhost_conf = VhostConf(vhost_conf_dict)
     vhost_conf.addr_prefix = vhost_conf.addr + '/24'
-    second_addr = '10.10.10%d.%d/24' % (i+1, node_id)
-    vhost_conf.ip_addrs=[vhost_conf.addr_prefix, second_addr]
     return vhost_conf
 
 def config_vport(vhost_conf):
-    v = LoomVPort(ifname=vhost_conf.name, ip_addrs=vhost_conf.ip_addrs,
-        num_inc_q=TX_BESS_QUEUES, num_out_q=RX_QUEUE_COUNT,
+    v = LoomVPort(ifname=vhost_conf.name, ip_addrs=[vhost_conf.addr_prefix],
+        num_inc_q=1, num_out_q=RX_QUEUE_COUNT,
         num_tx_ctrlqs=TX_CTRL_QUEUE_COUNT, num_tx_dataqs=TX_DATA_QUEUE_COUNT,
         sch_hier=SCH_HIER)
     config_rfs(vhost_conf.name)
@@ -129,20 +120,30 @@ bess.pause_all()
 bess.add_tc('tenant_inc_rr',
             wid=0,
             policy='round_robin')
+bess.add_tc('tenant_out_rl',
+            wid=1,
+            policy='rate_limit',
+            resource='bit',
+            limit={'bit': int(10e9)})
 bess.add_tc('tenant_out_rr',
-           wid=1,
-           policy='round_robin')
-#bess.add_tc('tenant_out_rl',
-#           wid=1,
-#           policy='rate_limit',
-#           resource='bit',
-#           limit={'bit': int(10.7e9)})
-#bess.add_tc('tenant_out_rr',
-#           parent='tenant_out_rl',
-#           policy='round_robin')
+            parent='tenant_out_rl',
+            policy='round_robin')
+bess.add_tc('tenant_out_wf',
+            parent='tenant_out_rr',
+            policy='weighted_fair',
+            resource='bit')
+bess.add_tc('t1_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
+bess.add_tc('t2_out_rr',
+            parent='tenant_out_wf',
+            policy='round_robin',
+            share=1)
 
 # Get config for each vhost
 v1_vhost_conf = gen_vhost_conf(1)
+v2_vhost_conf = gen_vhost_conf(2)
 
 # Configure network namespaces
 #subprocess.call('sudo ip -all netns del', shell=True)
@@ -157,30 +158,51 @@ subprocess.call('sudo ip -all netns del', shell=True)
 # Create a vhost as an interface on the host for each tenant
 if VPORT:
     v1 = config_vport(v1_vhost_conf)
+    v2 = config_vport(v2_vhost_conf)
 else:
     assert(0)
 
-# Create a PMD port (physical) with q-txq and 1-rxq
-## Only use 1-rxq because the 82599 with DPDK only does 16 RSS?
+# Create a PMD port (physical)
 p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=1,
     size_inc_q=RX_QSIZE, size_out_q=TX_QSIZE)
 
 # Merge all incoming traffic from the vport into a single PMD output port/queue
-v1_inc::LoomPortInc(port=v1.name) -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
+merge::Merge() -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
+v1_inc::LoomPortInc(port=v1.name) -> merge
+v2_inc::LoomPortInc(port=v2.name) -> merge
 
 # Configure the scheduler for traffic outgoing the physical port
 for i in range(TX_BESS_QUEUES):
-    v1_inc.attach_task(parent='tenant_out_rr', module_taskid=i)
-#TODO: Do something special with the extra task used by LoomVPort to control
-#the polling of the control queues (module_taskid=TX_QUEUE_COUNT)?
-v1_inc.attach_task(parent='tenant_out_rr', module_taskid=TX_BESS_QUEUES)
+    v1_inc.attach_task(parent='t1_out_rr', module_taskid=i)
+    v2_inc.attach_task(parent='t2_out_rr', module_taskid=i)
+v1_inc.attach_task(parent='t1_out_rr', module_taskid=TX_BESS_QUEUES)
+v2_inc.attach_task(parent='t2_out_rr', module_taskid=TX_BESS_QUEUES)
 
 
 # Connect queues instead of ports
 for i in range(RX_QUEUE_COUNT):
+    # Current solution: use L2 forwarding and replicate broadcast traffic to
+    # both interfaces.  In other words, implement our own L2 switch.
+    l2fwd = L2Forward()
     q_inc = QueueInc(port=p.name, qid=i)
-    q_out = QueueOut(port=v1.name, qid=i)
-    q_inc -> IPChecksum() -> L4Checksum() -> q_out
+    q_inc -> IPChecksum() -> L4Checksum() -> l2fwd
+    #hashlb:i -> l2fwd
+    l2_entries = [{'addr': 'ff:ff:ff:ff:ff:ff', 'gate': 0},
+        {'addr': v1_vhost_conf.mac, 'gate': 1},
+        {'addr': v2_vhost_conf.mac, 'gate': 2},
+    ]
+    l2fwd.add(entries=l2_entries)
+    l2fwd.set_default_gate(gate=0)
+    v1out_merge = Merge()
+    v1out_merge -> QueueOut(port=v1.name, qid=i)
+    v2out_merge = Merge()
+    v2out_merge -> QueueOut(port=v2.name, qid=i)
+    l2fwd:1 -> v1out_merge
+    l2fwd:2 -> v2out_merge
+    bcast = Replicate(gates=[1, 2])
+    l2fwd:0 -> bcast
+    bcast:1 -> v1out_merge
+    bcast:2 -> v2out_merge
 
     # Configure the scheduler
     q_inc.attach_task(parent='tenant_inc_rr')
@@ -191,5 +213,38 @@ for i in range(RX_QUEUE_COUNT):
 
 bess.resume_all()
 
+#DEBUG: Do some quick ping debugging
+#time.sleep(0.01)
+#ping_p1 = start_ping_proc('10.10.101.1')
+#ping_p2 = start_ping_proc('10.10.102.1')
+#time.sleep(1)
+#ping_p1.kill()
+#ping_p2.kill()
+
+#XXX: DEBUG before BESS crashes
+#print('TCs:')
+#print(bess.list_tcs())
+
+#bess.pause_all()
+#bess.reset_all()
+
+#DEBUG: read the ping output
+#print('Ping 10.10.101.1:')
+#print('stdout:', ping_p1.stdout.read())
+#print()
+#print('Ping 10.10.102.1:')
+#print('stdout:', ping_p2.stdout.read())
+#print()
+
 # DEBUG
-#print('Two ports now share one PMD: {} <-> {} and {} <-> {}'.format(v1, p, v2, p))
+print('Two ports now share one PMD: {} <-> {} and {} <-> {}'.format(v1, p, v2, p))
+#print(VPORT1_ADDR, binascii.hexlify(socket.inet_aton(VPORT1_ADDR)).upper())
+#print(VPORT2_ADDR, binascii.hexlify(socket.inet_aton(VPORT2_ADDR)).upper())
+
+## Dump outgoing packets for later analysis
+#out_fifo = make_tcpdump_fifo('/tmp/pout.pcap')
+#bess.tcpdump(True, p_out.name, direction='in', fifo=out_fifo)
+#tcpdump_cmd = 'sudo tcpdump -r /tmp/pout.pcap -s 64 -w /dev/shm/spark_tcp_flows.pcap -s 64'
+#tcpdump = subprocess.Popen(shlex.split(tcpdump_cmd),
+#    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+#tcpdump.wait()

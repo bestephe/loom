@@ -51,7 +51,7 @@ def plot_cdf(results):
     # Mess with axes
     yax = ax.get_yaxis()
     yax.grid(True)
-    ax.set_xlabel('Avg Latency (us)')
+    ax.set_xlabel('90th Percentile Latency (us)')
     ax.set_ylabel('CDF')
     ax.set_ylim(ymin=0.65, ymax=1.0)
     #ax.set_xlim(xmax=7000)

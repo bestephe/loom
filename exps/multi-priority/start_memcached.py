@@ -65,7 +65,8 @@ def memcached_start_servers(config):
 
         # Run in a container to set network priority if necessary
         if config.high_prio:
-            cg_cmd = 'sudo cgexec -g net_prio:high_prio %(cmd)s'
+            #cg_cmd = 'sudo cgexec -g net_prio:high_prio %(cmd)s'
+            cg_cmd = 'sudo cgexec -g net_prio:tc0 %(cmd)s'
         else:
             cg_cmd = 'sudo %(cmd)s'
         cg_cmd = cg_cmd % {'cmd': cmd}

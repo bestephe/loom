@@ -1988,6 +1988,8 @@ int LoomVPort::GetNextPifoBatch(bess::Packet **pkts, int max_cnt) {
       assert(dataq->active);
 
       /* Loom: DEBUG */
+      // TODO: Uncommenting this is useful for debugging if traffic classes are
+      // assigned correctly.
       //LOG(INFO) << bess::utils::Format("GetNextPifoBatch: Adding dataq_num %lu "
       //  "to PIFO mesh with xmit_ts %lu and tc %lu", dataq->pifo_entry(FIELD_DATAQ_NUM),
       //  dataq->pifo_entry(FIELD_XMIT_TS), dataq->pifo_entry(FIELD_TC));

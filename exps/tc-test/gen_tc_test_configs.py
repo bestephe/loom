@@ -95,15 +95,23 @@ def gen_tctest_config_rl1():
             dst0_iperf0 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port,
                 'prog': 'iperf3', 'name': base_name + 'dst0_0', 'num_conns': 4,
                 'start': start, 'finish': finish}
+            apps.append(dst0_iperf0)
             dst1_iperf0 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 1,
                 'prog': 'iperf3', 'name': base_name + 'dst1_0', 'num_conns': 4,
                 'start': start, 'finish': finish}
+            apps.append(dst1_iperf0)
             dst1_iperf1 = {'cgroup': tc_str, 'ip': SINK_IP1, 'port': base_port + 2,
                 'prog': 'iperf3', 'name': base_name + 'dst1_1', 'num_conns': 4,
                 'start': start, 'finish': finish}
-            apps.append(dst0_iperf0)
-            apps.append(dst1_iperf0)
             apps.append(dst1_iperf1)
+            dst0_iperf1 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port + 3,
+                'prog': 'iperf3', 'name': base_name + 'dst0_1', 'num_conns': 4,
+                'start': start, 'finish': finish}
+            apps.append(dst0_iperf1)
+            dst0_iperf2 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port + 4,
+                'prog': 'iperf3', 'name': base_name + 'dst0_2', 'num_conns': 4,
+                'start': start, 'finish': finish}
+            apps.append(dst0_iperf2)
 #            dst0_iperf0 = {'cgroup': tc_str, 'ip': SINK_IP0, 'port': base_port,
 #                'prog': 'iperf3', 'name': base_name + 'dst0_0', 'num_conns': 2,
 #                'start': start, 'finish': finish}

@@ -6,9 +6,8 @@ RUN_END=5
 
 for i in $(seq $RUN_START $RUN_END)
 do
-    #for qtype in bess-sq bess-mq bess
     #for qtype in bess-mq
-    for qtype in bess-sq bess
+    for qtype in bess-sq bess-mq bess
     do
         # Configure the network on all of the servers
         sudo -u ubuntu -H ./config_all_bess_netconf.sh $qtype.conf

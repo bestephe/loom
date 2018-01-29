@@ -114,7 +114,7 @@ class GenericProg(object):
     def get_cgroup_cmd(self, cmd):
         cgroup = self.pconf.cgroup
         if cgroup != None:
-            cg_cmd = 'sudo cgexec -g net_prio:%(cgroup)s %(cmd)s'
+            cg_cmd = 'sudo cgexec -g memory,cpu:%(cgroup)s -g net_prio:%(cgroup)s %(cmd)s'
         else:
             cg_cmd = 'sudo %(cmd)s'
         cg_cmd = cg_cmd % {'cgroup': cgroup, 'cmd': cmd}
@@ -208,7 +208,7 @@ class IperfProg(GenericProg):
 class SockperfProg(GenericProg):
     def get_sink_cmd(self):
         #XXX: Trying without --tcp for now
-        cmd = 'sockperf sr -p %(port)s'
+        cmd = 'sockperf sr --tcp -p %(port)s'
         cmd = cmd % {'port': self.pconf.port}
         return cmd
 
@@ -217,7 +217,7 @@ class SockperfProg(GenericProg):
         mps = 1000
         fulllog = self.get_fulllog_name()
         #XXX: Trying without --tcp for now
-        cmd = 'sockperf pp -i %(ip)s -t %(duration)d -p %(port)s --mps %(mps)d ' \
+        cmd = 'sockperf pp --tcp -i %(ip)s -t %(duration)d -p %(port)s --mps %(mps)d ' \
             '--full-log %(fulllog)s' 
         cmd = cmd % {
             'ip': pconf.ip,

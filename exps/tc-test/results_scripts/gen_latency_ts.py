@@ -8,8 +8,8 @@ import scipy.stats
 import sys
 import yaml
 
-TIME_SCALE = 0.1
-PTILE = 50
+TIME_SCALE = 0.25
+PTILE = 90
 
 def get_percentile(data, percentile):
     return numpy.asscalar(scipy.stats.scoreatpercentile(data, percentile))

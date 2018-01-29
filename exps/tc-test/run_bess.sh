@@ -1,13 +1,13 @@
 #!/bin/bash
 
-RUN_START=1
-RUN_END=2
+RUN_START=20
+RUN_END=22
 
 
 for i in $(seq $RUN_START $RUN_END)
 do
-    for qtype in bess-tc
-    #for qtype in bess-sq bess-mq bess-tc
+    #for qtype in bess-tc
+    for qtype in bess-sq bess-mq bess-tc
     do
         # Configure the network on all of the servers
         sudo -u ubuntu -H ./config_all_bess_netconf.sh $qtype.conf
@@ -40,8 +40,8 @@ do
         #sudo rm -f /dev/shm/tctest_tcp_flows.pcap
     done
 
-    #./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-sq.pcap --outf results/tputs.bess-sq.$i.yaml &
-    #./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-mq.pcap --outf results/tputs.bess-mq.$i.yaml &
+    ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-sq.pcap --outf results/tputs.bess-sq.$i.yaml &
+    ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-mq.pcap --outf results/tputs.bess-mq.$i.yaml &
     ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-tc.pcap --outf results/tputs.bess-tc.$i.yaml
 
     ##sudo rm -f /dev/shm/tctest_tcp_flows.bess-sq.pcap

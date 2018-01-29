@@ -67,11 +67,12 @@ def set_all_bql_limit_max(config, iface):
 #
 # CGroup Helpers
 # 
-DEFAULT_CGCONFIG = {'high_prio': 3}
+DEFAULT_CGCONFIG = {'high_prio': 0}
 def config_cgroup(config, iface):
     cgconfig = config.cgroups if hasattr(config, 'cgroups') else DEFAULT_CGCONFIG
     
     for cgname in cgconfig:
+        # Network side of the container
         cgroup_dir = '/sys/fs/cgroup/net_prio/%s' % cgname
         cgroup_prio = cgconfig[cgname]
 
@@ -83,6 +84,11 @@ def config_cgroup(config, iface):
         subprocess.check_call(priomap_cmd, shell=True)
 
         check_cgroup(config, iface, cgname)
+
+        # CPU and memory side of the container
+        cgroup_cmd = 'sudo cgcreate -g memory,cpu:%s' % cgname
+        subprocess.check_call(cgroup_cmd, shell=True)
+        #Note: leave as the default configuration
 
     #XXX: Check default cgroup
     print 'Default cgroup:'

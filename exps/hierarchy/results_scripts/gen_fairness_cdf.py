@@ -44,7 +44,7 @@ def compute_fm(files):
             # Compute the FM only when the total throughput is high enough and
             # both jobs are active
             for i in range(len(xs)):
-                if tot_tput[i] > 7.0 and t1_tput[i] > 0.5 and t2_tput[i] > 0.5:
+                if tot_tput[i] > 6.0 and t1_tput[i] > 2.5 and t2_tput[i] > 2.5:
                     fs_t1 = t1_tput[i]
                     fs_t2 = t2_tput[i]
                     fm = abs(fs_t1 - fs_t2)

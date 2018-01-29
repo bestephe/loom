@@ -2,10 +2,11 @@
 
 RUNS=1
 
-for i in {1..15}
+#for i in {2..2}
+for i in {100..125}
 do
     sudo -u ubuntu -H ./spark_run_scripts/spark_all_bess_netconf.sh bess-sq.conf
-    sudo tcpdump -i loom1 -w /dev/shm/spark_tcp_flows.pcap -s 64 src 10.10.1.2 or src 10.10.101.2 or src 10.10.102.2 &
+    sudo tcpdump -i loom1 -w /dev/shm/spark_tcp_flows.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &
     #TODO: I could collect a trace from BESS internals as well
 
     # Note: tcpdump has already been started as part of configuring BESS (fairnes.bess)

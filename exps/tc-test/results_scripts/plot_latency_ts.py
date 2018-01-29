@@ -54,7 +54,7 @@ def plot_latency(results):
     ax.set_xlabel('Time (seconds)')
     ax.set_ylabel('Latency (s)')
     #ax.set_xlim(xmax=20)
-    ax.set_ylim(ymax=0.01)
+    ax.set_ylim(ymax=0.004)
 
     # Add the legend
     plt.legend(ncol=3, loc='lower center', bbox_to_anchor=legend_bbox,

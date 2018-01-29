@@ -261,6 +261,30 @@ def pri_config_qdisc(config, iface):
         tc_cmd = tc_str % (iface, i, i)
         subprocess.check_call(tc_cmd, shell=True)
 
+def pri_config_cgrules(config):
+    for user, net_cgroup in [('ubuntu', 'tc1'), ('ubuntu2', 'tc3')]:
+        # Config cgrules so that all spark traffic from ubuntu uses high_prio
+        cgrule_cmd = 'echo \'%s net_prio %s\' | sudo tee -a /etc/cgrules.conf' % \
+            (user, net_cgroup)
+        subprocess.check_call(cgrule_cmd, shell=True)
+
+        # Kill and restart cgrulesengd
+        cg_cmd = 'sudo killall cgrulesengd'
+        subprocess.call(cg_cmd, shell=True)
+        cg_cmd = 'echo "" | sudo tee /etc/cgconfig.conf'
+        subprocess.check_call(cg_cmd, shell=True)
+        cg_cmd = 'sudo cgrulesengd'
+        subprocess.check_call(cg_cmd, shell=True)
+
+        # Use cgclassify to configure the priority of all programs for ubuntu (Spark)
+        #XXX: NOTE: may not be necessary?
+        get_pids_cmd = 'ps aux | grep "^%s " | awk \'{ print $2 }\'' % user
+        ubuntu_pids = subprocess.check_output(get_pids_cmd, shell=True)
+        ubuntu_pids = ' '.join(ubuntu_pids.split())
+        cg_cmd = 'sudo cgclassify -g net_prio:%s --cancel-sticky %s' % \
+            (net_cgroup, ubuntu_pids)
+        subprocess.check_call(cg_cmd, shell=True)
+
 def pri_config_server(config):
     # Configure the number of NIC queues
     pri_config_nic_driver(config)
@@ -281,6 +305,9 @@ def pri_config_server(config):
 
     # Configure CGroups
     config_cgroup(config, config.iface)
+
+    # Configure CGroup rules
+    pri_config_cgrules(config)
 
     # Configure BQL
     set_all_bql_limit_max(config)
@@ -303,6 +330,9 @@ def pri_config_bess(config):
 
         # Configure CGroups
         config_cgroup(config, iface)
+
+        # Configure CGroup rules
+        pri_config_cgrules(config)
 
         # Configure RFS
         configure_rfs(config, iface)
