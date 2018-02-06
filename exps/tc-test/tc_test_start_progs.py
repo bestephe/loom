@@ -62,6 +62,11 @@ def main():
                 raise ValueError("Unexpected dir")
             results[app.pconf.name] = output
 
+        # Get ethtool output if requested
+        if tc_config.ethtool:
+            ethtool_out = parse_ethtool_output()
+            results['ethtool'] = ethtool_out
+
         # Save the output for the src
         if args.dir == PROG_DIR_SRC:
             exp_str = tc_config.get_exp_str()

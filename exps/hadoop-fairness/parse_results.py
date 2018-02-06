@@ -23,10 +23,16 @@ def parse_files(files):
                 match = re.match(".*Job.*finished.* (%s) s.*" % FLOAT_DESC_STR, line)
                 if match:
                     ts = float(match.groups()[0])
+                    cts.append(ts)
+
+                    # First job only
+                    break
+
                     finish_ts = max(finish_ts, ts)
                     #print 'new finish_ts:', finish_ts
             #print
-            cts.append(finish_ts)
+            #cts.append(finish_ts)
+    cts.sort()
     print yaml.dump(cts)
     return cts
 

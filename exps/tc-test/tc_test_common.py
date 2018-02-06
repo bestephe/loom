@@ -38,6 +38,7 @@ TESTPROG_CONFIG_DEFAULTS = {
     'finish': 10,
     'num_conns': 1,
     'cgroup': None,
+    'mps': '1000', # Sockperf specific
 }
 
 TCTEST_CONFIG_DEFAULTS = {
@@ -47,6 +48,7 @@ TCTEST_CONFIG_DEFAULTS = {
     'run': 1,
     'expname': 'test',
     'extra_name': '',
+    'ethtool': False,
 }
 
 class TestProgConfig(object):
@@ -214,18 +216,18 @@ class SockperfProg(GenericProg):
 
     def get_src_cmd(self):
         pconf = self.pconf
-        mps = 1000
+        #mps = 1000
         fulllog = self.get_fulllog_name()
         #XXX: Trying without --tcp for now
-        cmd = 'sockperf pp --tcp -i %(ip)s -t %(duration)d -p %(port)s --mps %(mps)d ' \
-            '--full-log %(fulllog)s' 
+        cmd = 'sockperf pp --tcp -i %(ip)s -t %(duration)d -p %(port)s --mps %(mps)s --dontwarmup'
         cmd = cmd % {
             'ip': pconf.ip,
             'duration': self.duration(),
             'port': pconf.port,
-            'mps': mps,
-            'fulllog': fulllog,
+            'mps': pconf.mps,
         }
+        if pconf.mps != 'max':
+            cmd += ' --full-log %s' % fulllog
         return cmd
 
     def get_fulllog_name(self):
@@ -266,13 +268,53 @@ class SockperfProg(GenericProg):
     def parse_src_output(self):
         assert(self.dir == 'src')
         summary = self.parse_sockperf_stdout()
-        samples = self.parse_sockperf_fulllog()
+        try:
+            samples = self.parse_sockperf_fulllog()
+        except IOError:
+            samples = None
         return {'summary': summary, 'samples': samples}
 
     @staticmethod
     def killall():
         cmd = 'sudo killall sockperf'
         subprocess.call(cmd, shell=True)
+
+#TODO: take in an iface
+def parse_ethtool_output():
+    stats = {}
+    cmd = 'sudo ethtool -S eno2'
+    output = subprocess.check_output(cmd, shell=True)
+    outlines = output.split('\n')
+
+    for line in outlines:
+        mstr = r".*tx_queue_(\d+)_.*"
+        match = re.match(mstr, line)
+        if match:
+            queue = int(match.groups()[0])
+            qstr = 'txq_%d' % queue
+            if qstr not in stats:
+                stats[qstr] = {}
+
+            segs_str = r".*tx_queue.*_segs: (\d+).*"
+            match = re.match(segs_str, line)
+            if match:
+                segs = int(match.groups()[0])
+                stats[qstr]['segs'] = segs
+
+            change_sk_str = r".*tx_queue.*_change_sk: (\d+).*"
+            match = re.match(change_sk_str, line)
+            if match:
+                change_sk = int(match.groups()[0])
+                stats[qstr]['change_sk'] = change_sk
+
+            no_xmit_more_str = r".*tx_queue.*_no_xmit_more: (\d+).*"
+            match = re.match(no_xmit_more_str, line)
+            if match:
+                no_xmit_more = int(match.groups()[0])
+                stats[qstr]['no_xmit_more'] = no_xmit_more
+        print line
+
+    return stats
         
 #
 # Generic Per-app setup

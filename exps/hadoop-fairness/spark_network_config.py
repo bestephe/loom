@@ -40,6 +40,7 @@ SPARK_CONFIG_DEFAULTS = {
     'bql_limit_max': (256 * 1024),
     'smallq_size': TCP_QUEUE_SYSTEM_DEFAULT,
     'qdisc': True,
+    'pri': True,
 
     #'drr_quantum': 65536,
     'drr_quantum': 1500,
@@ -204,24 +205,36 @@ def spark_config_qdisc(config, iface):
 
     qcnt = len(get_txqs(iface))
     for i in xrange(1, qcnt + 1):
-        # Configure a DRR Qdisc per txq
-        try:
-            tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
-                (iface, i, i)
-            subprocess.check_call(tc_cmd, shell=True)
-        except subprocess.CalledProcessError:
-            tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: drr' % \
-                (iface, i)
-            subprocess.check_call(tc_cmd, shell=True)
 
-        # Create the classes for Job1 (%d00:1) and Job2 (%d00:2)
-        tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:1 drr quantum %d' % \
-            (iface, i, i, config.drr_quantum)
-        subprocess.check_call(tc_cmd, shell=True)
-        job2_quantum = int(1.0 * config.drr_quantum / config.job_fair_ratio)
-        tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:2 drr quantum %d' % \
-            (iface, i, i, job2_quantum)
-        subprocess.check_call(tc_cmd, shell=True)
+        if config.pri:
+            # Configure a Pri Qdisc per txq
+            try:
+                tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: prio' % \
+                    (iface, i, i)
+                subprocess.check_call(tc_cmd, shell=True)
+            except subprocess.CalledProcessError:
+                tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: prio' % \
+                    (iface, i)
+                subprocess.check_call(tc_cmd, shell=True)
+        else:
+            # Configure a DRR Qdisc per txq
+            try:
+                tc_cmd = 'sudo tc qdisc add dev %s parent :%x handle %d00: drr' % \
+                    (iface, i, i)
+                subprocess.check_call(tc_cmd, shell=True)
+            except subprocess.CalledProcessError:
+                tc_cmd = 'sudo tc qdisc add dev %s root handle %d00: drr' % \
+                    (iface, i)
+                subprocess.check_call(tc_cmd, shell=True)
+
+                # Create the classes for Job1 (%d00:1) and Job2 (%d00:2)
+                tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:1 drr quantum %d' % \
+                    (iface, i, i, config.drr_quantum)
+                subprocess.check_call(tc_cmd, shell=True)
+                job2_quantum = int(1.0 * config.drr_quantum / config.job_fair_ratio)
+                tc_cmd = 'sudo tc class add dev %s parent %d00: classid %d00:2 drr quantum %d' % \
+                    (iface, i, i, job2_quantum)
+                subprocess.check_call(tc_cmd, shell=True)
 
         # Note: I don't know if I need to add a child to each DRR class, but it
         # seems like a reasonable idea.  I could just add pfifo_fast, but
@@ -254,7 +267,12 @@ def spark_config_qdisc(config, iface):
         subprocess.check_call(tc_cmd, shell=True)
 
 def spark_config_cgrules(config):
-    for user, net_cgroup in [('ubuntu', 'tc1'), ('ubuntu2', 'tc3')]:
+    if config.pri:
+        classes = [('ubuntu', 'tc0'), ('ubuntu2', 'tc1')]
+    else:
+        classes = [('ubuntu', 'tc1'), ('ubuntu2', 'tc3')]
+
+    for user, net_cgroup in classes:
         # Config cgrules so that all spark traffic from ubuntu uses high_prio
         cgrule_cmd = 'echo \'%s net_prio %s\' | sudo tee -a /etc/cgrules.conf' % \
             (user, net_cgroup)

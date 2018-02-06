@@ -1,0 +1,195 @@
+import binascii
+import glob
+import multiprocessing
+import os
+import platform
+import scapy.all as scapy
+import shlex
+import socket
+import subprocess
+import sys
+import time
+
+#TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
+#TX_CTRL_QUEUE_COUNT = 24
+TX_CTRL_QUEUE_COUNT = 16
+TX_DATA_QUEUE_COUNT = 4096
+TX_BESS_QUEUES = 2 #XXX: HACK: Determines the ratio in which control queues and
+                   # dataQs are polled...
+                   #XXX: Setting this to anything other than 1 currently causes
+                   # race conditions!
+RX_QUEUE_COUNT = 16
+TX_QSIZE = 128
+RX_QSIZE = 2048
+DUMP_IVAL = 0.00001
+VPORT = True
+
+#SCH_HIER = 'drr'
+#SCH_HIER = 'fifo'
+#SCH_HIER = '2ten_pri'
+#SCH_HIER = '2ten_fair'
+SCH_HIER = 'mten_prifair'
+
+# DEBUGGING
+#bess.set_debug(True)
+
+# Helpers
+def aton(ip):
+    return socket.inet_aton(ip)
+# CloudLab experiment platform specific code:
+def node2id(node):
+    node2id_dict = {
+        'pinter': 1,
+        'jarry': 2,
+        'node-1.loomtest2.opennf-pg0.clemson.cloudlab.us': 1,
+        'node-0.loomtest2.opennf-pg0.clemson.cloudlab.us': 2,
+    }
+    return node2id_dict[node]
+node_name = platform.node()
+node_id = node2id(node_name)
+def config_rfs(iface):
+    rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % iface)
+    entries = 65536
+    entries_per_rxq = entries / len(rxqs)
+    cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
+        entries
+    subprocess.check_call(cmd, shell=True)
+    for rxq in rxqs:
+        cmd = 'echo %d | sudo tee /%s/rps_flow_cnt > /dev/null' % (entries_per_rxq, rxq)
+        subprocess.check_call(cmd, shell=True)
+def start_ping_proc(ip):
+    ping_cmd = 'sudo ping -i 0.001 -c 20 %s' % ip
+    proc = subprocess.Popen(ping_cmd, shell=True,
+        stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+    return proc
+def make_tcpdump_fifo(fifo):
+    try:
+        os.remove(fifo)
+    except:
+        pass
+    os.mkfifo(fifo, 0o600)
+    fd = os.open(fifo, os.O_RDWR)
+    return fifo
+
+class VhostConf(object):
+    def __init__(self, *initial_data, **kwargs):
+        for dictionary in initial_data:
+            for key in dictionary:
+                setattr(self, key, dictionary[key])
+        for key in kwargs:
+            setattr(self, key, kwargs[key])
+def gen_vhost_conf(i):
+    vhost_conf_dict = {
+        'name': 'loom%d' % i,
+        'addr': '10.10.10%d.%d' % (i, node_id),
+        'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
+        'netns': 'loom_test%d' % i,
+    }
+    vhost_conf = VhostConf(vhost_conf_dict)
+    vhost_conf.addr_prefix = vhost_conf.addr + '/24'
+    second_addr = '10.10.10%d.%d/24' % (i+1, node_id)
+    vhost_conf.ip_addrs=[vhost_conf.addr_prefix, second_addr]
+    return vhost_conf
+
+def config_vport(vhost_conf):
+    v = LoomVPort(ifname=vhost_conf.name, ip_addrs=vhost_conf.ip_addrs,
+        num_inc_q=TX_BESS_QUEUES, num_out_q=RX_QUEUE_COUNT,
+        num_tx_ctrlqs=TX_CTRL_QUEUE_COUNT, num_tx_dataqs=TX_DATA_QUEUE_COUNT,
+        sch_hier=SCH_HIER)
+    config_rfs(vhost_conf.name)
+    ip_cmd_prefix = ''
+    #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
+    subprocess.check_call('%s ip link set dev %s down' % \
+        (ip_cmd_prefix, vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set dev %s promisc on' % \
+        (ip_cmd_prefix, vhost_conf.name), shell=True)
+    subprocess.check_call('%s ip link set %s address %s' % \
+        (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
+    subprocess.check_call('%s ip link set dev %s up' % \
+        (ip_cmd_prefix, vhost_conf.name), shell=True)
+    return v
+
+# Reset everything at the start
+#XXX: Note: I doubt both of these are necessary or are even considered
+# "correct"
+bess.reset_all()
+#bess.resume_all()
+bess.pause_all()
+
+# Try out using different workers for inc and out
+#XXX: Trying out because weighted fairness is causing problems.
+#bess.add_worker(0, 0, scheduler='experimental')
+#bess.add_worker(1, 28, scheduler='experimental')
+bess.add_worker(0, 0)
+bess.add_worker(1, 28)
+
+bess.pause_all()
+
+# Configure the scheduler
+bess.add_tc('tenant_inc_rr',
+            wid=0,
+            policy='round_robin')
+bess.add_tc('tenant_out_rr',
+           wid=1,
+           policy='round_robin')
+#bess.add_tc('tenant_out_rl',
+#           wid=1,
+#           policy='rate_limit',
+#           resource='bit',
+#           limit={'bit': int(10.7e9)})
+#bess.add_tc('tenant_out_rr',
+#           parent='tenant_out_rl',
+#           policy='round_robin')
+
+# Get config for each vhost
+v1_vhost_conf = gen_vhost_conf(1)
+
+# Configure network namespaces
+#subprocess.call('sudo ip -all netns del', shell=True)
+#for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
+#    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
+
+# Delete then add the network namespaces
+subprocess.call('sudo ip -all netns del', shell=True)
+#for netns in [v1_vhost_conf.netns, v2_vhost_conf.netns]:
+#    subprocess.check_call('sudo ip netns add %s' % netns, shell=True)
+
+# Create a vhost as an interface on the host for each tenant
+if VPORT:
+    v1 = config_vport(v1_vhost_conf)
+else:
+    assert(0)
+
+# Create a PMD port (physical) with q-txq and 1-rxq
+## Only use 1-rxq because the 82599 with DPDK only does 16 RSS?
+p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=1,
+    size_inc_q=RX_QSIZE, size_out_q=TX_QSIZE)
+
+# Merge all incoming traffic from the vport into a single PMD output port/queue
+v1_inc::LoomPortInc(port=v1.name) -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
+
+# Configure the scheduler for traffic outgoing the physical port
+for i in range(TX_BESS_QUEUES):
+    v1_inc.attach_task(parent='tenant_out_rr', module_taskid=i)
+#TODO: Do something special with the extra task used by LoomVPort to control
+#the polling of the control queues (module_taskid=TX_QUEUE_COUNT)?
+v1_inc.attach_task(parent='tenant_out_rr', module_taskid=TX_BESS_QUEUES)
+
+
+# Connect queues instead of ports
+for i in range(RX_QUEUE_COUNT):
+    q_inc = QueueInc(port=p.name, qid=i)
+    q_out = QueueOut(port=v1.name, qid=i)
+    q_inc -> IPChecksum() -> L4Checksum() -> q_out
+
+    # Configure the scheduler
+    q_inc.attach_task(parent='tenant_inc_rr')
+
+    # DEBUG
+    #fifo = make_tcpdump_fifo('/tmp/vport_q_inc_%d.pcap' % i)
+    #bess.tcpdump(True, q_inc.name, fifo=fifo)
+
+bess.resume_all()
+
+# DEBUG
+#print('Two ports now share one PMD: {} <-> {} and {} <-> {}'.format(v1, p, v2, p))
