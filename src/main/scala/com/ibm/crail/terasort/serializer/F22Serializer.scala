@@ -26,7 +26,7 @@ import java.io._
 import java.nio.ByteBuffer
 
 import com.ibm.crail.terasort.{TeraInputFormat, TeraSort}
-import com.ibm.crail.{CrailBufferedInputStream, CrailBufferedOutputStream}
+import org.apache.crail.{CrailBufferedInputStream, CrailBufferedOutputStream}
 import org.apache.spark.TaskContext
 import org.apache.spark.serializer._
 
