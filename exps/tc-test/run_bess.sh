@@ -1,13 +1,15 @@
 #!/bin/bash
 
-RUN_START=20
-RUN_END=22
+RUN_START=100
+RUN_END=105
 
+#QTYPES="bess-sq bess-mq bess-tc bess-qpf"
+QTYPES="bess-tc bess-qpf"
+#QTYPES="bess-qpf"
 
 for i in $(seq $RUN_START $RUN_END)
 do
-    #for qtype in bess-tc
-    for qtype in bess-sq bess-mq bess-tc
+    for qtype in $QTYPES
     do
         # Configure the network on all of the servers
         sudo -u ubuntu -H ./config_all_bess_netconf.sh $qtype.conf
@@ -40,11 +42,18 @@ do
         #sudo rm -f /dev/shm/tctest_tcp_flows.pcap
     done
 
-    ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-sq.pcap --outf results/tputs.bess-sq.$i.yaml &
-    ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-mq.pcap --outf results/tputs.bess-mq.$i.yaml &
-    ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.bess-tc.pcap --outf results/tputs.bess-tc.$i.yaml
+    for qtype in $QTYPES
+    do
+        ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.$qtype.pcap --outf results/tputs.$qtype.$i.yaml &
+    done
 
-    ##sudo rm -f /dev/shm/tctest_tcp_flows.bess-sq.pcap
+    wait
+
+    for qtype in $QTYPES
+    do
+        #sudo rm -f /dev/shm/tctest_tcp_flows.$qtype.pcap
+        echo "Skipping rm /dev/shm/tctest_tcp_flows.$qtype.pcap"
+    done
 
     #TODO: better waiting for all jobs to finish
 done

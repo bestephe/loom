@@ -8,6 +8,11 @@
 2. Setup memcached
 - See ../memcached-ycsb/README.md and ../memcached-ycsb/setup\_notes.sh
 
+- Try on both servers:
+```
+./start_memcached.py
+```
+
 ### Running the experiment
 
 1. Start memcached on node-1

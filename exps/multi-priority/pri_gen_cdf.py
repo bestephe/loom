@@ -45,6 +45,8 @@ def main():
         nargs='+', required=True)
     parser.add_argument('--mq-pri', help='The MQ-Pri files to parse.',
         nargs='+')
+    parser.add_argument('--qpf', help='The QPF files to parse.',
+        nargs='+')
     parser.add_argument('--loom', help='The Loom files to parse.',
         nargs='+')
     # TODO: what percentile to take a CDF of.  Currently only uses average.
@@ -52,7 +54,8 @@ def main():
     args = parser.parse_args()
 
     files_and_names = [(args.sq, 'SQ'), (args.mq, 'MQ'),
-        (args.mq_pri, 'MQ-Pri'), (args.loom, 'Loom')]
+        (args.mq_pri, 'MQ-Pri'),
+        (args.qpf, 'QPF'), (args.loom, 'Loom')]
     lines = []
     for (files, lname) in files_and_names:
         # Skip missing lines

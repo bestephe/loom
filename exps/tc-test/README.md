@@ -41,4 +41,6 @@ Useful commands:
 ./results_scripts/plot_tenant_tput_ts.py --results results/tputs.bess-sq..yaml
 ./results_scripts/gen_latency_ts.py --sq results/src.tctest.tctest_conf1.bess-sq.1.1.yaml --mq results/src.tctest.tctest_conf1.bess-mq.1.1.yaml --loom results/src.tctest.tctest_conf1.bess-tc.1.1.yaml --outf results/tctest_latency_ts.yaml
 ./results_scripts/plot_latency_ts.py --results results/tctest_latency_ts.yaml --figname results/tctest_latency_ts.pdf
+
+./results_scripts/gen_cpu_util_ts.py --sq results/src.tctest.tctest_conf1.bess-sq.1*.yaml --mq results/src.tctest.tctest_conf1.bess-mq.1*.yaml --qpf results/src.tctest.tctest_conf1.bess-qpf.1*.yaml --loom results/src.tctest.tctest_conf1.bess-tc.1*.yaml --outf results/tctest.cpu_util.yaml
 ```

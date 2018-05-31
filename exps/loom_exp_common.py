@@ -156,7 +156,7 @@ def loom_config_bess(config):
     bessctl = os.path.abspath(config.bessctl)
     bess_cmd = 'nohup sudo bessctl/bessctl -- daemon start -- run file %s ' % \
         bessctl
-    bess_cmd_suffix = ' BESS_SCH_HIER=%s' % config.sch_hier if hasattr(config, 'sch_hier') else ''
+    bess_cmd_suffix = ' BESS_SCH_HIER=\\"%s\\"' % config.sch_hier if hasattr(config, 'sch_hier') else ''
     bess_cmd += bess_cmd_suffix
     bessctl_proc = subprocess.Popen(shlex.split(bess_cmd), cwd=BESS_HOME,
         #stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'),

@@ -34,13 +34,14 @@ def main():
     parser = argparse.ArgumentParser(description='Generate latency lines')
     parser.add_argument('--sq', help='A YAML file containing the SQ results.')
     parser.add_argument('--mq', help='A YAML file containing the MQ results.')
-    parser.add_argument('--loom', help='A YAML file containing the MQ-Pri results.')
+    parser.add_argument('--qpf', help='A YAML file containing the QPF results.')
+    parser.add_argument('--loom', help='A YAML file containing the Loom results.')
     parser.add_argument('--outf', help='The output file.')
     args = parser.parse_args()
 
     # Generate the lines
     lines = []
-    line_data = [('SQ', args.sq), ('MQ', args.mq), ('Loom', args.loom)]
+    line_data = [('SQ', args.sq), ('MQ', args.mq), ('QPF', args.qpf), ('Loom', args.loom)]
     for line_name, linefname in line_data:
         if not linefname:
             continue

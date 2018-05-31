@@ -1,7 +1,7 @@
 #!/bin/bash
 
-RUN_START=2
-RUN_END=10
+RUN_START=0
+RUN_END=40
 
 
 for i in $(seq $RUN_START $RUN_END)
@@ -48,7 +48,8 @@ do
 #        sudo rm -f /dev/shm/hier_tcp_flows.pcap
 #    done
 
-    for qtype in bess-sq bess-mq bess
+    #for qtype in bess-sq bess-mq bess bess-qpf
+    for qtype in bess-qpf
     do
         # Configure the network on all of the servers
         sudo -u ubuntu -H ./config_all_bess_netconf.sh $qtype.conf

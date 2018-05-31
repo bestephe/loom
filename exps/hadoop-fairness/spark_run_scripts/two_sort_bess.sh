@@ -2,12 +2,13 @@
 
 RUNS=1
 
-for i in {0..0}
+for i in {10..40}
 #for i in {120..130}
 do
-    for conf in bess.conf bess-qpf.conf
+    #for conf in bess bess-qpf
+    for conf in bess-qpf
     do
-        sudo -u ubuntu -H ./spark_run_scripts/spark_all_bess_netconf.sh $conf
+        sudo -u ubuntu -H ./spark_run_scripts/spark_all_bess_netconf.sh $conf.conf
         sudo tcpdump -i loom1 -w /dev/shm/spark_tcp_flows_loom.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &
         #sudo tcpdump -i loom1 -w /dev/shm/spark_tcp_flows_loom1.pcap -s 64 src 10.10.1.2 or src 10.10.101.2 or src 10.10.102.2 &
         #sudo tcpdump -i loom2 -w /dev/shm/spark_tcp_flows_loom2.pcap -s 64 src 10.10.1.2 or src 10.10.101.2 or src 10.10.102.2 &
@@ -35,14 +36,15 @@ do
         wait ${SORT_JOBS[@]}
         echo "Finished TeraSorts"
 
-        cat tmp_sort1.out > results/two_sort_bess.$i.out
-        echo "" >> results/two_sort_bess.$i.out;
-        echo "" >> results/two_sort_bess.$i.out;
-        cat tmp_sort2.out >> results/two_sort_bess.$i.out
+        cat tmp_sort1.out > results/two_sort_bess.$conf.$i.out
+        echo "" >> results/two_sort_bess.$conf.$i.out;
+        echo "" >> results/two_sort_bess.$conf.$i.out;
+        cat tmp_sort2.out >> results/two_sort_bess.$conf.$i.out
 
         sudo killall tcpdump
         #mergecap -F pcap -w /dev/shm/spark_tcp_flows.pcap /dev/shm/spark_tcp_flows_loom1.pcap /dev/shm/spark_tcp_flows_loom2.pcap 
         #./pcap_flows/get_job_tput_ts.py --pcap /dev/shm/spark_tcp_flows_loom.pcap --outf results/tputs_two_sort_bess.$i.yaml
+        ./pcap_flows/get_job_tput_ts.py --pcap /dev/shm/spark_tcp_flows_loom.pcap --outf results/tputs_two_sort_bess.$conf.$i.yaml
 
         rm tmp_sort1.out
         rm tmp_sort2.out

@@ -10,9 +10,9 @@ import subprocess
 import sys
 import time
 
-#TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
-#TX_CTRL_QUEUE_COUNT = 24
-TX_CTRL_QUEUE_COUNT = 16
+TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
+#TX_CTRL_QUEUE_COUNT = 28
+#TX_CTRL_QUEUE_COUNT = 16
 TX_DATA_QUEUE_COUNT = 4096
 TX_BESS_QUEUES = 2 #XXX: HACK: Determines the ratio in which control queues and
                    # dataQs are polled...
@@ -28,7 +28,11 @@ VPORT = True
 #SCH_HIER = 'fifo'
 #SCH_HIER = '2ten_pri'
 #SCH_HIER = '2ten_fair'
-SCH_HIER = 'mten_prifair'
+#SCH_HIER = 'mten_prifair'
+DEF_SCH_HIER = 'mten_prifair'
+SCH_HIER = str($BESS_SCH_HIER!DEF_SCH_HIER)
+
+print('Using SCH_HIER=', SCH_HIER)
 
 # DEBUGGING
 #bess.set_debug(True)

@@ -48,6 +48,13 @@ def main():
                 raise ValueError("Unexpected dir")
             apps.append(app)
 
+        # Start DSTAT 
+        if args.dir == PROG_DIR_SRC:
+            #TODO: make configurable
+            last_finish = max([app_conf.finish for app_conf in tc_config.apps])
+            dstat = DstatProg()
+            dstat.start(last_finish)
+
         # Wait for the app to finish
         #prog.proc.wait()
 
@@ -61,6 +68,11 @@ def main():
             else:
                 raise ValueError("Unexpected dir")
             results[app.pconf.name] = output
+
+        # Process DSTAT Output
+        #TODO: make configurable
+        if args.dir == PROG_DIR_SRC:
+            results['dstat'] = dstat.process_output()
 
         # Get ethtool output if requested
         if tc_config.ethtool:

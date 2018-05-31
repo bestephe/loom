@@ -3,7 +3,7 @@
 #
 # Current figures
 #
-./pri_gen_cdf.py --sq results/memcached_latency.bess-sq.spark.* --mq results/memcached_latency.bess-mq.spark.* --loom results/memcached_latency.bess.spark.* --outf memcached_latency.lines.yaml
+./pri_gen_cdf.py --sq results/memcached_latency.bess-sq.spark.* --mq results/memcached_latency.bess-mq.spark.* --qpf results/memcached_latency.bess-qpf.spark.* --loom results/memcached_latency.bess.spark.* --outf memcached_latency.lines.yaml
 ./pri_plot_latency_cdf.py --results memcached_latency.lines.yaml --figname latency.spark.90p.pdf
 
 #

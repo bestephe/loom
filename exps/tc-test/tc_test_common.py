@@ -250,18 +250,21 @@ class SockperfProg(GenericProg):
 
     def parse_sockperf_fulllog(self):
         fulllog = self.get_fulllog_name()
+        print 'Sockperf processing fulllog:', fulllog
         xs, ys = [], []
         with open(fulllog, 'rb') as csvfile:
             logreader = csv.reader(csvfile, delimiter=' ', quotechar='|')
             for row in logreader:
-                if len(row) == 2:
+                #print row
+                if len(row) == 4:
                     #print row
                     try:
-                        tx, rx = float(row[0].strip(',')), float(row[1].strip(','))
+                        tx, rx = float(row[1].strip(',')), float(row[2].strip(','))
                         lat = rx - tx
                         xs.append(tx)
                         ys.append(lat)
                     except ValueError:
+                        print 'Could not process row:', row
                         continue
         return {'xs': xs, 'ys': ys}
 
@@ -271,6 +274,7 @@ class SockperfProg(GenericProg):
         try:
             samples = self.parse_sockperf_fulllog()
         except IOError:
+            print 'Cannot parse sockperf fulllog:', self.get_fulllog_name()
             samples = None
         return {'summary': summary, 'samples': samples}
 
@@ -278,6 +282,32 @@ class SockperfProg(GenericProg):
     def killall():
         cmd = 'sudo killall sockperf'
         subprocess.call(cmd, shell=True)
+
+#TODO: generic prog instead?
+class DstatProg():
+    def start(self, run_len):
+        dstat_cmd = './monitorDstat.py --runlen %d' % \
+            run_len
+        print 'dstat_cmd:', dstat_cmd
+        dstat_proc = subprocess.Popen(dstat_cmd, shell=True,
+            stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+        self.proc = dstat_proc
+
+    def process_output(self):
+        utils = yaml.load(self.proc.stdout)
+
+        agg_cpu = []
+        # Throw away the beginning
+        for util_ival in utils[1:]:
+            cpu_keys = [key for key in util_ival if re.match(r".*cpu.*", key)]
+            cpu = sum([100.0 - util_ival[key]['idl'] for key in cpu_keys])
+            agg_cpu.append(cpu)
+
+        cpu_results = {'50p': get_percentile(agg_cpu, 50),
+                       'avg': 1.0 * sum(agg_cpu) / len(agg_cpu),
+                       'ivals': agg_cpu,
+                       }
+        return cpu_results
 
 #TODO: take in an iface
 def parse_ethtool_output():

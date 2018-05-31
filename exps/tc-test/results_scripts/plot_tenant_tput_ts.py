@@ -20,7 +20,7 @@ matplotlib.rcParams['pdf.use14corefonts'] = True
 
 #matplotlib.rcParams.update({'figure.autolayout':True})
 matplotlib.rcParams.update({'font.size': 11})
-matplotlib.rcParams.update({'lines.linewidth': 3})
+matplotlib.rcParams.update({'lines.linewidth': 1})
 
 master_linestyles = ['-', '--', '-.', ':']
 master_markers = ['o', 'D', 'v', '^', '<', '>', 's', 'p', '*', '+', 'x']

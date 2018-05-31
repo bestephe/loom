@@ -47,3 +47,9 @@ Example:
 ```
 ./spark_run_scripts/two_sort_bess.sh
 ```
+
+### Parsing the results
+
+```
+./gen_figs.sh
+```
