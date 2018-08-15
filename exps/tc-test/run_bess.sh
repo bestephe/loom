@@ -4,8 +4,9 @@ RUN_START=100
 RUN_END=105
 
 #QTYPES="bess-sq bess-mq bess-tc bess-qpf"
-QTYPES="bess-tc bess-qpf"
+#QTYPES="bess-tc bess-qpf"
 #QTYPES="bess-qpf"
+QTYPES="bess-tc"
 
 for i in $(seq $RUN_START $RUN_END)
 do

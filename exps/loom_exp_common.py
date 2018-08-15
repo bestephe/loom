@@ -4,12 +4,13 @@ import glob
 import os
 import shlex
 import subprocess
+import time
 import yaml
 
 if 'LOOM_HOME' in os.environ:
     LOOM_HOME = os.environ['LOOM_HOME']
 else:
-    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/'
+    LOOM_HOME = '/proj/opennf-PG0/exp/loomtest40g/datastore/bes/git/loom-code/'
 BESS_HOME = LOOM_HOME + '/code/bess/'
 
 #
@@ -137,11 +138,12 @@ def loom_config_dpdk(config):
     # Try to bring down the interface 
     if_cmd = 'sudo ifconfig %s 0.0.0.0' % config.iface
     subprocess.call(if_cmd, shell=True)
+    subprocess.call(if_cmd, shell=True)
 
     # Bind the interface for use by DPDK
-    devbind_cmd = 'sudo ./bin/dpdk-devbind.py -b uio_pci_generic %s' % \
-        config.iface_addr
-    subprocess.check_call(devbind_cmd, shell=True, cwd=BESS_HOME)
+    #devbind_cmd = 'sudo ./bin/dpdk-devbind.py -b uio_pci_generic %s' % \
+    #    config.iface_addr
+    #subprocess.check_call(devbind_cmd, shell=True, cwd=BESS_HOME)
 
     # Configure huge pages
     #hp_cmd = 'sudo sysctl vm.nr_hugepages=1024'
@@ -154,14 +156,18 @@ def loom_config_bess(config):
     # Start BESS with the appropriate configuration
     #  Note: keep bessctl running in the background to keep tcpdump from BESS working
     bessctl = os.path.abspath(config.bessctl)
-    bess_cmd = 'nohup sudo bessctl/bessctl -- daemon start -- run file %s ' % \
-        bessctl
-    bess_cmd_suffix = ' BESS_SCH_HIER=\\"%s\\"' % config.sch_hier if hasattr(config, 'sch_hier') else ''
-    bess_cmd += bess_cmd_suffix
-    bessctl_proc = subprocess.Popen(shlex.split(bess_cmd), cwd=BESS_HOME,
-        #stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'),
-        stdout=open('/tmp/bessctl_stdout', 'w'), stderr=open('/tmp/bessctl_stderr', 'w'),
-        preexec_fn=os.setpgrp)
+
+    for i, bess_cmd in enumerate(['nohup sudo bessctl/bessctl -- daemon start',
+            'nohup sudo bessctl/bessctl -- run file %s ' % bessctl]):
+        bess_cmd_suffix = ' BESS_SCH_HIER=\\"%s\\"' % config.sch_hier if hasattr(config, 'sch_hier') else ''
+        bess_cmd += bess_cmd_suffix
+        print 'bess_cmd:', bess_cmd
+        bessctl_proc = subprocess.Popen(shlex.split(bess_cmd), cwd=BESS_HOME,
+            #stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'),
+            stdout=open('/tmp/bessctl_stdout', 'w'), stderr=open('/tmp/bessctl_stderr', 'w'),
+            preexec_fn=os.setpgrp)
+        if i == 0:
+            time.sleep(30)
 
     #TODO: depending on how PCAP file is being created, this may stall. I need
     # to revist this later.

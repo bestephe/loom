@@ -3,8 +3,8 @@
 TIMEOUT=50
 THREADS=2
 
-GIT_DIR=/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/exps/tc-test
-NODES="node-0.loomtest2.opennf-pg0.clemson.cloudlab.us,node-1.loomtest2.opennf-pg0.clemson.cloudlab.us"
+GIT_DIR=/proj/opennf-PG0/exp/loomtest40g/datastore/bes/git/loom-code/exps/tc-test
+NODES="node-0,node-1"
 
 if [ $# -ne 1 ]
   then

@@ -45,10 +45,21 @@ def node2id(node):
     node2id_dict = {
         'pinter': 1,
         'jarry': 2,
-        'node-1.loomtest2.opennf-pg0.clemson.cloudlab.us': 1,
-        'node-0.loomtest2.opennf-pg0.clemson.cloudlab.us': 2,
+        'node-1': 1,
+        'node-0': 2,
     }
-    return node2id_dict[node]
+    try:
+        id_ = node2id_dict[node]
+    except:
+        node = node.split('.')[0]
+        id_ = node2id_dict[node]
+    return id_
+def nodeid2mac(node_id):
+    nodeid2mac_dict = {
+        1: '00:02:c9:18:64:91',
+        2: '00:02:c9:18:64:41',
+    }
+    return nodeid2mac_dict[node_id]
 node_name = platform.node()
 node_id = node2id(node_name)
 def config_rfs(iface):
@@ -86,7 +97,7 @@ def gen_vhost_conf(i):
     vhost_conf_dict = {
         'name': 'loom%d' % i,
         'addr': '10.10.10%d.%d' % (i, node_id),
-        'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
+        'mac': nodeid2mac(node_id),
         'netns': 'loom_test%d' % i,
     }
     vhost_conf = VhostConf(vhost_conf_dict)
@@ -99,7 +110,7 @@ def config_vport(vhost_conf):
     v = LoomVPort(ifname=vhost_conf.name, ip_addrs=vhost_conf.ip_addrs,
         num_inc_q=TX_BESS_QUEUES, num_out_q=RX_QUEUE_COUNT,
         num_tx_ctrlqs=TX_CTRL_QUEUE_COUNT, num_tx_dataqs=TX_DATA_QUEUE_COUNT,
-        sch_hier=SCH_HIER)
+        sch_hier=SCH_HIER, mac_addr=nodeid2mac(node_id))
     config_rfs(vhost_conf.name)
     ip_cmd_prefix = ''
     #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
@@ -107,8 +118,8 @@ def config_vport(vhost_conf):
         (ip_cmd_prefix, vhost_conf.name), shell=True)
     subprocess.check_call('%s ip link set dev %s promisc on' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
-    subprocess.check_call('%s ip link set %s address %s' % \
-        (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
+    #subprocess.check_call('%s ip link set %s address %s' % \
+    #    (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
     subprocess.check_call('%s ip link set dev %s up' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
     return v
@@ -168,6 +179,7 @@ else:
 ## Only use 1-rxq because the 82599 with DPDK only does 16 RSS?
 p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=1,
     size_inc_q=RX_QSIZE, size_out_q=TX_QSIZE)
+print('PMD Name:', p.name)
 
 # Merge all incoming traffic from the vport into a single PMD output port/queue
 v1_inc::LoomPortInc(port=v1.name) -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)

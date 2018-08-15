@@ -42,3 +42,10 @@ ansible all -i cluster-hosts -m ping
 ```
 ansible-playbook -i cluster-hosts packages.yml
 ```
+
+### DEBUG/NOTES:
+
+OFED is difficult for 40G.  The following command:
+'sudo ./mlnxofedinstall --dpdk --upstream-libs --force --add-kernel-support -s /proj/opennf-PG0/exp/loomtest40g/datastore/bes/git/loom-code/code/linux-4.9/'
+
+

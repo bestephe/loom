@@ -5,7 +5,7 @@ import platform
 import subprocess
 import shlex
 
-IFACE = 'eno2'
+IFACE = 'enp130s0'
 
 # Helpers
 def aton(ip):
@@ -15,10 +15,15 @@ def node2id(node):
     node2id_dict = {
         'pinter': 1,
         'jarry': 2,
-        'node-1.loomtest2.opennf-pg0.clemson.cloudlab.us': 1,
-        'node-0.loomtest2.opennf-pg0.clemson.cloudlab.us': 2,
+        'node-1': 1,
+        'node-0': 2,
     }
-    return node2id_dict[node]
+    try:
+        id_ = node2id_dict[node]
+    except:
+        node = node.split('.')[0]
+        id_ = node2id_dict[node]
+    return id_
 node_name = platform.node()
 node_id = node2id(node_name)
 

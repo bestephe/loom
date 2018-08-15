@@ -335,6 +335,7 @@ def build_dpdk():
     print('Building DPDK...')
     nproc = int(subprocess.check_output('nproc'))
     cmd('make -j%d -C %s EXTRA_CFLAGS=%s' % (nproc, DPDK_DIR, DPDK_CFLAGS))
+    cmd('sudo cp mlx4_core.conf /etc/modprobe.d/')
 
 
 def generate_protobuf_files():

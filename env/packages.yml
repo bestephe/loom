@@ -2,6 +2,8 @@
   tags: package
   vars:
     - sockperf_src: "/tmp/sockperf"
+    - ofed_url: "http://content.mellanox.com/ofed/MLNX_OFED-4.4-1.0.0.0/MLNX_OFED_LINUX-4.4-1.0.0.0-ubuntu16.04-x86_64.tgz"
+    - ofed_dir: "MLNX_OFED_LINUX-4.4-1.0.0.0-ubuntu16.04-x86_64"
   tasks:
 
     - name: Install packages via apt
@@ -70,6 +72,31 @@
         #- docker.io
         - wireshark-common
         - linux-tools-common
+
+        # Needed for the 40G experiment (for some reason)
+        - apt-transport-https 
+        - ca-certificates 
+        - g++ 
+        - make 
+        - pkg-config 
+        - libunwind8-dev 
+        - liblzma-dev 
+        - zlib1g-dev 
+        - libpcap-dev 
+        - libssl-dev 
+        - libnuma-dev 
+        - git 
+        - python 
+        - python-pip 
+        - python-scapy 
+        - libgflags-dev 
+        - libgoogle-glog-dev 
+        - libgraph-easy-perl 
+        - libgtest-dev 
+        - libgrpc-dev 
+        - libprotobuf-dev 
+        - libc-ares-dev 
+        - libgtest-dev
         
         # For debugging the kernel in a virtual machine with vagrant
         #XXX: I gave up on vagrant debugging for now.
@@ -98,6 +125,7 @@
           # TODO: on Ubuntu versions newer than 16.04, grip can be installed by apt
           - grip
           - "git+https://github.com/niligulmohar/python-symmetric-jsonrpc"
+          - protobuf
         editable: false
       become: true
 
@@ -130,3 +158,35 @@
       args:
         chdir: "{{ sockperf_src }}"
       when: sockperf_installed.rc > 0
+
+    - name: Try to copy OFED
+      copy:
+        src: "{{ playbook_dir }}/{{ ofed_dir }}.tgz"
+        dest: /tmp/{{ ofed_dir }}.tgz
+      register: ofed_copy_result
+      ignore_errors: True
+
+    - name: Download OFED
+      get_url: url={{ ofed_url }} dest=/tmp/{{ ofed_dir }}.tgz
+      when: ofed_copy_result|failed
+
+    - name: Extract OFED
+      unarchive:
+        copy: no
+        src: /tmp/{{ ofed_dir }}.tgz
+        dest: /tmp
+        creates: /tmp/{{ ofed_dir }}
+
+    - name: Check if OFED is already installed
+      shell: ibv_devices | grep mlx
+      register: ofed_install_result
+      ignore_errors: True
+      changed_when: ofed_install_result|failed
+
+    - name: Install OFED
+      #shell: ./mlnxofedinstall --all --force chdir=/tmp/{{ ofed_dir }}
+      #TODO: make generic ($LOOM_HOME)
+      shell: ./mlnxofedinstall --dpdk --upstream-libs --force --add-kernel-support -s /proj/opennf-PG0/exp/loomtest40g/datastore/bes/git/loom-code/code/linux-4.9/ chdir=/tmp/{{ ofed_dir }}
+      become: true
+      when: ofed_install_result|failed
+

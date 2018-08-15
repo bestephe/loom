@@ -25,10 +25,15 @@ def aton(ip):
 # CloudLab experiment platform specific code:
 def node2id(node):
     node2id_dict = {
-        'node-1.loomtest2.opennf-pg0.clemson.cloudlab.us': 1,
-        'node-0.loomtest2.opennf-pg0.clemson.cloudlab.us': 2,
+        'node-1': 1,
+        'node-0': 2,
     }
-    return node2id_dict[node]
+    try:
+        id_ = node2id_dict[node]
+    except:
+        node = node.split('.')[0]
+        id_ = node2id_dict[node]
+    return id_
 node_name = platform.node()
 node_id = node2id(node_name)
 def config_rfs(iface):
