@@ -47,9 +47,9 @@ static_assert(sizeof(struct sn_tx_ctrl_desc) % sizeof(llring_addr_t) == 0,
 
 /* Loom: Upper bound on the number of traffic classes. */
 /* Loom: TODO: Small for now. */
-#define SN_MAX_TC   (16)
-#define SN_MAX_TENANT (16)
-#define SN_MAX_RL_CLS (16)
+#define SN_MAX_TC   (32)
+#define SN_MAX_TENANT (32)
+#define SN_MAX_RL_CLS (32)
 
 /* Different scheduling hierarchies currently supported. */
 /* Loom: TODO: Make more general.  Ideally this would be able to be

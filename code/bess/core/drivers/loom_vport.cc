@@ -1797,6 +1797,10 @@ int LoomVPort::AddNewPifoDataq(struct sn_tx_ctrl_desc *ctrl_desc) {
   struct tx_data_queue *dataq;
   uint64_t tc = ctrl_desc->meta.sch_meta.tc;
 
+  if (tc >= SN_MAX_TC) {
+    LOG(ERROR) << bess::utils::Format("TC is too large! %lu > %d", tc, SN_MAX_TC);
+  }
+
   /* Loom: TODO: Better error checking (and security?) on the incoming traffic
    * class. */
   assert(tc < SN_MAX_TC); /* TC is used as an index! It should not allow for overflow. */

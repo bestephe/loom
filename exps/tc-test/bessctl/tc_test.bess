@@ -118,10 +118,17 @@ def config_vport(vhost_conf):
         (ip_cmd_prefix, vhost_conf.name), shell=True)
     subprocess.check_call('%s ip link set dev %s promisc on' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
+    #XXX: Set via mac_addr arg above
     #subprocess.check_call('%s ip link set %s address %s' % \
     #    (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
+    #XXX: jumbo frames
+    subprocess.check_call('%s ip link set mtu 9000 dev %s' % \
+        (ip_cmd_prefix, vhost_conf.name), shell=True)
+
     subprocess.check_call('%s ip link set dev %s up' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
+
+
     return v
 
 # Reset everything at the start
@@ -182,7 +189,8 @@ p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=1,
 print('PMD Name:', p.name)
 
 # Merge all incoming traffic from the vport into a single PMD output port/queue
-v1_inc::LoomPortInc(port=v1.name) -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
+#v1_inc::LoomPortInc(port=v1.name) -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
+v1_inc::LoomPortInc(port=v1.name) ->  p_out::PortOut(port=p.name)
 
 # Configure the scheduler for traffic outgoing the physical port
 for i in range(TX_BESS_QUEUES):
@@ -196,7 +204,10 @@ v1_inc.attach_task(parent='tenant_out_rr', module_taskid=TX_BESS_QUEUES)
 for i in range(RX_QUEUE_COUNT):
     q_inc = QueueInc(port=p.name, qid=i)
     q_out = QueueOut(port=v1.name, qid=i)
+
+    #XXX: BS: Is receive checksumming still necessary?
     q_inc -> IPChecksum() -> L4Checksum() -> q_out
+    #q_inc -> q_out
 
     # Configure the scheduler
     q_inc.attach_task(parent='tenant_inc_rr')

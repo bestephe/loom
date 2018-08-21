@@ -44,3 +44,6 @@ Useful commands:
 
 ./results_scripts/gen_cpu_util_ts.py --sq results/src.tctest.tctest_conf1.bess-sq.1*.yaml --mq results/src.tctest.tctest_conf1.bess-mq.1*.yaml --qpf results/src.tctest.tctest_conf1.bess-qpf.1*.yaml --loom results/src.tctest.tctest_conf1.bess-tc.1*.yaml --outf results/tctest.cpu_util.yaml
 ```
+
+#### 40G Debugging Notes
+

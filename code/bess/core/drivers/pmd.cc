@@ -30,6 +30,7 @@
 
 #include "pmd.h"
 #include <rte_net.h>
+#include <rte_log.h>
 
 /* LOOM: DPDK SoftNIC specific includes. */
 /* TODO: Move into its own driver. */
@@ -53,6 +54,8 @@
 #define SN_HW_RXCSUM 0
 #define SN_HW_TXCSUM 0
 
+static const uint16_t jumbo_mtu = 9000;
+
 static const struct rte_eth_conf default_eth_conf() {
   struct rte_eth_conf ret = rte_eth_conf();
 
@@ -60,7 +63,7 @@ static const struct rte_eth_conf default_eth_conf() {
 
   ret.rxmode = {
       .mq_mode = ETH_MQ_RX_RSS,       /* doesn't matter for 1-queue */
-      .max_rx_pkt_len = 0,            /* valid only if jumbo is on */
+      .max_rx_pkt_len = jumbo_mtu,            /* valid only if jumbo is on */
       .split_hdr_size = 0,            /* valid only if HS is on */
       .offloads = 0,                  /* don't use the new interface for RX
                                        * offloads yet */
@@ -69,7 +72,7 @@ static const struct rte_eth_conf default_eth_conf() {
       .hw_vlan_filter = 0,            /* VLAN filtering */
       .hw_vlan_strip = 0,             /* VLAN strip */
       .hw_vlan_extend = 0,            /* Extended VLAN */
-      .jumbo_frame = 0,               /* Jumbo Frame support */
+      .jumbo_frame = 1,               /* Jumbo Frame support */
       .hw_strip_crc = 1,              /* CRC stripped by hardware */
       .enable_scatter = 0,            /* scattered RX */
       .enable_lro = 0,                /* large receive offload */
@@ -817,15 +820,17 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     eth_conf.rxmode.hw_ip_checksum = 0;
     needs_tso_csum_ = false;
   }
-  /* DEBUG: TODO: REMOVE */
   else {
     LOG(INFO) << "DEBUG Always Disabling LRO";
     eth_conf.rxmode.enable_lro = 0;
     eth_conf.rxmode.hw_ip_checksum = 0;
   }
-  if (driver_ == "net_ixgbe") {
+
+  if (driver_ == "net_ixgbe" ||
+      driver_ == "net_mlx4") {
     needs_tso_csum_ = true;
   }
+
   /* LOOM: XXX: This is a bad hack! Assumes DPDK SoftNIC is only used with a
    * "net_ixgbe" backend. */
   if (driver_ == "net_softnic") {
@@ -895,10 +900,17 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 
   dpdk_port_id_ = ret_port_id;
 
+  /* Loom: Jumbo Frames */
+  ret = rte_eth_dev_set_mtu(dpdk_port_id_, jumbo_mtu);
+  if (ret != 0) {
+    return CommandFailure(-ret, "rte_eth_dev_set_mtu() failed");
+  }
+
   ret = rte_eth_dev_get_mtu(dpdk_port_id_, &mtu_);
   if (ret != 0) {
     return CommandFailure(-ret, "rte_eth_dev_get_mtu() failed");
   }
+  LOG(INFO) << "DPDK port_id " << static_cast<int>(i) << " MTU: " << mtu_;
 
   numa_node = rte_eth_dev_socket_id(static_cast<int>(ret_port_id));
   node_placement_ =
@@ -908,6 +920,9 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
 
   // Reset hardware stat counters, as they may still contain previous data
   CollectStats(true);
+
+  /* LOOM: DEBUG */
+  rte_log_set_global_level(RTE_LOG_DEBUG);
 
   return CommandSuccess();
 }
@@ -988,7 +1003,7 @@ void PMDPort::CollectStats(bool reset) {
 }
 
 /* Assumes ETH/IPv4/TCP (and no VLAN, tunneling, etc.) */
-static void config_pkt_offloads(bess::Packet *pkt, uint16_t mtu) {
+static void config_pkt_offloads(bess::Packet *pkt, int pkt_len, uint16_t mtu) {
   using bess::utils::Ethernet;
   using bess::utils::Ipv4;
   using bess::utils::Tcp;
@@ -1017,7 +1032,11 @@ static void config_pkt_offloads(bess::Packet *pkt, uint16_t mtu) {
   m->l3_len = ip_header_len;
   m->l4_len = tcp_len;
   m->tso_segsz = segsz;
-  m->ol_flags = PKT_TX_IPV4 | PKT_TX_IP_CKSUM | PKT_TX_TCP_SEG;
+  m->ol_flags = PKT_TX_IPV4 | PKT_TX_IP_CKSUM;
+  // With an MTU of X, Linux sends X + 14 sized packets. According to total_len().
+  if (pkt_len > (mtu + 14)) {
+    m->ol_flags |= PKT_TX_TCP_SEG;
+  }
 
   rte_net_intel_cksum_prepare(m); 
 }
@@ -1039,7 +1058,7 @@ int segment_gso_pkt(bess::Packet *pkt, bess::Packet **segs, int segs_len) {
   //LOG(INFO) << "Attempting GSO";
 
   /* Set appropriate flags for GSO */
-  config_pkt_offloads(pkt, gso_ctx.gso_size);
+  config_pkt_offloads(pkt, pkt->total_len(), gso_ctx.gso_size);
 
   ret = rte_gso_segment(&pkt->as_rte_mbuf(), &gso_ctx, (struct rte_mbuf **)segs, segs_len);
   if (ret > 0) {
@@ -1154,17 +1173,19 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
 }
 
 int PMDPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
+#if 1
   /* LOOM: Configure TSO and checksumming offloads. */
   int i;
   for (i = 0; i < cnt; i++) {
     /* Only configure segmentation for large segments */
-    if (needs_tso_csum_ && pkts[i]->total_len() > 1514) {
+    if (needs_tso_csum_) {
       //LOG(INFO) << "(Port " << name() << ") total_len: " << pkts[i]->total_len() <<
       //  ", mtu: " << mtu_;
       /* XXX: should be mtu_, not 1500 */
-      config_pkt_offloads(pkts[i], mtu_);
+      config_pkt_offloads(pkts[i], pkts[i]->total_len(), mtu_);
     }
   }
+#endif
 
   /* LOOM: DPDK SoftNIC Test/Hack */
   /* NOTE: This has been moved to the LoomPortOut module for now. */

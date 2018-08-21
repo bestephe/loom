@@ -18,7 +18,7 @@ if 'LOOM_HOME' in os.environ:
 else:
     LOOM_HOME = '/proj/opennf-PG0/exp/loomtest2/datastore/bes/git/loom-code/'
 
-NUM_TENANTS = 5
+NUM_TENANTS = 9
 TENANT_TO_PORTS = {tenant: [] for tenant in range(NUM_TENANTS)}
 TENANT_TO_PORTS[0] = [11111]
 for tenant in range(1, NUM_TENANTS):

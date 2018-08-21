@@ -20,7 +20,7 @@ SOCKPERF_BASEPORT = 11000
 IPERF_BASEPORT = 5000
 
 def gen_perf_debug():
-    for num_iperf_tenants in [1, 4, 16, 32]:
+    for num_iperf_tenants in [1, 4, 8, 16, 32]:
         for num_conns in [1, 4, 16]:
             apps = []
 
@@ -31,7 +31,7 @@ def gen_perf_debug():
                 base_name = 'iperf_%s_' % tc_str
                 num_apps = 2
                 start = 0
-                finish = 20
+                finish = 8
 
                 for i in range(num_apps):
                     assert(i < 2)
