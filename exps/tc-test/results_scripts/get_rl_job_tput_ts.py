@@ -27,6 +27,15 @@ PORT_TO_JOB = {
     5100: 0,
     5101: 1,
     5102: 2,
+    5103: 0,
+    5104: 0,
+    5105: 0,
+    5106: 0,
+    5107: 0,
+    5108: 0,
+    5109: 0,
+    5110: 1,
+    5111: 2,
 }
 
 #XXX: Build our own reader because dpkt is not designed well

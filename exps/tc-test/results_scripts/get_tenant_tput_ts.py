@@ -39,18 +39,21 @@ class PcapReader(dpkt.pcap.Reader):
             yield ((hdr.tv_sec - first_sec) + (hdr.tv_usec / 1000000.0), hdr.len, buf)
 
 def get_flowid(pkt):
-    eth = dpkt.ethernet.Ethernet(pkt) 
-    if eth.type != dpkt.ethernet.ETH_TYPE_IP:
-       return None
-    ip = eth.data
-    if ip.p != dpkt.ip.IP_PROTO_TCP and ip.p != dpkt.ip.IP_PROTO_UDP: 
+    try:
+        eth = dpkt.ethernet.Ethernet(pkt) 
+        if eth.type != dpkt.ethernet.ETH_TYPE_IP:
+           return None
+        ip = eth.data
+        if ip.p != dpkt.ip.IP_PROTO_TCP and ip.p != dpkt.ip.IP_PROTO_UDP: 
+            return None
+        tcp = ip.data
+
+        flowid = {'sip': socket.inet_ntoa(ip.src), 'sport': tcp.sport,
+                  'dip': socket.inet_ntoa(ip.dst), 'dport': tcp.dport}
+
+        return flowid
+    except:
         return None
-    tcp = ip.data
-
-    flowid = {'sip': socket.inet_ntoa(ip.src), 'sport': tcp.sport,
-              'dip': socket.inet_ntoa(ip.dst), 'dport': tcp.dport}
-
-    return flowid
 
 def parse_trace_job_tput(fname):
     cur_ts = 0.0

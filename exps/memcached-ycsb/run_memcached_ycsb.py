@@ -14,8 +14,8 @@ if 'LOOM_HOME' in os.environ:
 else:
     LOOM_HOME = '/proj/opennf-PG0/exp/loomtest/datastore/git/loom-code/'
 
-#YCSB_DIR = '/users/brents/YCSB/'
-YCSB_DIR = LOOM_HOME + '/../YCSB/'
+YCSB_DIR = '/users/brents/YCSB/'
+#YCSB_DIR = LOOM_HOME + '/../YCSB/'
 WORKLOAD = 'workload_read_asym'
 PROPERTIES = 'memcached_read_asym.properties'
 

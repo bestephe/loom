@@ -65,7 +65,7 @@ def plot_job_tput(results):
     plt.tight_layout()
 
     # Add the title
-    #title(results['title'])
+    title(results['title'])
 
 def main():
     # Parse arguments

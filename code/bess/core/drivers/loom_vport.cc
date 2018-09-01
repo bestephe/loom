@@ -69,7 +69,8 @@ using bess::utils::be32_t;
 
 /* LOOM: Used for segmentation. */
 #define FRAME_SIZE	1514		/* TODO: check pport MTU */
-#define FQ_DEFICIT      (100 * 48000)
+
+#define FQ_DEFICIT      (400 * 48000)
 
 /* TODO: Unify vport and vport_native */
 
@@ -983,7 +984,10 @@ int LoomVPort::InitPifoMeshMTenantPriFairRl() {
 
   /* Set the rate-limits */
   /* 2.5Gbps for the one traffic class */
-  pipe->rl_class_state[1].rate_bps = (2500ull * 1000ull * 1000ull);
+  //pipe->rl_class_state[1].rate_bps = (2500ull * 1000ull * 1000ull);
+
+  /* 10Gbps for the one traffic class */
+  pipe->rl_class_state[1].rate_bps = (10000ull * 1000ull * 1000ull);
 
   /* Fair sharing between tenants. */
   PIFOPipelineStage pifo1(1,

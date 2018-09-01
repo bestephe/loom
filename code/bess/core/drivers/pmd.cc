@@ -821,9 +821,14 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     needs_tso_csum_ = false;
   }
   else {
-    LOG(INFO) << "DEBUG Always Disabling LRO";
-    eth_conf.rxmode.enable_lro = 0;
-    eth_conf.rxmode.hw_ip_checksum = 0;
+    //LOG(INFO) << "DEBUG Always Disabling LRO";
+    //eth_conf.rxmode.enable_lro = 0;
+    //eth_conf.rxmode.hw_ip_checksum = 0;
+
+    //LOG(INFO) << "Enabling LRO";
+    eth_conf.rxmode.enable_lro = 1;
+    eth_conf.rxmode.hw_ip_checksum = 1;
+    eth_conf.rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO | DEV_RX_OFFLOAD_IPV4_CKSUM;
   }
 
   if (driver_ == "net_ixgbe" ||

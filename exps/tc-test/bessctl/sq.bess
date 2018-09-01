@@ -34,6 +34,12 @@ def node2id(node):
         node = node.split('.')[0]
         id_ = node2id_dict[node]
     return id_
+def nodeid2mac(node_id):
+    nodeid2mac_dict = {
+        1: '00:02:c9:18:64:91',
+        2: '00:02:c9:18:64:41',
+    }
+    return nodeid2mac_dict[node_id]
 node_name = platform.node()
 node_id = node2id(node_name)
 def config_rfs(iface):
@@ -73,7 +79,7 @@ def gen_vhost_conf():
         'name': 'loom%d' % i,
         'addr': '10.10.10%d.%d' % (i, node_id),
         'extra_addrs': ['10.10.102.%d' % (node_id)],
-        'mac': '00:8c:fa:00:A{}:{:02x}'.format(i, node_id),
+        'mac': nodeid2mac(node_id),
         'netns': 'loom_test%d' % i,
         'vlan': '10%d' % i,
     }
@@ -83,7 +89,8 @@ def gen_vhost_conf():
 
 def config_vport(vhost_conf):
     v = VPort(ifname=vhost_conf.name, ip_addrs=[vhost_conf.addr_prefix],
-        num_inc_q=TX_QUEUE_COUNT, num_out_q=RX_QUEUE_COUNT)
+        num_inc_q=TX_QUEUE_COUNT, num_out_q=RX_QUEUE_COUNT,
+        mac_addr=nodeid2mac(node_id))
     config_rfs(vhost_conf.name)
     ip_cmd_prefix = ''
     #ip_cmd_prefix = 'sudo ip netns exec %s ' % vhost_conf.netns
@@ -91,8 +98,9 @@ def config_vport(vhost_conf):
         (ip_cmd_prefix, vhost_conf.name), shell=True)
     subprocess.check_call('%s ip link set dev %s promisc on' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
-    subprocess.check_call('%s ip link set %s address %s' % \
-        (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
+    #XXX: Set via mac_addr arg above
+    #subprocess.check_call('%s ip link set %s address %s' % \
+    #    (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
     subprocess.check_call('%s ip link set dev %s up' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
     for eaddr in vhost_conf.extra_addrs:
@@ -146,7 +154,7 @@ for i in range(TX_QUEUE_COUNT):
     # V Inc -> P Out (TX)
     v1_qinc = QueueInc(port=v1.name, qid=i)
     q_out = QueueOut(port=p.name, qid=i)
-    v1_qinc -> IPChecksum() -> L4Checksum() -> q_out
+    v1_qinc -> q_out
     v1_qinc.attach_task(parent='tenant_out_rr')
     
 assert(RX_QUEUE_COUNT == 1)
@@ -154,7 +162,7 @@ for i in range(RX_QUEUE_COUNT):
     # P Inc -> V Out (RX)
     q_inc = QueueInc(port=p.name, qid=i)
     v1_qout =  QueueOut(port=v1.name, qid=i)
-    q_inc -> IPChecksum() -> L4Checksum() -> v1_qout
+    q_inc -> v1_qout
     q_inc.attach_task(parent='tenant_inc_rr')
 
 bess.resume_all()

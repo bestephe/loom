@@ -31,7 +31,7 @@ def plot_latency(results):
     # Create the figure
     figure = plt.figure(figsize=(6, 2.5))
     bottom = 0.30
-    legend_bbox = (0.5, -0.55)
+    legend_bbox = (0.5, -0.60)
 
     # Build the colormap
     color_map = get_cmap('Set1')
@@ -57,7 +57,7 @@ def plot_latency(results):
     ax.set_ylim(ymax=0.004)
 
     # Add the legend
-    plt.legend(ncol=3, loc='lower center', bbox_to_anchor=legend_bbox,
+    plt.legend(ncol=4, loc='lower center', bbox_to_anchor=legend_bbox,
         columnspacing=1.0, labelspacing=0.0, handletextpad=0.0,
         handlelength=1.5, frameon=False)
     plt.tight_layout()

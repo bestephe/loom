@@ -13,5 +13,5 @@ do
     # Setup ssh keys
     #XXX: This requires the user to be setup on all machines first, so this
     # won't work.
-    #sudo -H -u $user passwordless_ssh.sh
+    sudo -H -u $user ./passwordless_ssh.sh
 done

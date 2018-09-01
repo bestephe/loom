@@ -10,17 +10,17 @@ import subprocess
 import sys
 import time
 
-TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
+#TX_CTRL_QUEUE_COUNT = multiprocessing.cpu_count()
 #TX_CTRL_QUEUE_COUNT = 28
-#TX_CTRL_QUEUE_COUNT = 16
+TX_CTRL_QUEUE_COUNT = 16
 TX_DATA_QUEUE_COUNT = 4096
 TX_BESS_QUEUES = 2 #XXX: HACK: Determines the ratio in which control queues and
                    # dataQs are polled...
                    #XXX: Setting this to anything other than 1 currently causes
                    # race conditions!
-RX_QUEUE_COUNT = 16
+RX_QUEUE_COUNT = 32
 TX_QSIZE = 128
-RX_QSIZE = 2048
+RX_QSIZE = 1024
 DUMP_IVAL = 0.00001
 VPORT = True
 
@@ -118,13 +118,11 @@ def config_vport(vhost_conf):
         (ip_cmd_prefix, vhost_conf.name), shell=True)
     subprocess.check_call('%s ip link set dev %s promisc on' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
-    #XXX: Set via mac_addr arg above
-    #subprocess.check_call('%s ip link set %s address %s' % \
-    #    (ip_cmd_prefix, vhost_conf.name, vhost_conf.mac), shell=True)
     #XXX: jumbo frames
-    subprocess.check_call('%s ip link set mtu 9000 dev %s' % \
-        (ip_cmd_prefix, vhost_conf.name), shell=True)
+    #subprocess.check_call('%s ip link set mtu 9000 dev %s' % \
+    #    (ip_cmd_prefix, vhost_conf.name), shell=True)
 
+    # Bring the device back up
     subprocess.check_call('%s ip link set dev %s up' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
 
@@ -138,12 +136,9 @@ bess.reset_all()
 #bess.resume_all()
 bess.pause_all()
 
-# Try out using different workers for inc and out
-#XXX: Trying out because weighted fairness is causing problems.
-#bess.add_worker(0, 0, scheduler='experimental')
-#bess.add_worker(1, 28, scheduler='experimental')
+# Use different workers for inc and out
 bess.add_worker(0, 0)
-bess.add_worker(1, 28)
+bess.add_worker(1, 31)
 
 bess.pause_all()
 
@@ -154,14 +149,6 @@ bess.add_tc('tenant_inc_rr',
 bess.add_tc('tenant_out_rr',
            wid=1,
            policy='round_robin')
-#bess.add_tc('tenant_out_rl',
-#           wid=1,
-#           policy='rate_limit',
-#           resource='bit',
-#           limit={'bit': int(10.7e9)})
-#bess.add_tc('tenant_out_rr',
-#           parent='tenant_out_rl',
-#           policy='round_robin')
 
 # Get config for each vhost
 v1_vhost_conf = gen_vhost_conf(1)
@@ -189,7 +176,6 @@ p = PMDPort(port_id=0, num_inc_q=RX_QUEUE_COUNT, num_out_q=1,
 print('PMD Name:', p.name)
 
 # Merge all incoming traffic from the vport into a single PMD output port/queue
-#v1_inc::LoomPortInc(port=v1.name) -> IPChecksum() -> L4Checksum() ->  p_out::PortOut(port=p.name)
 v1_inc::LoomPortInc(port=v1.name) ->  p_out::PortOut(port=p.name)
 
 # Configure the scheduler for traffic outgoing the physical port
@@ -206,8 +192,7 @@ for i in range(RX_QUEUE_COUNT):
     q_out = QueueOut(port=v1.name, qid=i)
 
     #XXX: BS: Is receive checksumming still necessary?
-    q_inc -> IPChecksum() -> L4Checksum() -> q_out
-    #q_inc -> q_out
+    q_inc -> q_out
 
     # Configure the scheduler
     q_inc.attach_task(parent='tenant_inc_rr')
