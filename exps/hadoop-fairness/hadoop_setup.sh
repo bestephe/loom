@@ -9,12 +9,14 @@ fi
 MASTER_IP=$1
 
 #XXX: UGLY
-IFACE=eno2
+IFACE=enp130s0
 IP=$(/sbin/ifconfig $IFACE | grep 'inet addr:' | cut -d: -f2 | awk '{ print $1}')
 TAP_IP_PREFIX=$(echo $IP | cut -d. -f1,2,3)
 TAP_IP_SUFFIX=$(echo $IP | cut -d. -f4)
 #TAP_IP=$TAP_IP_PREFIX.$TAP_IP_SUFFIX
 TAP_IP=10.10.101.$TAP_IP_SUFFIX
+
+echo TAP_IP=$TAP_IP
 
 sudo apt-get update --fix-missing
 sudo apt-get -y install vim
@@ -35,7 +37,8 @@ mkdir -p /home/ubuntu/logs/hadoop
 GIT_DIR=$(pwd)
 cd /home/ubuntu
 cp $GIT_DIR/ubuntu_run.sh run.sh
-cp -r $GIT_DIR/ubuntu_conf conf/
+rm -rf conf/
+cp -r $GIT_DIR/ubuntu_conf/ conf/
 
 cd conf
 sed -i s/MASTER_IP/$MASTER_IP/g core-site.xml 
@@ -55,7 +58,7 @@ sed -i 's/java-1.7.0/java-1.8.0/g' run.sh
 #sed -i 's/home\/ubuntu/workspace/g' run.sh
 
 cd software
-wget "https://archive.apache.org/dist/hadoop/common/hadoop-2.6.0/hadoop-2.6.0.tar.gz"
+#wget "https://archive.apache.org/dist/hadoop/common/hadoop-2.6.0/hadoop-2.6.0.tar.gz"
 tar -xvzf hadoop-2.6.0.tar.gz
 cd ..
 

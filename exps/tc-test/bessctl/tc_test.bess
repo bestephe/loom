@@ -18,9 +18,9 @@ TX_BESS_QUEUES = 2 #XXX: HACK: Determines the ratio in which control queues and
                    # dataQs are polled...
                    #XXX: Setting this to anything other than 1 currently causes
                    # race conditions!
-RX_QUEUE_COUNT = 32
+RX_QUEUE_COUNT = 16
 TX_QSIZE = 128
-RX_QSIZE = 1024
+RX_QSIZE = 2048
 DUMP_IVAL = 0.00001
 VPORT = True
 
@@ -64,7 +64,8 @@ node_name = platform.node()
 node_id = node2id(node_name)
 def config_rfs(iface):
     rxqs = glob.glob('/sys/class/net/%s/queues/rx-*' % iface)
-    entries = 65536
+    #entries = 65536
+    entries = 0
     entries_per_rxq = entries / len(rxqs)
     cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
         entries
@@ -121,7 +122,6 @@ def config_vport(vhost_conf):
     #XXX: jumbo frames
     #subprocess.check_call('%s ip link set mtu 9000 dev %s' % \
     #    (ip_cmd_prefix, vhost_conf.name), shell=True)
-
     # Bring the device back up
     subprocess.check_call('%s ip link set dev %s up' % \
         (ip_cmd_prefix, vhost_conf.name), shell=True)
@@ -138,16 +138,20 @@ bess.pause_all()
 
 # Use different workers for inc and out
 bess.add_worker(0, 0)
-bess.add_worker(1, 31)
+bess.add_worker(1, 2)
+bess.add_worker(2, 4)
 
 bess.pause_all()
 
 # Configure the scheduler
-bess.add_tc('tenant_inc_rr',
+bess.add_tc('tenant_inc_rr_0',
             wid=0,
             policy='round_robin')
+bess.add_tc('tenant_inc_rr_1',
+            wid=1,
+            policy='round_robin')
 bess.add_tc('tenant_out_rr',
-           wid=1,
+           wid=2,
            policy='round_robin')
 
 # Get config for each vhost
@@ -195,7 +199,11 @@ for i in range(RX_QUEUE_COUNT):
     q_inc -> q_out
 
     # Configure the scheduler
-    q_inc.attach_task(parent='tenant_inc_rr')
+    if (i % 2) == 0:
+        q_inc.attach_task(parent='tenant_inc_rr_0')
+    else:
+        q_inc.attach_task(parent='tenant_inc_rr_1')
+    #q_inc.attach_task(parent='tenant_inc_rr')
 
     # DEBUG
     #fifo = make_tcpdump_fifo('/tmp/vport_q_inc_%d.pcap' % i)

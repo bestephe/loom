@@ -2610,11 +2610,11 @@ int LoomVPort::SendPackets(queue_t qid, bess::Packet **pkts, int cnt) {
     if (!snb->is_simple()) {
       LOG(INFO) << "(Port " << name() << ") Packet is not simple!";
     }
-#endif
     if (snb->nb_segs() > 1 || snb->total_len() > 1550 ||
         !snb->is_linear() || !snb->is_simple()) {
       LOG(INFO) << "(Port " << name() << ") Dropping sn_to_drv (Outgoing/Kernel RX) packet!";
     }
+#endif
 
     struct sn_rx_desc *rx_desc;
 

@@ -2,11 +2,9 @@
 
 RUNS=1
 
-for i in {10..40}
-#for i in {120..130}
+for i in {1..3}
 do
-    #for conf in bess bess-qpf
-    for conf in bess-qpf
+    for conf in bess bess-qpf
     do
         sudo -u ubuntu -H ./spark_run_scripts/spark_all_bess_netconf.sh $conf.conf
         sudo tcpdump -i loom1 -w /dev/shm/spark_tcp_flows_loom.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &

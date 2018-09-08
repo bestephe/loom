@@ -114,7 +114,8 @@ def get_rxqs(iface):
 
 def configure_rfs(config, iface):
     rxqs = get_rxqs(iface)
-    entries = 65536
+    #entries = 65536
+    entries = 0
     entries_per_rxq = entries / len(rxqs)
     cmd = 'echo %d | sudo tee /proc/sys/net/core/rps_sock_flow_entries > /dev/null' % \
         entries

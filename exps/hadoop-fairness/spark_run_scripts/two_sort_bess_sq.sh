@@ -2,8 +2,7 @@
 
 RUNS=1
 
-#for i in {2..2}
-for i in {100..110}
+for i in {1..3}
 do
     sudo -u ubuntu -H ./spark_run_scripts/spark_all_bess_netconf.sh bess-sq.conf
     sudo tcpdump -i loom1 -w /dev/shm/spark_tcp_flows.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &
@@ -37,7 +36,7 @@ do
     cat tmp_sort2.out >> results/two_sort_bess_sq.$i.out
 
     sudo killall tcpdump
-    #./pcap_flows/get_job_tput_ts.py --pcap /dev/shm/spark_tcp_flows.pcap --outf results/tputs_two_sort_bess_sq.$i.yaml
+    ./pcap_flows/get_job_tput_ts.py --pcap /dev/shm/spark_tcp_flows.pcap --outf results/tputs_two_sort_bess_sq.$i.yaml
 
     rm tmp_sort1.out
     rm tmp_sort2.out

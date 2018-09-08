@@ -27,9 +27,9 @@ def node2id(node):
 node_name = platform.node()
 node_id = node2id(node_name)
 
-ips = ['10.10.10%d.%d' % (i, node_id) for i in range(1, 3)]
+ips = ['10.10.1%02d.%d' % (i, node_id) for i in range(1, 21)]
 for ip in ips:
     cmd_keys = {'ip': ip, 'iface': IFACE}
     cmd = 'sudo ip addr add {ip}/24 dev {iface}'.format(**cmd_keys)
     print cmd
-    subprocess.check_call(shlex.split(cmd))
+    subprocess.call(shlex.split(cmd))

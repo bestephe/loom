@@ -1045,7 +1045,7 @@ static void sn_set_offloads(struct net_device *netdev)
 
 	netdev->hw_features = NETIF_F_SG |
 			      NETIF_F_IP_CSUM |
-			      //NETIF_F_HW_CSUM |
+			      NETIF_F_HW_CSUM |
 			      NETIF_F_RXCSUM |
 			      NETIF_F_FRAGLIST |
 			      NETIF_F_LRO |
@@ -1315,6 +1315,8 @@ void sn_trigger_softirq(void *info)
 		struct sn_queue *rx_queue = dev->rx_queues[0];
 
 		rx_queue->rx.stats.interrupts++;
+                /* XXX: LOOM Testing: Do one round of scheduling because NAPI is slow? */
+                //sn_poll(&rx_queue->rx.napi, 100);
 		napi_schedule(&rx_queue->rx.napi);
 
                 /* LOOM: TX? */
@@ -1327,6 +1329,8 @@ void sn_trigger_softirq(void *info)
 			struct sn_queue *rx_queue = dev->rx_queues[rxq];
 
 			rx_queue->rx.stats.interrupts++;
+                        /* XXX: LOOM Testing: Do one round of scheduling because NAPI is slow? */
+                        //sn_poll(&rx_queue->rx.napi, 100);
 			napi_schedule(&rx_queue->rx.napi);
 
 			i++;
@@ -1388,6 +1392,8 @@ void sn_trigger_softirq_with_qid(void *info, int rxq)
 	rx_queue = dev->rx_queues[rxq];
 
 	rx_queue->rx.stats.interrupts++;
+        /* XXX: LOOM Testing: Do one round of scheduling because NAPI is slow? */
+        //sn_poll(&rx_queue->rx.napi, 100);
 	napi_schedule(&rx_queue->rx.napi);
 }
 

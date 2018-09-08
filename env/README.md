@@ -49,3 +49,6 @@ OFED is difficult for 40G.  The following command:
 'sudo ./mlnxofedinstall --dpdk --upstream-libs --force --add-kernel-support -s /proj/opennf-PG0/exp/loomtest40g/datastore/bes/git/loom-code/code/linux-4.9/'
 
 
+### 40G Notes
+
+echo eth | sudo tee /sys/bus/pci/devices/0000\:82\:00.0/mlx4_port1

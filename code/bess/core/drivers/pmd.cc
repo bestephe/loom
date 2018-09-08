@@ -74,8 +74,8 @@ static const struct rte_eth_conf default_eth_conf() {
       .hw_vlan_extend = 0,            /* Extended VLAN */
       .jumbo_frame = 1,               /* Jumbo Frame support */
       .hw_strip_crc = 1,              /* CRC stripped by hardware */
-      .enable_scatter = 0,            /* scattered RX */
-      .enable_lro = 0,                /* large receive offload */
+      .enable_scatter = 1,            /* scattered RX */
+      .enable_lro = 1,                /* large receive offload */
       .hw_timestamp = 1,              /* enable hw timestampping */
       .security = 0,                  /* don't enable rte_security offloads */
       .ignore_offload_bitfield = 0,   /* do not use the "offloads" field yet. */
@@ -825,10 +825,14 @@ CommandResponse PMDPort::Init(const bess::pb::PMDPortArg &arg) {
     //eth_conf.rxmode.enable_lro = 0;
     //eth_conf.rxmode.hw_ip_checksum = 0;
 
-    //LOG(INFO) << "Enabling LRO";
+    LOG(INFO) << "Enabling LRO";
     eth_conf.rxmode.enable_lro = 1;
     eth_conf.rxmode.hw_ip_checksum = 1;
-    eth_conf.rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO | DEV_RX_OFFLOAD_IPV4_CKSUM;
+    eth_conf.rxmode.offloads |= DEV_RX_OFFLOAD_TCP_LRO |
+                                DEV_RX_OFFLOAD_IPV4_CKSUM |
+                                DEV_RX_OFFLOAD_SCATTER |
+                                DEV_RX_OFFLOAD_CHECKSUM |
+                                DEV_RX_OFFLOAD_JUMBO_FRAME;
   }
 
   if (driver_ == "net_ixgbe" ||
@@ -1152,7 +1156,7 @@ int PMDPort::RecvPackets(queue_t qid, bess::Packet **pkts, int cnt) {
   ret = rte_eth_rx_burst(dpdk_port_id_, qid, (struct rte_mbuf **)pkts, cnt);
 #endif
 
-#if 1
+#if 0
   /* LOOM: DEBUG */
   {
     int i;
