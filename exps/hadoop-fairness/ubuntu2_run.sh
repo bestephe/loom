@@ -10,6 +10,7 @@ YARN_VERSION=${YARN_VERSION:-${VER}}
 HIVE_VERSION=${HIVE_VERSION:-1.2.1}
 TEZ_VERSION=${TEZ_VERSION:-0.7.1-SNAPSHOT-minimal}
 SPARK_HADOOP_VERSION=2.3.1
+CRAIL_VERSION=1.1
 
 ENV="JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64 \
   YARN_CONF_DIR=/home/ubuntu2/conf \
@@ -34,7 +35,8 @@ ENV="JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk-amd64 \
   SPARK_WORKER_DIR=/home/ubuntu2/storage/data/spark/worker \
   SPARK_MASTER_HOST=10.10.102.2 \
   SPARK_MASTER_PORT=9077 \
-  SPARK_WORKER_PORT=9091"
+  SPARK_WORKER_PORT=9091 \
+  CRAIL_HOME=/home/ubuntu2/software/crail-${CRAIL_VERSION}"
 
   #XXX: SPARK_MASTER_HOST and SPARK_MASTER_PORT need to be defined in
   # spark-env.sh and here.
@@ -59,9 +61,10 @@ esac
 export HADOOP_CLASSPATH=$HADOOP_HOME:$HADOOP_CONF_DIR:$HIVE_HOME:$TEZ_JARS/*:$TEZ_JARS/lib/*:
 export HADOOP_HEAPSIZE=10240
 
-export PATH=/home/ubuntu2/software/hadoop-${COMMON_VERSION}/bin:/home/ubuntu2/software/hadoop-${COMMON_VERSION}/sbin:$HIVE_HOME/bin:$SPARK_HOME/bin:$SPARK_HOME/sbin:$PATH
+export PATH=/home/ubuntu2/software/hadoop-${COMMON_VERSION}/bin:/home/ubuntu2/software/hadoop-${COMMON_VERSION}/sbin:$HIVE_HOME/bin:$SPARK_HOME/bin:$SPARK_HOME/sbin:$CRAIL_HOME/bin:$PATH
 export LD_LIBRARY_PATH=${HADOOP_COMMON_HOME}/share/hadoop/common/lib/native/:${LD_LIBRARY_PATH}
 export JAVA_LIBRARY_PATH=${LD_LIBRARY_PATH}
+export CRAIL_EXTRA_JAVA_OPTIONS="-Xmx24G -Xmn16G"
 
 mount_fs(){
 	printf "\n==== Mounting storage ! ====\n"
@@ -118,6 +121,16 @@ stop_spark(){
 	$SPARK_HOME/sbin/stop-master.sh
 }
 
+start_crail(){
+	printf "\n==== START CRAIL daemons ! ====\n"
+        $CRAIL_HOME/bin/start-crail.sh
+}
+
+stop_crail(){
+	printf "\n==== STOP CRAIL daemons ! ====\n"
+        $CRAIL_HOME/bin/stop-crail.sh
+}
+
 start_timeline_server(){
 	printf "\n==== START timelineserver ! ====\n"
 	yarn-daemon.sh start timelineserver
@@ -130,8 +143,9 @@ stop_timeline_server(){
 
 start_all(){
 	mount_fs
-	start_hdfs
-        start_spark
+	#start_hdfs
+        start_crail
+        #start_spark
 	#start_yarn
 	#start_timeline_server
 	#start_history_mr
@@ -147,10 +161,12 @@ stop_all(){
 
 export -f start_hdfs
 export -f start_spark
+export -f start_crail
 export -f start_yarn
 export -f start_all
 export -f stop_hdfs
 export -f stop_spark
+export -f stop_crail
 export -f stop_yarn
 export -f stop_all
 export -f start_history_mr

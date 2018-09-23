@@ -3,9 +3,9 @@
 RUN_START=1
 RUN_END=20
 
-QTYPES="bess-sq bess-mq bess-tc bess-qpf"
+#QTYPES="bess-sq bess-mq bess-tc bess-qpf"
 #QTYPES="bess-tc bess-qpf"
-#QTYPES="bess-tc"
+QTYPES="bess-tc"
 
 for i in $(seq $RUN_START $RUN_END)
 do
@@ -17,7 +17,7 @@ do
         # Kill bess locally for transmit only experiments (assumes source is
         # remote and sink is local).
         sleep 5
-        sudo killall bessd
+        #sudo killall bessd
 
         # Note: tcpdump has already been started as part of configuring BESS (fairnes.bess)
         #  However, in order to get this to work, bessctl is run in the background
@@ -32,7 +32,7 @@ do
             continue
         fi
 
-        #sudo tcpdump -i loom1 -w /dev/shm/tctest_tcp_flows.$qtype.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &
+        sudo tcpdump -i loom1 -w /dev/shm/tctest_tcp_flows.$qtype.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &
         #sudo tcpdump -i enp130s0 -w /dev/shm/tctest_tcp_flows.$qtype.pcap -s 64 src 10.10.1.1 or src 10.10.101.1 or src 10.10.102.1 &
 
         time ./run_tc_test.py --configs configs/tctest_conf1.yaml --extra-name $qtype.$i --runs 1
@@ -50,14 +50,14 @@ do
     #JOBS=()
     for qtype in $QTYPES
     do
-        echo 'Skipping pcap analysis'
-        #./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.$qtype.pcap --outf results/tputs.$qtype.$i.yaml &
-        #JOBS+=" $!"
+        #echo 'Skipping pcap analysis'
+        ./results_scripts/get_tenant_tput_ts.py --pcap /dev/shm/tctest_tcp_flows.$qtype.pcap --outf results/tputs.$qtype.$i.yaml &
+        JOBS+=" $!"
     done
 
     echo "before wait"
-    wait
-    #wait ${JOBS[@]}
+    #wait
+    wait ${JOBS[@]}
     echo "after wait"
 
     for qtype in $QTYPES

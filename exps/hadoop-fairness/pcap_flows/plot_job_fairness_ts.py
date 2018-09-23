@@ -54,7 +54,7 @@ def plot_job_tput(results):
     yax = ax.get_yaxis()
     yax.grid(True)
     ax.set_xlabel('Time (seconds)')
-    ax.set_xlim(xmin=28)
+    #ax.set_xlim(xmin=28)
     ax.set_ylabel('Throughput (Gbps)')
     figure.subplots_adjust(bottom=bottom)
 
