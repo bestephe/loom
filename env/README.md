@@ -52,3 +52,9 @@ OFED is difficult for 40G.  The following command:
 ### 40G Notes
 
 echo eth | sudo tee /sys/bus/pci/devices/0000\:82\:00.0/mlx4_port1
+
+### Conf Misc
+The `conf_misc` directory contains some additional scripts for
+configuring (CloudLab) servers for running BESS.
+- Most notably is [conf_misc/config_server_bess.sh], which performs some
+  server configuration that should be done once per reboot.
