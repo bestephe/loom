@@ -1,4 +1,4 @@
-# loom-code: The core code and experimental frameworks for Loom
+# loom: The core code and experimental frameworks for Loom
 
 Loom enables dynamic application controlled packet scheduling.  This is
 the repository for of the code related to Loom.  This includes:
