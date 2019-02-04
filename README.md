@@ -1,4 +1,4 @@
-# loom: The core code and experimental frameworks for Loom
+# loom: The core code and experimental frameworks for the NSDI '19 paper "Loom: Flexible and Efficient NIC Packet Scheduling"
 
 Loom enables dynamic application controlled packet scheduling.  This is
 the repository for of the code related to Loom.  This includes:
